@@ -1,6 +1,7 @@
 mod camera;
 mod clock;
 mod game;
+mod input;
 mod light;
 mod mesh;
 mod motion;
@@ -14,6 +15,7 @@ mod terrain;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
 pub use game::Game;
+pub use input::{Controls, Turn, drag_rotation, to_screen};
 pub use light::{Light, VAEL};
 pub use mesh::{Mesh, Vertex, normal};
 pub use motion::{center, position};
