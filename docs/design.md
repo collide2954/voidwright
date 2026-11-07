@@ -74,18 +74,21 @@ The total XP for level 80 is half of the total XP for level 99.
 
 | Topic | Decision |
 | --- | --- |
-| Art direction | Cinematic and stylized: clean shapes with film-like light, soft sun shadows, glow on lights, and deep atmosphere. |
+| Art direction | Cinematic and grounded: believable materials and wear, film-like light, soft sun shadows, glow on lights, and deep atmosphere. |
 | Palette | Moss, soil, and rock have natural, muted colors. Neon colors are only for lights, visors, crystals, and the nebula: deep indigo void, magenta and teal clouds, and amber starlight. |
-| Effects | Sun shadows, filmic color with bloom, detail textures that code paints at start, moss tufts, and drifting spores. |
+| Effects | Subtle bloom: soft halos on true lights only. Warm light pools under lamps and a soft contact shadow under each figure. Teal spores rise from the moss, pale motes drift in the void, and embers float near the lantern. The GPU moves all particles. A light vignette and fine grain finish the image. |
+| Living motion | The lantern swings on its rod. The scarf tail and the coat sway on springs. Dust puffs rise at each footstep. |
+| Ground and sky detail | Moss tufts and small glowing plants grow on the islands. Stars twinkle, the nebula drifts slowly, and thin mist falls from the island edges. |
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
-| Models | Code sculpts all models. A sculpt is a set of simple solids that blend smoothly, with carved details. Each vertex has a color, a shine value, and a glow value. Models do not use textures. |
+| Models | Code sculpts all models. A sculpt is a set of simple solids that blend smoothly, with carved details. Each vertex has a color, a shine value, a glow value, and a surface kind. |
+| Surfaces | At start, code paints small tiled detail textures: woven cloth, knitted wool, grained leather, and brushed, scratched metal. The GPU puts them on each model from three sides. They add fine bumps and color changes. Models do not use image files. |
 | Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
 | Island edges | A jagged rock lip surrounds each island. The walls below the lip show the layers of the slab. |
 | Fragment shape | Each fragment is a thick, uneven slab from the ring. Soil lies on layers of rock and Wright hull plates. The edges are broken, and the bottom is rough. The thickness changes much from fragment to fragment. |
 | Fragment details | Broken girders and conduits come out of the walls and hang below. Roots and strands of moss hang over the edges. Small pieces of rock and plating float near each fragment. Thin streams of water fall from some edges and become mist in the void. |
 | Avatar | A hooded wanderer: a long, weathered coat and a deep hood over a rebreather mask with a thin, glowing visor slit. Salvaged plates on one side only, a trailing scarf, wrapped boots, and a lantern that hangs from the pack. All models come from code. |
-| Animation | A full walk cycle: knees and elbows bend, the feet move with the ground, the hips sway, the torso leans and turns against the hips, and the body bobs two times in each stride. Running leans more and makes the stride longer. The figure breathes when it stands. |
+| Animation | A full walk cycle: knees and elbows bend, the feet move with the ground, the hips sway, the torso leans and turns against the hips, and the body bobs two times in each stride. Running leans more and makes the stride longer. When the figure stands, it breathes, moves its weight slowly from one leg to the other, looks around, and curls and opens its hands. The feet stay on the ground. |
 | Walk marker | A small teal ring pulses on the target tile until the player arrives. |
 | Sky | Deep indigo with magenta and teal nebula clouds and many stars. Vael glows amber low on the horizon. Far fragments of the ring drift in the distance. |
 | Maps | A seed makes each island: outline, hills, rocks, and crystals. |
