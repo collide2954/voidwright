@@ -55,16 +55,6 @@ impl Stride {
     pub fn pose(&self, time: f32) -> Pose {
         pose_at(self.phase, self.motion, self.pace, time)
     }
-
-    #[must_use]
-    pub fn swing(&self) -> f32 {
-        self.phase.sin() * self.motion
-    }
-
-    #[must_use]
-    pub fn bob(&self) -> f32 {
-        (2.0 * self.phase).sin().abs() * self.motion
-    }
 }
 
 fn shortest(angle: f32) -> f32 {

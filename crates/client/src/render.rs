@@ -7,8 +7,8 @@ use miniquad::{
 
 use crate::shader::{baked, lit};
 use crate::{
-    Game, Painter, Part, VAEL, cliff, flip_rows, palette, placement, png, projection, top,
-    underside, voidwright,
+    Bone, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, skeleton,
+    top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -23,7 +23,7 @@ pub struct Renderer {
     baked: Pipeline,
     lit: Pipeline,
     terrain: Model,
-    avatar: Vec<(Part, Model)>,
+    avatar: Vec<(Bone, Model)>,
 }
 
 impl Renderer {
@@ -58,7 +58,7 @@ impl Renderer {
             .into_iter()
             .map(|part| {
                 let model = upload(context, &part.mesh.vertices, &part.mesh.indices);
-                (part, model)
+                (part.bone, model)
             })
             .collect();
         Self {
@@ -119,11 +119,12 @@ impl Renderer {
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.lit);
         let root = placement(game.player_position(), game.stride());
-        for (part, model) in &self.avatar {
+        let bones = skeleton(&game.stride().pose(game.time()));
+        for (bone, model) in &self.avatar {
             context.apply_bindings(&model.bindings);
             context.apply_uniforms(UniformsSource::table(&lit::Uniforms::new(
                 view_projection,
-                root * part.pose(game.stride()),
+                root * bones[bone.index()],
                 camera.eye(),
                 &VAEL,
             )));
