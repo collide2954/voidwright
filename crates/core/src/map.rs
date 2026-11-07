@@ -1,5 +1,7 @@
 use crate::{Direction, Grid, Tile};
 
+pub const ELEVATION_PER_TILE: i16 = 32;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Terrain {
     Void,

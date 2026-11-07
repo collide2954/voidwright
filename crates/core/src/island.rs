@@ -1,8 +1,10 @@
-use crate::{Map, NOISE_RANGE, Noise, Terrain, Tile, reachable};
+use crate::{ELEVATION_PER_TILE, Map, NOISE_RANGE, Noise, Terrain, Tile, reachable};
 
 const MARGIN: u16 = 2;
 const OUTLINE_CELL: u32 = 6;
 const OUTLINE_SALT: u64 = 0x6f75_746c_696e_6573;
+const HILL_CELL: u32 = 9;
+const HILL_SALT: u64 = 0x6869_6c6c_7369_6465;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Island {
@@ -13,11 +15,12 @@ pub struct Island {
 impl Island {
     #[must_use]
     pub fn generate(seed: u64, radius: u8) -> Self {
-        let radius = u16::from(radius);
+        let radius = u16::from(radius.max(1));
         let reach = radius + radius / 4 + 1 + MARGIN;
         let size = 2 * reach + 1;
         let center = Tile::new(i32::from(reach), i32::from(reach));
         let outline = Noise::new(seed ^ OUTLINE_SALT, OUTLINE_CELL);
+        let hills = Noise::new(seed ^ HILL_SALT, HILL_CELL);
         let mut land = Map::new(size, size);
         for tile in land.tiles() {
             if within_outline(&outline, center, tile, radius) {
@@ -27,6 +30,7 @@ impl Island {
         let mut map = Map::new(size, size);
         for tile in reachable(&land, center) {
             map.set_terrain(tile, Terrain::Moss);
+            map.set_elevation(tile, elevation(&hills, center, tile, radius));
         }
         Self { map, center }
     }
@@ -38,10 +42,19 @@ fn within_outline(outline: &Noise, center: Tile, tile: Tile, radius: u16) -> boo
     center.distance_squared(tile) * (4 * NOISE_RANGE).pow(2) < edge * edge
 }
 
+fn elevation(hills: &Noise, center: Tile, tile: Tile, radius: u16) -> i16 {
+    let per_tile = i64::from(ELEVATION_PER_TILE);
+    let radius_squared = i64::from(radius).pow(2);
+    let inside = radius_squared - center.distance_squared(tile);
+    let dome = (3 * per_tile * inside / (2 * radius_squared)).max(0);
+    let hill = hills.sample(tile) * per_tile / NOISE_RANGE;
+    i16::try_from(per_tile / 2 + dome + hill).unwrap_or(i16::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Island;
-    use crate::{Tile, reachable};
+    use crate::{Direction, ELEVATION_PER_TILE, Tile, reachable};
 
     const RADIUS: u8 = 16;
     const SEEDS: std::ops::Range<u64> = 0..8;
@@ -92,6 +105,66 @@ mod tests {
         for island in islands() {
             let reached = reachable(&island.map, island.center).len();
             assert_eq!(reached, walkable(&island).count());
+        }
+    }
+
+    fn mean_elevation(island: &Island, tiles: &[Tile]) -> i64 {
+        let total: i64 = tiles
+            .iter()
+            .map(|&tile| i64::from(island.map.elevation(tile)))
+            .sum();
+        total / i64::try_from(tiles.len()).unwrap()
+    }
+
+    #[test]
+    fn the_void_has_no_elevation() {
+        for island in islands() {
+            for tile in island.map.tiles() {
+                if !island.map.is_walkable(tile) {
+                    assert_eq!(island.map.elevation(tile), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn land_rises_above_the_void() {
+        for island in islands() {
+            assert!(
+                walkable(&island).all(|tile| island.map.elevation(tile) >= ELEVATION_PER_TILE / 2)
+            );
+        }
+    }
+
+    #[test]
+    fn the_middle_is_higher_than_the_rim() {
+        for island in islands() {
+            let middle: Vec<Tile> = walkable(&island)
+                .filter(|&tile| 4 * island.center.distance_squared(tile) < radius_squared())
+                .collect();
+            let rim: Vec<Tile> = walkable(&island)
+                .filter(|&tile| {
+                    Direction::ALL
+                        .iter()
+                        .any(|&d| !island.map.is_walkable(tile.step(d)))
+                })
+                .collect();
+            assert!(mean_elevation(&island, &middle) > mean_elevation(&island, &rim));
+        }
+    }
+
+    #[test]
+    fn slopes_stay_gentle() {
+        for island in islands() {
+            for tile in walkable(&island) {
+                for direction in [Direction::East, Direction::North] {
+                    let next = tile.step(direction);
+                    if island.map.is_walkable(next) {
+                        let rise = island.map.elevation(next) - island.map.elevation(tile);
+                        assert!(rise.abs() <= ELEVATION_PER_TILE / 2);
+                    }
+                }
+            }
         }
     }
 
