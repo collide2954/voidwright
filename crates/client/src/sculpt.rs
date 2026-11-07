@@ -62,6 +62,35 @@ impl SkinnedMesh {
         });
     }
 
+    fn settle(&mut self) {
+        let corners =
+            |face: &[u32; 3]| face.map(|index| Vec3::from(self.vertices[index as usize].position));
+        let mut sums = vec![Vec3::ZERO; self.vertices.len()];
+        for face in self.indices.as_chunks::<3>().0 {
+            let [a, b, c] = corners(face);
+            let winding = (b - a).cross(c - a);
+            for &index in face {
+                sums[index as usize] += winding;
+            }
+        }
+        for (vertex, sum) in self.vertices.iter_mut().zip(sums) {
+            if Vec3::from(vertex.normal).dot(sum) < 0.0 {
+                vertex.normal = sum.normalize_or_zero().to_array();
+            }
+        }
+        let vertices = &self.vertices;
+        for face in self.indices.as_chunks_mut::<3>().0 {
+            let [a, b, c] = face.map(|index| Vec3::from(vertices[index as usize].position));
+            let winding = (b - a).cross(c - a);
+            if face
+                .iter()
+                .all(|&index| Vec3::from(vertices[index as usize].normal).dot(winding) < 0.0)
+            {
+                face.swap(1, 2);
+            }
+        }
+    }
+
     pub fn append(&mut self, other: &Self) {
         let offset = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
         self.vertices.extend_from_slice(&other.vertices);
@@ -416,10 +445,12 @@ impl Sculpt {
             &Lattice::around(low, high, cell),
         );
         let vertices = parallel::map(&net.positions, |&position| self.vertex(position, cell));
-        SkinnedMesh {
+        let mut mesh = SkinnedMesh {
             vertices,
             indices: net.indices,
-        }
+        };
+        mesh.settle();
+        mesh
     }
 
     fn bounds(&self) -> Option<(Vec3, Vec3)> {
@@ -742,6 +773,31 @@ mod tests {
             }
         }
         assert!(outside > 100 && inside > 100);
+    }
+
+    #[test]
+    fn a_thin_shell_keeps_its_normals_with_its_faces() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        let shell = Form::Drape {
+            length: 0.4,
+            radii: Vec2::new(0.1, 0.2),
+            thickness: 0.025,
+            folds: Vec2::ZERO,
+        };
+        sculpt.add(Stroke::new(0, shell, PAINT).wrinkled(0.008, Vec3::splat(20.0)));
+        let mesh = sculpt.mesh(0.03);
+        assert!(mesh.triangles() > 100);
+        for face in mesh.indices.as_chunks::<3>().0 {
+            let corners = face.map(|index| Vec3::from(mesh.vertices[index as usize].position));
+            let winding = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+            let agreeing = face
+                .iter()
+                .filter(|&&index| {
+                    Vec3::from(mesh.vertices[index as usize].normal).dot(winding) > 0.0
+                })
+                .count();
+            assert!(agreeing > 0 || winding.length() < 1e-9);
+        }
     }
 
     #[test]
