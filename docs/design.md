@@ -2,6 +2,13 @@
 
 This document gives the design decisions for Voidwright.
 
+## Goals
+
+- The game is fast.
+- The game is beautiful.
+- The game is easy to play on computers with few resources.
+- The game is immersive.
+
 ## Game
 
 | Topic | Decision |
