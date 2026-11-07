@@ -12,6 +12,7 @@ mod launch;
 mod light;
 mod mesh;
 mod motion;
+pub mod nets;
 mod paint;
 mod palette;
 mod picking;
