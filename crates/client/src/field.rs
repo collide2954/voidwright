@@ -60,8 +60,15 @@ pub fn inside_drape(point: Vec3, length: f32, radii: Vec2, folds: Vec2) -> bool 
 
 fn unfold(point: Vec3, length: f32, folds: Vec2) -> Vec2 {
     let down = (-point.y / length).clamp(0.0, 1.0);
-    let fold = 1.0 + folds.y * down * (folds.x * point.z.atan2(point.x)).sin();
+    let fold = 1.0 + folds.y * down * wave(folds.x, point.z.atan2(point.x));
     Vec2::new(point.xz().length() / fold, point.y)
+}
+
+fn wave(count: f32, angle: f32) -> f32 {
+    let (wide, narrow) = ((count * 0.55).round(), (count * 1.6).round());
+    0.55 * (count * angle).sin()
+        + 0.28 * (narrow * angle + 1.3).sin()
+        + 0.17 * (wide * angle + 2.4).sin()
 }
 
 #[must_use]
@@ -96,7 +103,7 @@ pub fn smooth_carve(base: f32, carved: f32, blend: f32) -> (f32, f32) {
 mod tests {
     use super::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
     use glam::{Vec2, Vec3};
-    use std::f32::consts::PI;
+    use std::f32::consts::TAU;
 
     fn near(value: f32, expected: f32) -> bool {
         (value - expected).abs() < 1e-3
@@ -166,15 +173,39 @@ mod tests {
         ));
     }
 
+    fn pushes(down: f32) -> Vec<f32> {
+        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::new(9.0, 0.1));
+        (0..360)
+            .map(|step| {
+                let angle = TAU * f32::from(u16::try_from(step).unwrap()) / 360.0;
+                let point = Vec3::new(angle.cos(), 0.0, angle.sin()) * 0.3 - Vec3::Y * down;
+                drape(point, length, radii, 0.0, Vec2::ZERO)
+                    - drape(point, length, radii, 0.0, folds)
+            })
+            .collect()
+    }
+
     #[test]
     fn folds_push_a_drape_out_more_toward_its_hem() {
-        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::new(4.0, 0.1));
-        let crest = Vec3::new((PI / 8.0).cos(), 0.0, (PI / 8.0).sin()) * 0.3;
-        let push = |down: f32| {
-            let point = crest - Vec3::Y * down;
-            drape(point, length, radii, 0.0, Vec2::ZERO) - drape(point, length, radii, 0.0, folds)
-        };
-        assert!(push(0.38) > push(0.04) + 0.01);
+        let deepest = |down: f32| pushes(down).into_iter().fold(0.0, f32::max);
+        assert!(deepest(0.38) > deepest(0.04) + 0.01);
+    }
+
+    #[test]
+    fn folds_differ_in_depth_around_the_hem() {
+        let around = pushes(0.38);
+        let crests: Vec<f32> = (0..around.len())
+            .filter(|&index| {
+                let before = around[(index + around.len() - 1) % around.len()];
+                let after = around[(index + 1) % around.len()];
+                around[index] > before && around[index] >= after && around[index] > 0.0
+            })
+            .map(|index| around[index])
+            .collect();
+        let highest = crests.iter().copied().fold(0.0, f32::max);
+        let lowest = crests.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(crests.len() >= 6);
+        assert!(lowest < highest * 0.7);
     }
 
     #[test]
