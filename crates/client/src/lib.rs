@@ -15,7 +15,7 @@ mod terrain;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
 pub use game::Game;
-pub use input::{Controls, Turn, drag_rotation, to_screen};
+pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};
 pub use light::{Light, VAEL};
 pub use mesh::{Mesh, Vertex, normal};
 pub use motion::{center, position};

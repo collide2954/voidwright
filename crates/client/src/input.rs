@@ -1,4 +1,5 @@
 use glam::Vec2;
+use miniquad::KeyCode;
 
 const YAW_SPEED: f32 = 2.2;
 const PITCH_SPEED: f32 = 1.2;
@@ -47,10 +48,29 @@ pub fn drag_rotation(pixels: Vec2) -> Vec2 {
     Vec2::new(-pixels.x, pixels.y) * DRAG_SENSITIVITY
 }
 
+#[must_use]
+pub const fn turn_for(key: KeyCode) -> Option<Turn> {
+    match key {
+        KeyCode::Left => Some(Turn::Left),
+        KeyCode::Right => Some(Turn::Right),
+        KeyCode::Up => Some(Turn::Up),
+        KeyCode::Down => Some(Turn::Down),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub fn aspect(size: Vec2) -> f32 {
+    size.x / size.y.max(1.0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Controls, PITCH_SPEED, Turn, YAW_SPEED, drag_rotation, to_screen};
+    use super::{
+        Controls, PITCH_SPEED, Turn, YAW_SPEED, aspect, drag_rotation, to_screen, turn_for,
+    };
     use glam::Vec2;
+    use miniquad::KeyCode;
 
     fn close(a: Vec2, b: Vec2) -> bool {
         a.distance(b) < 1e-5
@@ -97,6 +117,19 @@ mod tests {
         controls.press(Turn::Down, true);
         controls.press(Turn::Down, false);
         assert!(close(controls.rotation(1.0), Vec2::ZERO));
+    }
+
+    #[test]
+    fn arrow_keys_turn_the_camera() {
+        assert_eq!(turn_for(KeyCode::Left), Some(Turn::Left));
+        assert_eq!(turn_for(KeyCode::Down), Some(Turn::Down));
+        assert_eq!(turn_for(KeyCode::A), None);
+    }
+
+    #[test]
+    fn the_aspect_ratio_survives_a_zero_height() {
+        assert!((aspect(Vec2::new(1600.0, 900.0)) - 16.0 / 9.0).abs() < 1e-6);
+        assert!(aspect(Vec2::new(100.0, 0.0)).is_finite());
     }
 
     #[test]
