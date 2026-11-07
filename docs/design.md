@@ -84,7 +84,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Island edges | A jagged rock lip surrounds each island. The walls below the lip show the layers of the slab. |
 | Fragment shape | Each fragment is a thick, uneven slab from the ring. Soil lies on layers of rock and Wright hull plates. The edges are broken, and the bottom is rough. The thickness changes much from fragment to fragment. |
 | Fragment details | Broken girders and conduits come out of the walls and hang below. Roots and strands of moss hang over the edges. Small pieces of rock and plating float near each fragment. Thin streams of water fall from some edges and become mist in the void. |
-| Avatar | A sculpted low-poly figure in a salvage suit: tapered limbs, a round helmet with a teal visor around the front, shoulder and knee plates, a backpack with tanks, and glowing seams. The faces are flat-shaded. |
+| Avatar | A hooded wanderer: a long, weathered coat and a deep hood over a rebreather mask with a thin, glowing visor slit. Salvaged plates on one side only, a trailing scarf, wrapped boots, and a lantern that hangs from the pack. All models come from code. |
 | Animation | A full walk cycle: knees and elbows bend, the feet move with the ground, the hips sway, the torso leans and turns against the hips, and the body bobs two times in each stride. Running leans more and makes the stride longer. The figure breathes when it stands. |
 | Walk marker | A small teal ring pulses on the target tile until the player arrives. |
 | Sky | Deep indigo with magenta and teal nebula clouds and many stars. Vael glows amber low on the horizon. Far fragments of the ring drift in the distance. |
