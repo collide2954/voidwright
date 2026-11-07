@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod clock;
+pub mod contour;
 mod game;
 mod input;
 mod launch;
