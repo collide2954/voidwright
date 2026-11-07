@@ -71,6 +71,8 @@ The total XP for level 80 is half of the total XP for level 99.
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
 | Models | Code makes all models. Models have flat faces and vertex colors. Models do not use textures. |
+| Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
+| Island edges | A jagged rock lip and a cliff band surround each island. A rock underside hangs below the island. |
 | Maps | A seed makes each island: outline, hills, rocks, and crystals. |
 
 ## Technology
