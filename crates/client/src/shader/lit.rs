@@ -8,25 +8,25 @@ const FOG_RANGE: [f32; 2] = [30.0, 90.0];
 pub const VERTEX: &str = "#version 100
 attribute vec3 in_position;
 attribute vec3 in_normal;
-attribute vec4 in_color;
+attribute vec3 in_color;
+attribute vec2 in_params;
 uniform mat4 view_projection;
 uniform mat4 model;
 uniform vec3 eye;
 uniform vec2 fog_range;
-uniform vec3 toward_sun;
-uniform vec3 sun;
-uniform vec3 sky;
-uniform vec3 below;
-varying mediump vec3 color;
+varying mediump vec3 toward_eye;
+varying mediump vec3 normal;
+varying mediump vec3 albedo;
+varying mediump vec2 params;
 varying mediump float fog;
 void main() {
-    vec4 world = model * vec4(in_position, 1.0);
-    vec3 normal = normalize((model * vec4(in_normal, 0.0)).xyz);
-    vec3 ambient = mix(below, sky, normal.y * 0.5 + 0.5);
-    vec3 lit = in_color.rgb * (sun * max(dot(normal, toward_sun), 0.0) + ambient);
-    color = mix(lit, in_color.rgb * 2.5, in_color.a);
-    gl_Position = view_projection * world;
-    float depth = length(world.xyz - eye) - fog_range.x;
+    vec4 placed = model * vec4(in_position, 1.0);
+    toward_eye = eye - placed.xyz;
+    normal = (model * vec4(in_normal, 0.0)).xyz;
+    albedo = in_color;
+    params = in_params;
+    gl_Position = view_projection * placed;
+    float depth = length(placed.xyz - eye) - fog_range.x;
     fog = clamp(depth / (fog_range.y - fog_range.x), 0.0, 1.0);
 }
 ";
@@ -34,13 +34,29 @@ void main() {
 pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform vec3 fog_color;
-varying mediump vec3 color;
+uniform vec3 toward_sun;
+uniform vec3 sun;
+uniform vec3 sky;
+uniform vec3 below;
+varying mediump vec3 toward_eye;
+varying mediump vec3 normal;
+varying mediump vec3 albedo;
+varying mediump vec2 params;
 varying mediump float fog;
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 void main() {
-    vec3 shaded = mix(color, fog_color, fog);
+    vec3 facing = normalize(normal);
+    vec3 view = normalize(toward_eye);
+    vec3 halfway = normalize(view + toward_sun);
+    float shine = params.x;
+    float diffuse = max(dot(facing, toward_sun), 0.0);
+    float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
+    float rim = pow(1.0 - max(dot(facing, view), 0.0), 4.0);
+    vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5);
+    vec3 lit = albedo * (sun * diffuse + ambient) + sun * highlight + sky * rim * 0.8;
+    vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
 ";

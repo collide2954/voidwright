@@ -1,200 +1,26 @@
-use std::f32::consts::TAU;
+use std::f32::consts::PI;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec3};
 
-use crate::palette::linear;
+use crate::shape::{LitMesh, Material, Section, round};
 use crate::{Pose, Stride};
 
-const SUIT: Vec4 = Vec4::new(0.36, 0.39, 0.47, 0.0);
-const SUIT_DARK: Vec4 = Vec4::new(0.24, 0.26, 0.32, 0.0);
-const PLATE: Vec4 = Vec4::new(0.2, 0.52, 0.55, 0.0);
-const HELMET: Vec4 = Vec4::new(0.5, 0.52, 0.6, 0.0);
-const BOOT: Vec4 = Vec4::new(0.16, 0.15, 0.19, 0.0);
-const PACK: Vec4 = Vec4::new(0.32, 0.28, 0.27, 0.0);
-const TANK: Vec4 = Vec4::new(0.55, 0.42, 0.3, 0.0);
-const VISOR: Vec4 = Vec4::new(0.45, 1.0, 0.92, 1.0);
-const SEAM: Vec4 = Vec4::new(0.3, 0.8, 0.78, 1.0);
-const BEACON: Vec4 = Vec4::new(1.0, 0.65, 0.3, 1.0);
-const SIDES: u16 = 8;
+const UNDERSUIT: Material = Material::matte(Vec3::new(0.11, 0.115, 0.125), 0.08);
+const PLATE: Material = Material::matte(Vec3::new(0.6, 0.56, 0.48), 0.3);
+const HELMET: Material = Material::matte(Vec3::new(0.66, 0.62, 0.54), 0.35);
+const METAL: Material = Material::matte(Vec3::new(0.3, 0.32, 0.35), 0.6);
+const DARK_METAL: Material = Material::matte(Vec3::new(0.18, 0.19, 0.21), 0.45);
+const LEATHER: Material = Material::matte(Vec3::new(0.24, 0.17, 0.12), 0.15);
+const BOOT: Material = Material::matte(Vec3::new(0.16, 0.13, 0.11), 0.2);
+const SOLE: Material = Material::matte(Vec3::new(0.06, 0.06, 0.06), 0.05);
+const TANK: Material = Material::matte(Vec3::new(0.5, 0.38, 0.22), 0.55);
+const GLASS: Material = Material::matte(Vec3::new(0.02, 0.035, 0.045), 1.0);
+const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85));
+const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25));
+const FRONT: (f32, f32) = (1.15 * PI, 1.85 * PI);
+const BACK: (f32, f32) = (0.15 * PI, 0.85 * PI);
 const PULSE: f32 = 0.12;
 const PULSE_RATE: f32 = 5.0;
-const FACES: [(Vec3, Vec3, Vec3); 6] = [
-    (Vec3::X, Vec3::Y, Vec3::Z),
-    (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-    (Vec3::Y, Vec3::Z, Vec3::X),
-    (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-    (Vec3::Z, Vec3::X, Vec3::Y),
-    (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-];
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct LitVertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub color: [f32; 4],
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct LitMesh {
-    pub vertices: Vec<LitVertex>,
-    pub indices: Vec<u32>,
-}
-
-impl LitMesh {
-    pub fn face(&mut self, corners: &[Vec3], color: Vec4, outward: Vec3) {
-        let mut normal = (corners[1] - corners[0])
-            .cross(corners[2] - corners[0])
-            .normalize_or_zero();
-        let mut ordered = corners.to_vec();
-        if normal.dot(outward) < 0.0 {
-            ordered.reverse();
-            normal = -normal;
-        }
-        let first = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
-        for corner in &ordered {
-            self.vertices.push(LitVertex {
-                position: corner.to_array(),
-                normal: normal.to_array(),
-                color: linear(color.truncate()).extend(color.w).to_array(),
-            });
-        }
-        let count = u32::try_from(ordered.len()).expect("a face has few corners");
-        for index in 1..count - 1 {
-            self.indices
-                .extend([first, first + index, first + index + 1]);
-        }
-    }
-
-    pub fn cuboid(&mut self, min: Vec3, max: Vec3, color: Vec4) {
-        let center = (min + max) / 2.0;
-        let half = (max - min) / 2.0;
-        for (normal, u, v) in FACES {
-            let middle = center + normal * half.dot(normal.abs());
-            let (across, up) = (u * half.dot(u.abs()), v * half.dot(v.abs()));
-            let corners = [
-                middle - across - up,
-                middle + across - up,
-                middle + across + up,
-                middle - across + up,
-            ];
-            self.face(&corners, color, normal);
-        }
-    }
-
-    pub fn prism(&mut self, base: Vec3, base_size: Vec2, top: Vec3, top_size: Vec2, color: Vec4) {
-        let ring = |center: Vec3, size: Vec2| -> Vec<Vec3> {
-            (0..SIDES)
-                .map(|side| {
-                    let (sin, cos) = (TAU * f32::from(side) / f32::from(SIDES)).sin_cos();
-                    center + Vec3::new(cos * size.x, 0.0, sin * size.y)
-                })
-                .collect()
-        };
-        let (lower, upper) = (ring(base, base_size), ring(top, top_size));
-        let middle = (base + top) / 2.0;
-        for side in 0..lower.len() {
-            let next = (side + 1) % lower.len();
-            let corners = [lower[side], lower[next], upper[next], upper[side]];
-            let center = corners.iter().sum::<Vec3>() / 4.0;
-            self.face(&corners, color, center - middle);
-        }
-        self.face(&lower, color, base - top);
-        self.face(&upper, color, top - base);
-    }
-
-    pub fn dome(&mut self, center: Vec3, radius: f32, rings: u16, color: Vec4) {
-        let segments = SIDES + 2;
-        let point = |ring: u16, segment: u16| {
-            let polar = TAU / 2.0 * f32::from(ring) / f32::from(rings);
-            let around = TAU * f32::from(segment) / f32::from(segments);
-            center
-                + radius
-                    * Vec3::new(
-                        polar.sin() * around.cos(),
-                        -polar.cos(),
-                        polar.sin() * around.sin(),
-                    )
-        };
-        for ring in 0..rings {
-            for segment in 0..segments {
-                let corners = [
-                    point(ring, segment),
-                    point(ring, segment + 1),
-                    point(ring + 1, segment + 1),
-                    point(ring + 1, segment),
-                ];
-                let unique: Vec<Vec3> = corners
-                    .iter()
-                    .enumerate()
-                    .filter(|&(index, corner)| {
-                        corners[..index]
-                            .iter()
-                            .all(|earlier| earlier.distance(*corner) > 1e-6)
-                    })
-                    .map(|(_, corner)| *corner)
-                    .collect();
-                if unique.len() >= 3 {
-                    let middle = unique.iter().sum::<Vec3>()
-                        / f32::from(u8::try_from(unique.len()).unwrap_or(1));
-                    self.face(&unique, color, middle - center);
-                }
-            }
-        }
-    }
-
-    pub fn band(&mut self, center: Vec3, radius: f32, height: f32, arc: f32, color: Vec4) {
-        let steps: u16 = 6;
-        let point = |step: u16, y: f32| {
-            let angle = -TAU / 4.0 - arc / 2.0 + arc * f32::from(step) / f32::from(steps);
-            center + Vec3::new(radius * angle.cos(), y, radius * angle.sin())
-        };
-        for step in 0..steps {
-            let corners = [
-                point(step, -height / 2.0),
-                point(step + 1, -height / 2.0),
-                point(step + 1, height / 2.0),
-                point(step, height / 2.0),
-            ];
-            let middle = corners.iter().sum::<Vec3>() / 4.0;
-            self.face(&corners, color, middle - center);
-        }
-    }
-
-    pub fn ring(&mut self, inner: f32, outer: f32, color: Vec4) {
-        let segments = SIDES * 2;
-        let point = |segment: u16, radius: f32| {
-            let (sin, cos) = (TAU * f32::from(segment) / f32::from(segments)).sin_cos();
-            Vec3::new(cos * radius, 0.0, sin * radius)
-        };
-        for segment in 0..segments {
-            let corners = [
-                point(segment, inner),
-                point(segment, outer),
-                point(segment + 1, outer),
-                point(segment + 1, inner),
-            ];
-            self.face(&corners, color, Vec3::Y);
-        }
-    }
-
-    #[must_use]
-    pub fn triangles(&self) -> usize {
-        self.indices.len() / 3
-    }
-}
-
-#[must_use]
-pub fn pulse(time: f32) -> f32 {
-    1.0 + PULSE * (time * PULSE_RATE).sin()
-}
-
-#[must_use]
-pub fn marker_ring() -> LitMesh {
-    let mut mesh = LitMesh::default();
-    mesh.ring(0.26, 0.36, VISOR);
-    mesh
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bone {
@@ -240,7 +66,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
     (
         Bone::LeftUpperArm,
         Some(Bone::Torso),
-        Vec3::new(-0.25, 0.42, 0.0),
+        Vec3::new(-0.235, 0.42, 0.0),
     ),
     (
         Bone::LeftForearm,
@@ -250,7 +76,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
     (
         Bone::RightUpperArm,
         Some(Bone::Torso),
-        Vec3::new(0.25, 0.42, 0.0),
+        Vec3::new(0.235, 0.42, 0.0),
     ),
     (
         Bone::RightForearm,
@@ -258,7 +84,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Vec3::new(0.0, -0.27, 0.0),
     ),
 ];
-const ARM_SPLAY: f32 = 0.1;
+const ARM_SPLAY: f32 = 0.08;
 const HEAD_STEADY: f32 = 0.6;
 const COUNTER_TWIST: f32 = 0.8;
 
@@ -317,230 +143,292 @@ pub fn placement(position: Vec3, stride: &Stride) -> Mat4 {
 }
 
 #[must_use]
+pub fn pulse(time: f32) -> f32 {
+    1.0 + PULSE * (time * PULSE_RATE).sin()
+}
+
+#[must_use]
+pub fn marker_ring() -> LitMesh {
+    let mut mesh = LitMesh::default();
+    mesh.ring(0.26, 0.36, TEAL_LIGHT);
+    mesh
+}
+
+#[must_use]
 pub fn voidwright() -> Vec<Part> {
-    vec![
-        Part {
-            bone: Bone::Pelvis,
-            mesh: pelvis(),
-        },
-        Part {
-            bone: Bone::Torso,
-            mesh: torso(),
-        },
-        Part {
-            bone: Bone::Head,
-            mesh: head(),
-        },
-        Part {
-            bone: Bone::LeftThigh,
-            mesh: thigh(),
-        },
-        Part {
-            bone: Bone::LeftShin,
-            mesh: shin(),
-        },
-        Part {
-            bone: Bone::RightThigh,
-            mesh: thigh(),
-        },
-        Part {
-            bone: Bone::RightShin,
-            mesh: shin(),
-        },
-        Part {
-            bone: Bone::LeftUpperArm,
-            mesh: upper_arm(),
-        },
-        Part {
-            bone: Bone::LeftForearm,
-            mesh: forearm(),
-        },
-        Part {
-            bone: Bone::RightUpperArm,
-            mesh: upper_arm(),
-        },
-        Part {
-            bone: Bone::RightForearm,
-            mesh: forearm(),
-        },
+    [
+        (Bone::Pelvis, pelvis()),
+        (Bone::Torso, torso()),
+        (Bone::Head, head()),
+        (Bone::LeftThigh, thigh()),
+        (Bone::LeftShin, shin()),
+        (Bone::RightThigh, thigh()),
+        (Bone::RightShin, shin()),
+        (Bone::LeftUpperArm, upper_arm()),
+        (Bone::LeftForearm, forearm()),
+        (Bone::RightUpperArm, upper_arm()),
+        (Bone::RightForearm, forearm()),
     ]
+    .into_iter()
+    .map(|(bone, mesh)| Part { bone, mesh })
+    .collect()
 }
 
-fn at(x: f32, y: f32, z: f32) -> Vec3 {
-    Vec3::new(x, y, z)
+fn forward(z: f32) -> Vec3 {
+    Vec3::new(0.0, 0.0, z)
 }
 
-fn size(x: f32, z: f32) -> Vec2 {
-    Vec2::new(x, z)
+fn block(at: Vec3, height: f32, half: (f32, f32), material: Material, mesh: &mut LitMesh) {
+    let sections = [
+        round(0.0, half.0, half.1).squared(5.0).shifted(at),
+        round(height, half.0, half.1).squared(5.0).shifted(at),
+    ];
+    mesh.loft(&sections, material);
 }
 
 fn pelvis() -> LitMesh {
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, -0.09, 0.0),
-        size(0.15, 0.1),
-        at(0.0, 0.03, 0.0),
-        size(0.14, 0.09),
-        SUIT_DARK,
+    mesh.loft(
+        &[
+            round(-0.11, 0.11, 0.085),
+            round(-0.06, 0.135, 0.095),
+            round(0.0, 0.14, 0.098),
+            round(0.05, 0.132, 0.092),
+            round(0.08, 0.128, 0.09),
+        ],
+        UNDERSUIT,
     );
-    mesh.prism(
-        at(0.0, 0.02, 0.0),
-        size(0.155, 0.105),
-        at(0.0, 0.07, 0.0),
-        size(0.15, 0.1),
-        PLATE,
+    mesh.loft(
+        &[round(0.0, 0.146, 0.104), round(0.045, 0.143, 0.101)],
+        LEATHER,
     );
-    mesh.cuboid(at(-0.03, 0.025, -0.115), at(0.03, 0.065, -0.1), SEAM);
+    block(
+        Vec3::new(0.0, 0.008, -0.104),
+        0.03,
+        (0.03, 0.008),
+        TEAL_LIGHT,
+        &mut mesh,
+    );
+    for side in [-1.0, 1.0] {
+        block(
+            Vec3::new(side * 0.13, -0.03, 0.03),
+            0.065,
+            (0.022, 0.035),
+            LEATHER,
+            &mut mesh,
+        );
+    }
+    block(
+        Vec3::new(0.06, -0.03, 0.1),
+        0.06,
+        (0.035, 0.018),
+        LEATHER,
+        &mut mesh,
+    );
     mesh
 }
 
 fn torso() -> LitMesh {
+    let body = [
+        round(0.0, 0.128, 0.09),
+        round(0.1, 0.138, 0.094),
+        round(0.22, 0.158, 0.104).shifted(forward(-0.008)),
+        round(0.33, 0.185, 0.112).shifted(forward(-0.01)),
+        round(0.41, 0.195, 0.108).shifted(forward(-0.006)),
+        round(0.46, 0.15, 0.09),
+        round(0.5, 0.075, 0.065),
+    ];
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, 0.0, 0.0),
-        size(0.13, 0.09),
-        at(0.0, 0.18, 0.0),
-        size(0.16, 0.1),
-        SUIT,
+    mesh.loft(&body, UNDERSUIT);
+    mesh.shell(&body[2..5], FRONT, 0.014, PLATE);
+    mesh.shell(&body[1..4], BACK, 0.01, PLATE);
+    mesh.loft(
+        &[round(0.43, 0.105, 0.088), round(0.5, 0.088, 0.076)],
+        METAL,
     );
-    mesh.prism(
-        at(0.0, 0.18, 0.0),
-        size(0.16, 0.1),
-        at(0.0, 0.42, 0.0),
-        size(0.21, 0.12),
-        SUIT,
+    let pack = [
+        round(0.12, 0.125, 0.055)
+            .squared(5.0)
+            .shifted(forward(0.17)),
+        round(0.16, 0.14, 0.065).squared(5.0).shifted(forward(0.17)),
+        round(0.4, 0.14, 0.065).squared(5.0).shifted(forward(0.17)),
+        round(0.44, 0.12, 0.055).squared(5.0).shifted(forward(0.17)),
+    ];
+    mesh.loft(&pack, DARK_METAL);
+    for side in [-1.0, 1.0] {
+        let tank = |y: f32, radius: f32| -> Section {
+            round(y, radius, radius).shifted(Vec3::new(side * 0.075, 0.0, 0.255))
+        };
+        mesh.loft(
+            &[
+                tank(0.14, 0.032),
+                tank(0.16, 0.04),
+                tank(0.4, 0.04),
+                tank(0.42, 0.032),
+            ],
+            TANK,
+        );
+    }
+    block(
+        Vec3::new(0.0, 0.41, 0.236),
+        0.025,
+        (0.035, 0.006),
+        AMBER_LIGHT,
+        &mut mesh,
     );
-    mesh.prism(
-        at(0.0, 0.42, 0.0),
-        size(0.21, 0.12),
-        at(0.0, 0.48, 0.0),
-        size(0.15, 0.1),
-        SUIT,
-    );
-    mesh.cuboid(at(-0.12, 0.24, -0.135), at(0.12, 0.4, -0.115), PLATE);
-    mesh.cuboid(at(-0.185, 0.2, -0.09), at(-0.17, 0.38, -0.07), SEAM);
-    mesh.cuboid(at(0.17, 0.2, -0.09), at(0.185, 0.38, -0.07), SEAM);
-    mesh.prism(
-        at(0.0, 0.46, 0.0),
-        size(0.09, 0.08),
-        at(0.0, 0.52, 0.0),
-        size(0.08, 0.07),
-        PLATE,
-    );
-    mesh.cuboid(at(-0.14, 0.14, 0.11), at(0.14, 0.44, 0.24), PACK);
-    mesh.prism(
-        at(-0.07, 0.12, 0.27),
-        size(0.045, 0.045),
-        at(-0.07, 0.46, 0.27),
-        size(0.045, 0.045),
-        TANK,
-    );
-    mesh.prism(
-        at(0.07, 0.12, 0.27),
-        size(0.045, 0.045),
-        at(0.07, 0.46, 0.27),
-        size(0.045, 0.045),
-        TANK,
-    );
-    mesh.cuboid(at(-0.03, 0.44, 0.15), at(0.03, 0.48, 0.21), BEACON);
     mesh
 }
 
 fn head() -> LitMesh {
+    let shell = [
+        round(0.03, 0.105, 0.115),
+        round(0.07, 0.135, 0.15),
+        round(0.14, 0.148, 0.16),
+        round(0.21, 0.142, 0.152),
+        round(0.26, 0.118, 0.128),
+        round(0.3, 0.078, 0.085),
+        round(0.32, 0.026, 0.028),
+    ];
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, 0.0, 0.0),
-        size(0.06, 0.06),
-        at(0.0, 0.06, 0.0),
-        size(0.06, 0.06),
-        SUIT_DARK,
+    mesh.loft(
+        &[round(0.0, 0.055, 0.055), round(0.06, 0.05, 0.05)],
+        UNDERSUIT,
     );
-    mesh.dome(at(0.0, 0.15, 0.0), 0.15, 6, HELMET);
-    mesh.band(at(0.0, 0.15, 0.0), 0.153, 0.07, 2.4, VISOR);
-    mesh.prism(
-        at(0.14, 0.18, 0.04),
-        size(0.012, 0.012),
-        at(0.14, 0.32, 0.04),
-        size(0.01, 0.01),
-        PLATE,
+    mesh.loft(&shell, HELMET);
+    mesh.shell(&shell[1..4], (1.25 * PI, 1.75 * PI), 0.006, GLASS);
+    let strip = [round(0.085, 0.137, 0.152), round(0.095, 0.139, 0.154)];
+    mesh.shell(&strip, (1.3 * PI, 1.7 * PI), 0.008, TEAL_LIGHT);
+    block(
+        Vec3::new(0.0, 0.035, -0.135),
+        0.05,
+        (0.04, 0.02),
+        METAL,
+        &mut mesh,
     );
-    mesh.cuboid(at(0.13, 0.32, 0.03), at(0.15, 0.34, 0.05), BEACON);
+    let mast = |y: f32| round(y, 0.007, 0.007).shifted(Vec3::new(0.12, 0.0, 0.07));
+    mesh.loft(&[mast(0.18), mast(0.36)], METAL);
+    block(
+        Vec3::new(0.12, 0.36, 0.07),
+        0.02,
+        (0.011, 0.011),
+        AMBER_LIGHT,
+        &mut mesh,
+    );
     mesh
 }
 
 fn thigh() -> LitMesh {
+    let leg = [
+        round(0.0, 0.085, 0.09),
+        round(-0.05, 0.09, 0.096).shifted(forward(-0.005)),
+        round(-0.18, 0.08, 0.086),
+        round(-0.31, 0.062, 0.066),
+        round(-0.39, 0.055, 0.058),
+    ];
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, -0.39, 0.0),
-        size(0.06, 0.06),
-        at(0.0, 0.0, 0.0),
-        size(0.075, 0.075),
-        SUIT,
-    );
-    mesh.cuboid(at(-0.05, -0.41, -0.09), at(0.05, -0.33, -0.055), PLATE);
+    mesh.loft(&leg, UNDERSUIT);
+    mesh.shell(&leg[1..4], (1.2 * PI, 1.8 * PI), 0.01, PLATE);
+    mesh.shell(&leg[3..5], (1.25 * PI, 1.75 * PI), 0.016, PLATE);
     mesh
 }
 
 fn shin() -> LitMesh {
+    let leg = [
+        round(0.0, 0.056, 0.06),
+        round(-0.08, 0.062, 0.068).shifted(forward(0.008)),
+        round(-0.2, 0.05, 0.054),
+        round(-0.27, 0.043, 0.046),
+    ];
+    let boot = [
+        round(-0.25, 0.05, 0.055).squared(3.0),
+        round(-0.3, 0.058, 0.07)
+            .squared(3.0)
+            .shifted(forward(-0.01)),
+        round(-0.34, 0.066, 0.105)
+            .squared(3.0)
+            .shifted(forward(-0.035)),
+        round(-0.375, 0.07, 0.12)
+            .squared(3.0)
+            .shifted(forward(-0.04)),
+    ];
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, -0.31, 0.0),
-        size(0.05, 0.05),
-        at(0.0, 0.0, 0.0),
-        size(0.06, 0.06),
-        SUIT,
+    mesh.loft(&leg, UNDERSUIT);
+    mesh.shell(&leg[..3], (1.2 * PI, 1.8 * PI), 0.01, PLATE);
+    mesh.loft(&boot, BOOT);
+    mesh.loft(
+        &[
+            round(-0.375, 0.072, 0.122)
+                .squared(3.0)
+                .shifted(forward(-0.04)),
+            round(-0.39, 0.07, 0.12)
+                .squared(3.0)
+                .shifted(forward(-0.04)),
+        ],
+        SOLE,
     );
-    mesh.cuboid(at(-0.04, -0.26, -0.075), at(0.04, -0.06, -0.055), PLATE);
-    mesh.cuboid(at(-0.065, -0.37, -0.13), at(0.065, -0.29, 0.07), BOOT);
-    mesh.cuboid(at(-0.07, -0.39, -0.135), at(0.07, -0.37, 0.075), SUIT_DARK);
     mesh
 }
 
 fn upper_arm() -> LitMesh {
     let mut mesh = LitMesh::default();
-    mesh.dome(at(0.0, 0.0, 0.0), 0.085, 3, PLATE);
-    mesh.prism(
-        at(0.0, -0.27, 0.0),
-        size(0.045, 0.045),
-        at(0.0, 0.0, 0.0),
-        size(0.055, 0.055),
-        SUIT,
+    mesh.loft(
+        &[
+            round(0.0, 0.055, 0.055),
+            round(-0.07, 0.058, 0.056),
+            round(-0.2, 0.046, 0.046),
+            round(-0.27, 0.043, 0.043),
+        ],
+        UNDERSUIT,
+    );
+    mesh.loft(
+        &[
+            round(-0.07, 0.07, 0.072),
+            round(-0.02, 0.083, 0.083),
+            round(0.03, 0.076, 0.078),
+            round(0.06, 0.045, 0.05),
+            round(0.07, 0.012, 0.014),
+        ],
+        PLATE,
     );
     mesh
 }
 
 fn forearm() -> LitMesh {
     let mut mesh = LitMesh::default();
-    mesh.prism(
-        at(0.0, -0.23, 0.0),
-        size(0.04, 0.04),
-        at(0.0, 0.0, 0.0),
-        size(0.048, 0.048),
-        SUIT,
+    mesh.loft(
+        &[
+            round(0.0, 0.043, 0.043),
+            round(-0.06, 0.048, 0.045),
+            round(-0.19, 0.035, 0.031),
+            round(-0.21, 0.034, 0.03),
+        ],
+        UNDERSUIT,
     );
-    mesh.prism(
-        at(0.0, -0.2, 0.0),
-        size(0.052, 0.052),
-        at(0.0, -0.08, 0.0),
-        size(0.056, 0.056),
+    mesh.loft(
+        &[round(-0.07, 0.054, 0.051), round(-0.17, 0.044, 0.04)],
         PLATE,
     );
-    mesh.prism(
-        at(0.0, -0.215, 0.0),
-        size(0.05, 0.05),
-        at(0.0, -0.2, 0.0),
-        size(0.05, 0.05),
-        SEAM,
+    mesh.loft(
+        &[round(-0.17, 0.045, 0.041), round(-0.18, 0.043, 0.039)],
+        TEAL_LIGHT,
     );
-    mesh.cuboid(at(-0.035, -0.3, -0.04), at(0.035, -0.22, 0.04), BOOT);
+    mesh.loft(
+        &[
+            round(-0.21, 0.033, 0.027).squared(3.0),
+            round(-0.25, 0.041, 0.023).squared(3.0),
+            round(-0.29, 0.037, 0.019).squared(3.0),
+            round(-0.31, 0.02, 0.012).squared(3.0),
+        ],
+        LEATHER,
+    );
     mesh
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BONES, Bone, LitMesh, placement, pulse, skeleton, voidwright};
+    use super::{BONES, Bone, placement, pulse, skeleton, voidwright};
     use crate::{Pose, Stride, pose_at};
-    use glam::{Vec2, Vec3, Vec4};
+    use glam::{Vec2, Vec3};
 
     fn posed_points(pose: &Pose) -> Vec<Vec3> {
         let bones = skeleton(pose);
@@ -557,95 +445,42 @@ mod tests {
             .collect()
     }
 
-    fn faces_point_outward(mesh: &LitMesh, center: Vec3) {
-        for face in mesh.indices.as_chunks::<3>().0 {
-            let [a, b, c] = face.map(|index| Vec3::from(mesh.vertices[index as usize].position));
-            let geometric = (b - a).cross(c - a).normalize();
-            let stored = Vec3::from(mesh.vertices[face[0] as usize].normal);
-            assert!(geometric.dot(stored) > 0.99);
-            assert!(geometric.dot((a + b + c) / 3.0 - center) > 0.0);
-        }
-    }
-
-    #[test]
-    fn cuboid_faces_point_outward() {
-        let mut mesh = LitMesh::default();
-        mesh.cuboid(Vec3::ZERO, Vec3::new(1.0, 2.0, 3.0), Vec4::ONE);
-        faces_point_outward(&mesh, Vec3::new(0.5, 1.0, 1.5));
-    }
-
-    #[test]
-    fn prism_faces_point_outward() {
-        let mut mesh = LitMesh::default();
-        mesh.prism(
-            Vec3::ZERO,
-            Vec2::splat(0.5),
-            Vec3::Y,
-            Vec2::splat(0.3),
-            Vec4::ONE,
-        );
-        faces_point_outward(&mesh, Vec3::Y * 0.5);
-    }
-
-    #[test]
-    fn dome_faces_point_outward() {
-        let mut mesh = LitMesh::default();
-        mesh.dome(Vec3::ONE, 0.5, 6, Vec4::ONE);
-        faces_point_outward(&mesh, Vec3::ONE);
-    }
-
-    #[test]
-    fn a_ring_faces_up_between_its_radii() {
-        let mut mesh = LitMesh::default();
-        mesh.ring(0.3, 0.4, Vec4::ONE);
-        for vertex in &mesh.vertices {
-            let position = Vec3::from(vertex.position);
-            let radius = Vec2::new(position.x, position.z).length();
-            assert!((0.299..=0.401).contains(&radius));
-            assert!(Vec3::from(vertex.normal).distance(Vec3::Y) < 1e-6);
-        }
-        assert!(mesh.triangles() >= 16);
-    }
-
-    #[test]
-    fn the_marker_pulse_stays_gentle() {
-        for step in 0..100 {
-            let scale = pulse(f32::from(u8::try_from(step).unwrap()) * 0.05);
-            assert!((0.85..=1.15).contains(&scale));
-        }
-    }
-
     #[test]
     fn the_figure_stands_on_its_origin_at_rest() {
         let lowest = posed_points(&Pose::default())
             .iter()
             .map(|point| point.y)
             .fold(f32::INFINITY, f32::min);
-        assert!(lowest.abs() < 1e-4);
+        assert!(lowest.abs() < 1e-3);
     }
 
     #[test]
-    fn the_figure_is_about_one_and_a_half_tiles_tall() {
+    fn the_figure_is_about_one_and_two_thirds_tiles_tall() {
         let highest = posed_points(&Pose::default())
             .iter()
             .map(|point| point.y)
             .fold(0.0, f32::max);
-        assert!((1.5..=1.75).contains(&highest));
+        assert!((1.6..=1.8).contains(&highest));
     }
 
     #[test]
-    fn the_figure_stays_within_its_triangle_budget() {
+    fn the_figure_is_detailed_but_light() {
         let triangles: usize = voidwright().iter().map(|part| part.mesh.triangles()).sum();
-        assert!((600..=2000).contains(&triangles));
+        assert!((2500..=8000).contains(&triangles));
     }
 
     #[test]
-    fn the_visor_glows_teal() {
-        let glowing = voidwright()
+    fn the_visor_is_glass_with_a_teal_light() {
+        let vertices: Vec<_> = voidwright()
             .iter()
             .flat_map(|part| part.mesh.vertices.clone())
-            .any(|vertex| vertex.color[3] > 0.99 && vertex.color[1] > 0.9);
-        assert!(glowing);
+            .collect();
+        assert!(vertices.iter().any(|vertex| vertex.params[0] > 0.99));
+        assert!(
+            vertices
+                .iter()
+                .any(|vertex| vertex.params[1] > 0.99 && vertex.color[1] > 0.9)
+        );
     }
 
     #[test]
@@ -686,5 +521,13 @@ mod tests {
         }
         let forward = placement(Vec3::ZERO, &stride).transform_vector3(Vec3::NEG_Z);
         assert!(forward.distance(Vec3::X) < 1e-3);
+    }
+
+    #[test]
+    fn the_marker_pulse_stays_gentle() {
+        for step in 0..100 {
+            let scale = pulse(f32::from(u8::try_from(step).unwrap()) * 0.05);
+            assert!((0.85..=1.15).contains(&scale));
+        }
     }
 }

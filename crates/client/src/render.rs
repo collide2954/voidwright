@@ -57,7 +57,8 @@ impl Renderer {
             &[
                 VertexAttribute::new("in_position", VertexFormat::Float3),
                 VertexAttribute::new("in_normal", VertexFormat::Float3),
-                VertexAttribute::new("in_color", VertexFormat::Float4),
+                VertexAttribute::new("in_color", VertexFormat::Float3),
+                VertexAttribute::new("in_params", VertexFormat::Float2),
             ],
             solid(),
         );
