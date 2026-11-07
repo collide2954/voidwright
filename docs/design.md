@@ -74,7 +74,9 @@ The total XP for level 80 is half of the total XP for level 99.
 
 | Topic | Decision |
 | --- | --- |
-| Palette | Deep indigo void, teal moss, magenta crystals, and amber starlight. |
+| Art direction | Cinematic and stylized: clean shapes with film-like light, soft sun shadows, glow on lights, and deep atmosphere. |
+| Palette | Moss, soil, and rock have natural, muted colors. Neon colors are only for lights, visors, crystals, and the nebula: deep indigo void, magenta and teal clouds, and amber starlight. |
+| Effects | Sun shadows, filmic color with bloom, detail textures that code paints at start, moss tufts, and drifting spores. |
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
 | Models | Code makes all models. Models have flat faces and vertex colors. Models do not use textures. |
