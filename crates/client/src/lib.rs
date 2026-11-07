@@ -6,6 +6,7 @@ mod mesh;
 mod motion;
 mod palette;
 mod picking;
+pub mod shader;
 mod space;
 mod surface;
 mod terrain;

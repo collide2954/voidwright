@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 glam.workspace = true
+miniquad.workspace = true
 voidwright-core.workspace = true
 
 [lints]
