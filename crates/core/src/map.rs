@@ -9,6 +9,7 @@ pub enum Terrain {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Map {
     terrain: Grid<Terrain>,
+    elevation: Grid<i16>,
 }
 
 impl Map {
@@ -16,6 +17,7 @@ impl Map {
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             terrain: Grid::filled(width, height, Terrain::Void),
+            elevation: Grid::filled(width, height, 0),
         }
     }
 
@@ -46,6 +48,17 @@ impl Map {
     }
 
     #[must_use]
+    pub fn elevation(&self, tile: Tile) -> i16 {
+        self.elevation.get(tile).copied().unwrap_or(0)
+    }
+
+    pub fn set_elevation(&mut self, tile: Tile, elevation: i16) {
+        if let Some(cell) = self.elevation.get_mut(tile) {
+            *cell = elevation;
+        }
+    }
+
+    #[must_use]
     pub fn is_walkable(&self, tile: Tile) -> bool {
         self.terrain(tile) != Terrain::Void
     }
@@ -64,6 +77,21 @@ mod tests {
     use super::{Map, Terrain};
     use crate::{Direction, Tile, fixtures};
     use std::collections::HashSet;
+
+    #[test]
+    fn a_map_keeps_tile_elevations() {
+        let mut map = Map::new(2, 1);
+        map.set_elevation(Tile::new(1, 0), 12);
+        assert_eq!(map.elevation(Tile::new(1, 0)), 12);
+        assert_eq!(map.elevation(Tile::new(0, 0)), 0);
+    }
+
+    #[test]
+    fn outside_the_map_has_no_elevation() {
+        let mut map = Map::new(1, 1);
+        map.set_elevation(Tile::new(0, 0), 5);
+        assert_eq!(map.elevation(Tile::new(-1, 0)), 0);
+    }
 
     #[test]
     fn a_step_needs_a_walkable_target() {
