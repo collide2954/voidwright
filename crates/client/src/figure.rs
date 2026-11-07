@@ -5,7 +5,7 @@ use glam::{Mat4, Vec3};
 use crate::shape::{LitMesh, Material, Section, round};
 use crate::{Pose, Stride};
 
-const COAT: Material = Material::matte(Vec3::new(0.2, 0.22, 0.23), 0.08);
+const COAT: Material = Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.08);
 const LINING: Material = Material::matte(Vec3::new(0.26, 0.11, 0.09), 0.05);
 const CLOTH: Material = Material::matte(Vec3::new(0.09, 0.09, 0.1), 0.06);
 const SCARF: Material = Material::matte(Vec3::new(0.5, 0.26, 0.12), 0.05);
@@ -436,9 +436,10 @@ fn head() -> LitMesh {
             .rippled(0.04, 5.0),
         round(0.06, 0.162, 0.16).rippled(0.03, 5.0),
         round(0.16, 0.152, 0.165).shifted(forward(-0.02)),
-        round(0.26, 0.132, 0.15).shifted(forward(-0.005)),
-        round(0.33, 0.082, 0.1).shifted(forward(0.03)),
-        round(0.37, 0.02, 0.03).shifted(forward(0.07)),
+        round(0.24, 0.142, 0.158).shifted(forward(0.0)),
+        round(0.3, 0.118, 0.138).shifted(forward(0.012)),
+        round(0.335, 0.072, 0.09).shifted(forward(0.024)),
+        round(0.348, 0.012, 0.016).shifted(forward(0.03)),
     ];
     mesh.drape(
         &hood,
