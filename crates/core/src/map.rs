@@ -29,6 +29,11 @@ impl Map {
         self.terrain.height()
     }
 
+    pub fn tiles(&self) -> impl Iterator<Item = Tile> + use<> {
+        let (width, height) = (i32::from(self.width()), i32::from(self.height()));
+        (0..height).flat_map(move |y| (0..width).map(move |x| Tile::new(x, y)))
+    }
+
     #[must_use]
     pub fn terrain(&self, tile: Tile) -> Terrain {
         self.terrain.get(tile).copied().unwrap_or(Terrain::Void)
@@ -58,6 +63,7 @@ impl Map {
 mod tests {
     use super::{Map, Terrain};
     use crate::{Direction, Tile, fixtures};
+    use std::collections::HashSet;
 
     #[test]
     fn a_step_needs_a_walkable_target() {
@@ -75,6 +81,16 @@ mod tests {
     fn a_diagonal_step_passes_between_open_sides() {
         let map = fixtures::map(&["..", ".."]);
         assert!(map.can_step(Tile::new(0, 0), Direction::NorthEast));
+    }
+
+    #[test]
+    fn tiles_cover_the_map_once() {
+        let map = Map::new(3, 2);
+        let tiles: Vec<Tile> = map.tiles().collect();
+        let unique: HashSet<Tile> = tiles.iter().copied().collect();
+        assert_eq!(tiles.len(), 6);
+        assert_eq!(unique.len(), 6);
+        assert!(unique.contains(&Tile::new(2, 1)));
     }
 
     #[test]
