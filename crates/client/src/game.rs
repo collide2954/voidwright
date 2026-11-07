@@ -4,7 +4,7 @@ use glam::{Vec2, Vec3};
 use voidwright_core::{Island, TICK, World};
 
 use crate::ground::Ground;
-use crate::{OrbitCamera, Ticker, pick, position, to_world};
+use crate::{OrbitCamera, Stride, Ticker, pick, position, to_ground, to_world};
 
 const ISLAND_RADIUS: u8 = 20;
 
@@ -14,6 +14,8 @@ pub struct Game {
     ground: Ground,
     camera: OrbitCamera,
     ticker: Ticker,
+    stride: Stride,
+    time: f32,
 }
 
 impl Game {
@@ -26,9 +28,21 @@ impl Game {
             ground,
             camera: OrbitCamera::new(Vec3::ZERO),
             ticker: Ticker::new(TICK),
+            stride: Stride::default(),
+            time: 0.0,
         };
         game.camera.target = game.player_position();
         game
+    }
+
+    #[must_use]
+    pub const fn stride(&self) -> &Stride {
+        &self.stride
+    }
+
+    #[must_use]
+    pub const fn time(&self) -> f32 {
+        self.time
     }
 
     #[must_use]
@@ -51,10 +65,15 @@ impl Game {
     }
 
     pub fn update(&mut self, delta: Duration) {
+        let before = to_ground(self.player_position());
         for _ in 0..self.ticker.advance(delta) {
             self.world.tick();
         }
-        self.camera.target = self.player_position();
+        let after = self.player_position();
+        self.stride
+            .update(before, to_ground(after), delta.as_secs_f32());
+        self.time += delta.as_secs_f32();
+        self.camera.target = after;
     }
 
     pub fn click(&mut self, screen: Vec2, aspect: f32) {
@@ -110,6 +129,17 @@ mod tests {
         assert_eq!(game.world().player().tile(), start);
         game.update(TICK / 2);
         assert_ne!(game.world().player().tile(), start);
+    }
+
+    #[test]
+    fn the_avatar_strides_while_walking() {
+        let mut game = Game::new(3);
+        game.click(CLICK, ASPECT);
+        for _ in 0..60 {
+            game.update(TICK / 36);
+        }
+        assert!(game.stride().amplitude() > 0.3);
+        assert!(game.time() > 0.9);
     }
 
     #[test]
