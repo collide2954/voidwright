@@ -1,12 +1,15 @@
 use glam::Mat4;
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
-    PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderSource, UniformsSource,
-    VertexAttribute, VertexFormat,
+    PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderSource, TextureFormat,
+    TextureParams, UniformsSource, VertexAttribute, VertexFormat,
 };
 
 use crate::shader::{self, Uniforms};
-use crate::{Game, Mesh, VAEL, palette, projection, top, underside};
+use crate::{Game, Mesh, VAEL, flip_rows, palette, png, projection, top, underside};
+
+const CAPTURE_WIDTH: u16 = 1280;
+const CAPTURE_HEIGHT: u16 = 720;
 
 struct Model {
     bindings: Bindings,
@@ -52,10 +55,45 @@ impl Renderer {
     }
 
     pub fn draw(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
+        context.begin_default_pass(clear());
+        self.scene(context, game, aspect);
+        context.end_render_pass();
+        context.commit_frame();
+    }
+
+    #[must_use]
+    pub fn capture(&self, context: &mut dyn RenderingBackend, game: &Game) -> Vec<u8> {
+        let target = |format| TextureParams {
+            width: u32::from(CAPTURE_WIDTH),
+            height: u32::from(CAPTURE_HEIGHT),
+            format,
+            ..TextureParams::default()
+        };
+        let color = context.new_render_texture(target(TextureFormat::RGBA8));
+        let depth = context.new_render_texture(target(TextureFormat::Depth));
+        let pass = context.new_render_pass(color, Some(depth));
+        context.begin_pass(Some(pass), clear());
+        self.scene(
+            context,
+            game,
+            f32::from(CAPTURE_WIDTH) / f32::from(CAPTURE_HEIGHT),
+        );
+        context.end_render_pass();
+        let mut pixels = vec![0; usize::from(CAPTURE_WIDTH) * usize::from(CAPTURE_HEIGHT) * 4];
+        context.texture_read_pixels(color, &mut pixels);
+        context.delete_render_pass(pass);
+        context.delete_texture(color);
+        context.delete_texture(depth);
+        png::encode(
+            CAPTURE_WIDTH,
+            CAPTURE_HEIGHT,
+            &flip_rows(&pixels, CAPTURE_WIDTH, CAPTURE_HEIGHT),
+        )
+    }
+
+    fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
         let camera = game.camera();
         let view_projection = projection(aspect) * camera.view();
-        let [red, green, blue] = palette::VOID.to_array();
-        context.begin_default_pass(PassAction::clear_color(red, green, blue, 1.0));
         context.apply_pipeline(&self.pipeline);
         context.apply_bindings(&self.terrain.bindings);
         context.apply_uniforms(UniformsSource::table(&Uniforms::new(
@@ -64,9 +102,12 @@ impl Renderer {
             camera.eye(),
         )));
         context.draw(0, self.terrain.count, 1);
-        context.end_render_pass();
-        context.commit_frame();
     }
+}
+
+fn clear() -> PassAction {
+    let [red, green, blue] = palette::VOID.to_array();
+    PassAction::clear_color(red, green, blue, 1.0)
 }
 
 fn upload(context: &mut dyn RenderingBackend, mesh: &Mesh) -> Model {

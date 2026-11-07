@@ -1,10 +1,11 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use glam::Vec2;
 use miniquad::conf::Conf;
 use miniquad::{EventHandler, KeyCode, KeyMods, MouseButton, RenderingBackend, date, window};
 
-use crate::{Controls, Game, Renderer, aspect, drag_rotation, to_screen, turn_for};
+use crate::{Controls, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for};
 
 const SEED: u64 = 1;
 
@@ -15,11 +16,12 @@ pub struct App {
     controls: Controls,
     drag: Option<Vec2>,
     last_frame: f64,
+    capture: Option<PathBuf>,
 }
 
 impl App {
     #[must_use]
-    pub fn new(mut context: Box<dyn RenderingBackend>) -> Self {
+    pub fn new(mut context: Box<dyn RenderingBackend>, launch: Launch) -> Self {
         let game = Game::new(SEED);
         let renderer = Renderer::new(context.as_mut(), &game);
         Self {
@@ -29,6 +31,7 @@ impl App {
             controls: Controls::default(),
             drag: None,
             last_frame: date::now(),
+            capture: launch.capture,
         }
     }
 
@@ -61,6 +64,14 @@ impl EventHandler for App {
     }
 
     fn draw(&mut self) {
+        if let Some(path) = self.capture.take() {
+            let png = self.renderer.capture(self.context.as_mut(), &self.game);
+            if let Err(error) = std::fs::write(&path, png) {
+                eprintln!("capture failed: {error}");
+            }
+            window::quit();
+            return;
+        }
         self.renderer
             .draw(self.context.as_mut(), &self.game, aspect(screen_size()));
     }
