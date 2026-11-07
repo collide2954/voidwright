@@ -2,7 +2,7 @@
 
 Voidwright is an online role-playing game for many players. The game world is a broken ring structure in the void. Players move on a grid of tiles.
 
-The game is not complete. The first milestone is an offline prototype for one player.
+The game is not complete. The offline prototype is playable: one player walks on one floating island.
 
 ## Requirements
 
