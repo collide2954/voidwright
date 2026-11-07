@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use glam::{IVec2, Vec2};
 use voidwright_core::{Direction, ELEVATION_PER_TILE, Grid, Map, NOISE_RANGE, Noise, Tile};
 
-use crate::catmull_rom;
 use crate::contour::LEVEL;
+use crate::{catmull_rom, smoothstep};
 
 pub const DETAIL: i32 = 8;
 const SCALE: f32 = 8.0;
@@ -167,15 +167,19 @@ impl Layers {
     }
 }
 
-fn unit(noise: &Noise, at: IVec2) -> f32 {
+pub(crate) fn unit(noise: &Noise, at: IVec2) -> f32 {
     let sample = u16::try_from(noise.sample(Tile::new(at.x, at.y))).unwrap_or(0);
     let range = u16::try_from(NOISE_RANGE).unwrap_or(u16::MAX);
     f32::from(sample) / f32::from(range)
 }
 
+#[must_use]
+pub fn rim(land: f32) -> f32 {
+    1.0 - smoothstep(LEVEL, LEVEL + LIP_WIDTH, land)
+}
+
 fn lip(land: f32) -> f32 {
-    let t = ((land - LEVEL) / LIP_WIDTH).clamp(0.0, 1.0);
-    LIP_HEIGHT * (1.0 - t * t * (3.0 - 2.0 * t))
+    LIP_HEIGHT * rim(land)
 }
 
 fn blend_tiles(point: Vec2, value: impl Fn(Tile) -> f32) -> f32 {

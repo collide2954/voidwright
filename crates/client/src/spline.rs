@@ -8,9 +8,15 @@ pub fn catmull_rom([p0, p1, p2, p3]: [f32; 4], t: f32) -> f32 {
         + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3)
 }
 
+#[must_use]
+pub fn smoothstep(from: f32, to: f32, value: f32) -> f32 {
+    let t = ((value - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::catmull_rom;
+    use super::{catmull_rom, smoothstep};
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-6
@@ -21,6 +27,17 @@ mod tests {
         let points = [3.0, 1.0, 4.0, 1.5];
         assert!(close(catmull_rom(points, 0.0), 1.0));
         assert!(close(catmull_rom(points, 1.0), 4.0));
+    }
+
+    #[test]
+    fn smoothstep_holds_flat_outside_its_edges() {
+        assert!(close(smoothstep(0.2, 0.6, 0.0), 0.0));
+        assert!(close(smoothstep(0.2, 0.6, 0.9), 1.0));
+    }
+
+    #[test]
+    fn smoothstep_is_half_way_in_the_middle() {
+        assert!(close(smoothstep(0.2, 0.6, 0.4), 0.5));
     }
 
     #[test]

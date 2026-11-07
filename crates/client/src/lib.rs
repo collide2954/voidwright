@@ -31,6 +31,6 @@ pub use motion::{center, position};
 pub use picking::pick;
 pub use render::Renderer;
 pub use space::{to_ground, to_world};
-pub use spline::catmull_rom;
+pub use spline::{catmull_rom, smoothstep};
 pub use surface::Surface;
 pub use terrain::{top, underside};
