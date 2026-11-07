@@ -1,6 +1,7 @@
 use glam::IVec2;
 
 pub const LEVEL: f32 = 0.5;
+const MARGIN: f32 = 0.05;
 
 const CELL: [IVec2; 4] = [
     IVec2::new(0, 0),
@@ -31,7 +32,11 @@ impl Point {
             Self::Corner(at) => (at, at, 0.0),
             Self::Crossing(from, to) => {
                 let (low, high) = (field(from), field(to));
-                (from, to, ((LEVEL - low) / (high - low)).clamp(0.0, 1.0))
+                (
+                    from,
+                    to,
+                    ((LEVEL - low) / (high - low)).clamp(MARGIN, 1.0 - MARGIN),
+                )
             }
         }
     }
@@ -97,7 +102,7 @@ fn contour_edges(polygon: &[Point]) -> impl Iterator<Item = [Point; 2]> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::{Point, cut};
+    use super::{MARGIN, Point, cut};
     use glam::IVec2;
 
     const ORIGIN: IVec2 = IVec2::new(4, 7);
@@ -166,6 +171,14 @@ mod tests {
         assert_eq!(cut.polygons.len(), 2);
         assert!(cut.polygons.iter().all(|polygon| polygon.len() == 3));
         assert_eq!(cut.boundary.len(), 2);
+    }
+
+    #[test]
+    fn a_crossing_keeps_clear_of_the_corners() {
+        let point = Point::crossing(SOUTH_WEST, SOUTH_EAST);
+        let field = |at: IVec2| if at == SOUTH_WEST { 0.0 } else { 0.500_000_1 };
+        let (_, _, weight) = point.blend(field);
+        assert!(weight <= 1.0 - MARGIN);
     }
 
     #[test]
