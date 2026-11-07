@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub struct Launch {
     pub capture: Option<PathBuf>,
     pub orbit: Option<[f32; 3]>,
+    pub benchmark: Option<f32>,
 }
 
 impl Launch {
@@ -15,6 +16,7 @@ impl Launch {
             match arg.as_str() {
                 "--capture" => launch.capture = args.next().map(PathBuf::from),
                 "--orbit" => launch.orbit = orbit(&mut args),
+                "--benchmark" => launch.benchmark = args.next().and_then(|arg| arg.parse().ok()),
                 _ => {}
             }
         }
@@ -76,6 +78,12 @@ mod tests {
     #[test]
     fn an_incomplete_orbit_is_ignored() {
         assert_eq!(parse(&["--orbit", "0.5", "x"]), Launch::default());
+    }
+
+    #[test]
+    fn benchmark_takes_a_number_of_seconds() {
+        assert_eq!(parse(&["--benchmark", "10"]).benchmark, Some(10.0));
+        assert_eq!(parse(&["--benchmark", "soon"]), Launch::default());
     }
 
     #[test]

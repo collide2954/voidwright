@@ -2,12 +2,22 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use glam::Vec2;
-use miniquad::conf::Conf;
+use miniquad::conf::{Conf, Platform};
 use miniquad::{EventHandler, KeyCode, KeyMods, MouseButton, RenderingBackend, date, window};
 
-use crate::{Controls, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for};
+use crate::{
+    Controls, FrameStats, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for,
+};
 
 const SEED: u64 = 1;
+const WARMUP: f64 = 1.0;
+const BENCHMARK_TURN: f32 = 0.3;
+
+struct Benchmark {
+    start: f64,
+    end: f64,
+    stats: FrameStats,
+}
 
 pub struct App {
     context: Box<dyn RenderingBackend>,
@@ -17,6 +27,7 @@ pub struct App {
     drag: Option<Vec2>,
     last_frame: f64,
     capture: Option<PathBuf>,
+    benchmark: Option<Benchmark>,
 }
 
 impl App {
@@ -27,26 +38,53 @@ impl App {
             game.camera_mut().set_orbit(yaw, pitch, distance);
         }
         let renderer = Renderer::new(context.as_mut(), &game);
+        let now = date::now();
         Self {
             context,
             renderer,
             game,
             controls: Controls::default(),
             drag: None,
-            last_frame: date::now(),
+            last_frame: now,
             capture: launch.capture,
+            benchmark: launch.benchmark.map(|seconds| Benchmark {
+                start: now + WARMUP,
+                end: now + WARMUP + f64::from(seconds),
+                stats: FrameStats::default(),
+            }),
         }
     }
 
     #[must_use]
-    pub fn conf() -> Conf {
+    pub fn conf(launch: &Launch) -> Conf {
         Conf {
             window_title: "Voidwright".to_owned(),
             window_width: 1280,
             window_height: 720,
             high_dpi: true,
+            fullscreen: launch.benchmark.is_some(),
             sample_count: 4,
+            platform: Platform {
+                swap_interval: launch.benchmark.map(|_| 0),
+                ..Platform::default()
+            },
             ..Conf::default()
+        }
+    }
+
+    fn measure(&mut self, now: f64, delta: Duration) {
+        let Some(benchmark) = &mut self.benchmark else {
+            return;
+        };
+        self.game
+            .camera_mut()
+            .rotate(BENCHMARK_TURN * delta.as_secs_f32(), 0.0);
+        if now >= benchmark.start {
+            benchmark.stats.record(delta);
+        }
+        if now >= benchmark.end {
+            println!("{}", benchmark.stats.summary());
+            window::quit();
         }
     }
 }
@@ -64,6 +102,7 @@ impl EventHandler for App {
         let turn = self.controls.rotation(delta.as_secs_f32());
         self.game.camera_mut().rotate(turn.x, turn.y);
         self.game.update(delta);
+        self.measure(now, delta);
     }
 
     fn draw(&mut self) {
