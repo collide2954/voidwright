@@ -1,13 +1,14 @@
 use glam::Mat4;
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
-    PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderSource, TextureFormat,
-    TextureParams, UniformsSource, VertexAttribute, VertexFormat,
+    PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderMeta, ShaderSource,
+    TextureFormat, TextureParams, UniformsSource, VertexAttribute, VertexFormat,
 };
 
-use crate::shader::baked::{self as shader, Uniforms};
+use crate::shader::{baked, lit};
 use crate::{
-    Game, Mesh, Painter, VAEL, cliff, flip_rows, palette, png, projection, top, underside,
+    Game, Painter, Part, VAEL, cliff, flip_rows, palette, placement, png, projection, top,
+    underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -19,42 +20,52 @@ struct Model {
 }
 
 pub struct Renderer {
-    pipeline: Pipeline,
+    baked: Pipeline,
+    lit: Pipeline,
     terrain: Model,
+    avatar: Vec<(Part, Model)>,
 }
 
 impl Renderer {
     #[must_use]
     pub fn new(context: &mut dyn RenderingBackend, game: &Game) -> Self {
-        let source = ShaderSource::Glsl {
-            vertex: shader::VERTEX,
-            fragment: shader::FRAGMENT,
-        };
-        let program = context
-            .new_shader(source, shader::meta())
-            .expect("the scene shader compiles");
-        let pipeline = context.new_pipeline(
-            &[BufferLayout::default()],
+        let baked = pipeline(
+            context,
+            [baked::VERTEX, baked::FRAGMENT],
+            baked::meta(),
             &[
                 VertexAttribute::new("in_position", VertexFormat::Float3),
                 VertexAttribute::new("in_color", VertexFormat::Float3),
             ],
-            program,
-            PipelineParams {
-                cull_face: CullFace::Back,
-                depth_test: Comparison::LessOrEqual,
-                depth_write: true,
-                ..PipelineParams::default()
-            },
+        );
+        let lit = pipeline(
+            context,
+            [lit::VERTEX, lit::FRAGMENT],
+            lit::meta(),
+            &[
+                VertexAttribute::new("in_position", VertexFormat::Float3),
+                VertexAttribute::new("in_normal", VertexFormat::Float3),
+                VertexAttribute::new("in_color", VertexFormat::Float4),
+            ],
         );
         let ground = game.ground();
         let painter = Painter::default();
         let mut terrain = top(ground, &painter, &VAEL);
         terrain.append(&cliff(ground, &painter, &VAEL));
         terrain.append(&underside(ground, &painter, &VAEL));
+        let terrain = upload(context, &terrain.vertices, &terrain.indices);
+        let avatar = voidwright()
+            .into_iter()
+            .map(|part| {
+                let model = upload(context, &part.mesh.vertices, &part.mesh.indices);
+                (part, model)
+            })
+            .collect();
         Self {
-            pipeline,
-            terrain: upload(context, &terrain),
+            baked,
+            lit,
+            terrain,
+            avatar,
         }
     }
 
@@ -98,15 +109,49 @@ impl Renderer {
     fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
         let camera = game.camera();
         let view_projection = projection(aspect) * camera.view();
-        context.apply_pipeline(&self.pipeline);
+        context.apply_pipeline(&self.baked);
         context.apply_bindings(&self.terrain.bindings);
-        context.apply_uniforms(UniformsSource::table(&Uniforms::new(
+        context.apply_uniforms(UniformsSource::table(&baked::Uniforms::new(
             view_projection,
             Mat4::IDENTITY,
             camera.eye(),
         )));
         context.draw(0, self.terrain.count, 1);
+        context.apply_pipeline(&self.lit);
+        let root = placement(game.player_position(), game.stride());
+        for (part, model) in &self.avatar {
+            context.apply_bindings(&model.bindings);
+            context.apply_uniforms(UniformsSource::table(&lit::Uniforms::new(
+                view_projection,
+                root * part.pose(game.stride()),
+                camera.eye(),
+                &VAEL,
+            )));
+            context.draw(0, model.count, 1);
+        }
     }
+}
+
+fn pipeline(
+    context: &mut dyn RenderingBackend,
+    [vertex, fragment]: [&str; 2],
+    meta: ShaderMeta,
+    attributes: &[VertexAttribute],
+) -> Pipeline {
+    let program = context
+        .new_shader(ShaderSource::Glsl { vertex, fragment }, meta)
+        .expect("the shader compiles");
+    context.new_pipeline(
+        &[BufferLayout::default()],
+        attributes,
+        program,
+        PipelineParams {
+            cull_face: CullFace::Back,
+            depth_test: Comparison::LessOrEqual,
+            depth_write: true,
+            ..PipelineParams::default()
+        },
+    )
 }
 
 fn clear() -> PassAction {
@@ -114,23 +159,23 @@ fn clear() -> PassAction {
     PassAction::clear_color(red, green, blue, 1.0)
 }
 
-fn upload(context: &mut dyn RenderingBackend, mesh: &Mesh) -> Model {
-    let vertices = context.new_buffer(
+fn upload<V>(context: &mut dyn RenderingBackend, vertices: &[V], indices: &[u32]) -> Model {
+    let vertex_buffer = context.new_buffer(
         BufferType::VertexBuffer,
         BufferUsage::Immutable,
-        BufferSource::slice(&mesh.vertices),
+        BufferSource::slice(vertices),
     );
-    let indices = context.new_buffer(
+    let index_buffer = context.new_buffer(
         BufferType::IndexBuffer,
         BufferUsage::Immutable,
-        BufferSource::slice(&mesh.indices),
+        BufferSource::slice(indices),
     );
     Model {
         bindings: Bindings {
-            vertex_buffers: vec![vertices],
-            index_buffer: indices,
+            vertex_buffers: vec![vertex_buffer],
+            index_buffer,
             images: Vec::new(),
         },
-        count: i32::try_from(mesh.indices.len()).expect("a mesh fits in one draw call"),
+        count: i32::try_from(indices.len()).expect("a mesh fits in one draw call"),
     }
 }
