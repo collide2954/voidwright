@@ -34,6 +34,11 @@ impl Walker {
         !self.route.is_empty()
     }
 
+    #[must_use]
+    pub fn destination(&self) -> Option<Tile> {
+        self.route.back().copied()
+    }
+
     pub fn follow(&mut self, route: Vec<Tile>) {
         self.route = route.into();
     }
@@ -96,6 +101,16 @@ mod tests {
         assert!(!walker.is_moving());
         walker.advance(1);
         assert_eq!(walker.trail(), [east(1)]);
+    }
+
+    #[test]
+    fn the_destination_is_the_end_of_the_route() {
+        let mut walker = Walker::new(east(0));
+        assert_eq!(walker.destination(), None);
+        walker.follow(vec![east(1), east(2)]);
+        assert_eq!(walker.destination(), Some(east(2)));
+        walker.advance(2);
+        assert_eq!(walker.destination(), None);
     }
 
     #[test]
