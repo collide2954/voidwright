@@ -18,6 +18,7 @@ mod palette;
 mod picking;
 pub mod png;
 mod render;
+pub mod sculpt;
 pub mod shader;
 pub mod shape;
 mod sky;
