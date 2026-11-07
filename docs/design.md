@@ -83,6 +83,9 @@ The total XP for level 80 is half of the total XP for level 99.
 | Graphics | miniquad with OpenGL 3.3. |
 | Math | glam. |
 | Network | TCP with a binary protocol that the project defines. |
+| Servers | Many worlds hold the inner islands. Each world holds a maximum of 2,000 players. One war shard holds the outer ring for all players. |
+| Content | Items, NPCs, and quests are typed tables in Rust code. |
+| Text | fontdue draws TTF fonts. The client contains one font file that has an open license. |
 | Structure | A Cargo workspace with four crates: core, protocol, server, and client. |
 | Dependencies | Add a crate only if it saves much work and has few dependencies. Do not use serde, tokio, or procedural macro crates. |
 
@@ -94,6 +97,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Commits | Each code commit contains one test cycle. Each commit message has one line in the form `scope: summary`. |
 | Lints | Clippy pedantic. In CI, all warnings are errors. Unsafe code is not permitted. |
 | Branches | All commits go to `main`. CI runs on each push. |
+| Funding | The game is free and open source. There is no monetization at this time. |
 
 ## Milestones
 
