@@ -5,7 +5,7 @@ use miniquad::{
     TextureParams, UniformsSource, VertexAttribute, VertexFormat,
 };
 
-use crate::shader::{self, Uniforms};
+use crate::shader::baked::{self as shader, Uniforms};
 use crate::{
     Game, Mesh, Painter, VAEL, cliff, flip_rows, palette, png, projection, top, underside,
 };
