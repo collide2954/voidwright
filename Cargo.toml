@@ -10,6 +10,10 @@ license = "Apache-2.0"
 repository = "https://github.com/collide2954/voidwright"
 publish = false
 
+[workspace.dependencies]
+voidwright-core = { path = "crates/core" }
+glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
