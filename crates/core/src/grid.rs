@@ -21,6 +21,16 @@ impl<T: Clone> Grid<T> {
 
 impl<T> Grid<T> {
     #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    #[must_use]
     pub fn get(&self, tile: Tile) -> Option<&T> {
         self.index(tile).map(|index| &self.cells[index])
     }

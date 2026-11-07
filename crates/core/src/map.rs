@@ -20,6 +20,16 @@ impl Map {
     }
 
     #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.terrain.width()
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.terrain.height()
+    }
+
+    #[must_use]
     pub fn terrain(&self, tile: Tile) -> Terrain {
         self.terrain.get(tile).copied().unwrap_or(Terrain::Void)
     }
@@ -65,6 +75,12 @@ mod tests {
     fn a_diagonal_step_passes_between_open_sides() {
         let map = fixtures::map(&["..", ".."]);
         assert!(map.can_step(Tile::new(0, 0), Direction::NorthEast));
+    }
+
+    #[test]
+    fn a_map_keeps_its_size() {
+        let map = Map::new(3, 2);
+        assert_eq!((map.width(), map.height()), (3, 2));
     }
 
     #[test]
