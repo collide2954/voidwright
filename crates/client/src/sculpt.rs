@@ -84,6 +84,7 @@ pub struct Stroke {
     carve: bool,
     offset: Vec3,
     turn: Quat,
+    squash: Vec3,
 }
 
 impl Stroke {
@@ -97,7 +98,17 @@ impl Stroke {
             carve: false,
             offset: Vec3::ZERO,
             turn: Quat::IDENTITY,
+            squash: Vec3::ONE,
         }
+    }
+
+    fn shape(&self, local: Vec3) -> f32 {
+        self.form.distance(local / self.squash) * self.squash.min_element()
+    }
+
+    fn bound(&self) -> (Vec3, f32) {
+        let (center, reach) = self.form.bound();
+        (center * self.squash, reach * self.squash.max_element())
     }
 
     #[must_use]
@@ -121,6 +132,11 @@ impl Stroke {
             carve: true,
             ..self
         }
+    }
+
+    #[must_use]
+    pub const fn squashed(self, squash: Vec3) -> Self {
+        Self { squash, ..self }
     }
 }
 
@@ -151,7 +167,7 @@ impl Sculpt {
     pub fn add(&mut self, stroke: Stroke) {
         let place =
             self.rest[stroke.bone] * Mat4::from_rotation_translation(stroke.turn, stroke.offset);
-        let (center, reach) = stroke.form.bound();
+        let (center, reach) = stroke.bound();
         self.strokes.push(Placed {
             stroke,
             inverse: Affine3A::from_mat4(place).inverse(),
@@ -197,7 +213,7 @@ impl Sculpt {
             if placed.center.distance(point) - placed.reach >= limit {
                 continue;
             }
-            let value = stroke.form.distance(placed.inverse.transform_point3(point));
+            let value = stroke.shape(placed.inverse.transform_point3(point));
             let (next, mix) = if stroke.carve {
                 smooth_carve(distance, value, stroke.blend)
             } else {
@@ -311,6 +327,22 @@ mod tests {
             assert!((position.distance(Vec3::new(1.0, 0.1, 0.0)) - 0.2).abs() < 0.002);
             assert!((weight(vertex, 1) - 1.0).abs() < 1e-5);
         }
+    }
+
+    fn extent(mesh: &SkinnedMesh, axis: usize) -> f32 {
+        mesh.vertices
+            .iter()
+            .map(|vertex| vertex.position[axis].abs())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_squashed_ball_meshes_into_an_egg() {
+        let mesh =
+            single(Stroke::new(0, Form::Ball(0.2), PAINT).squashed(Vec3::new(1.0, 0.5, 1.5)));
+        assert!((extent(&mesh, 0) - 0.2).abs() < 0.005);
+        assert!((extent(&mesh, 1) - 0.1).abs() < 0.005);
+        assert!((extent(&mesh, 2) - 0.3).abs() < 0.005);
     }
 
     #[test]
