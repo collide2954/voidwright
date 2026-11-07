@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use glam::{Vec2, Vec3};
-use voidwright_core::{Island, TICK, World};
+use voidwright_core::{Island, TICK, Tile, World};
 
 use crate::ground::Ground;
 use crate::{OrbitCamera, Stride, Ticker, pick, position, to_ground, to_world};
@@ -79,8 +79,12 @@ impl Game {
     pub fn click(&mut self, screen: Vec2, aspect: f32) {
         let ray = self.camera.ray(screen, aspect);
         if let Some(tile) = pick(ray, self.world.map(), &self.ground) {
-            self.world.walk_to(tile);
+            self.walk_to(tile);
         }
+    }
+
+    pub fn walk_to(&mut self, tile: Tile) {
+        self.world.walk_to(tile);
     }
 
     #[must_use]
@@ -95,7 +99,7 @@ mod tests {
     use super::Game;
     use crate::{center, pick, to_ground};
     use glam::Vec2;
-    use voidwright_core::TICK;
+    use voidwright_core::{TICK, Tile};
 
     const ASPECT: f32 = 16.0 / 9.0;
     const CLICK: Vec2 = Vec2::new(0.2, -0.1);
@@ -129,6 +133,18 @@ mod tests {
         assert_eq!(game.world().player().tile(), start);
         game.update(TICK / 2);
         assert_ne!(game.world().player().tile(), start);
+    }
+
+    #[test]
+    fn a_walk_order_reaches_its_tile() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        let target = Tile::new(start.x + 3, start.y);
+        game.walk_to(target);
+        for _ in 0..10 {
+            game.update(TICK);
+        }
+        assert_eq!(game.world().player().tile(), target);
     }
 
     #[test]

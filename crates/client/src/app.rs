@@ -5,6 +5,8 @@ use glam::Vec2;
 use miniquad::conf::{Conf, Platform};
 use miniquad::{EventHandler, KeyCode, KeyMods, MouseButton, RenderingBackend, date, window};
 
+use voidwright_core::Tile;
+
 use crate::{
     Controls, FrameStats, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for,
 };
@@ -27,6 +29,7 @@ pub struct App {
     drag: Option<Vec2>,
     last_frame: f64,
     capture: Option<PathBuf>,
+    capture_at: f32,
     benchmark: Option<Benchmark>,
 }
 
@@ -36,6 +39,10 @@ impl App {
         let mut game = Game::new(SEED);
         if let Some([yaw, pitch, distance]) = launch.orbit {
             game.camera_mut().set_orbit(yaw, pitch, distance);
+        }
+        if let Some([dx, dy]) = launch.walk {
+            let start = game.world().player().tile();
+            game.walk_to(Tile::new(start.x + dx, start.y + dy));
         }
         let renderer = Renderer::new(context.as_mut(), &game);
         let now = date::now();
@@ -47,6 +54,7 @@ impl App {
             drag: None,
             last_frame: now,
             capture: launch.capture,
+            capture_at: launch.capture_at.unwrap_or(0.0),
             benchmark: launch.benchmark.map(|seconds| Benchmark {
                 start: now + WARMUP,
                 end: now + WARMUP + f64::from(seconds),
@@ -106,7 +114,9 @@ impl EventHandler for App {
     }
 
     fn draw(&mut self) {
-        if let Some(path) = self.capture.take() {
+        if self.game.time() >= self.capture_at
+            && let Some(path) = self.capture.take()
+        {
             let png = self.renderer.capture(self.context.as_mut(), &self.game);
             if let Err(error) = std::fs::write(&path, png) {
                 eprintln!("capture failed: {error}");

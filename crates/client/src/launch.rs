@@ -1,9 +1,12 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Launch {
     pub capture: Option<PathBuf>,
+    pub capture_at: Option<f32>,
     pub orbit: Option<[f32; 3]>,
+    pub walk: Option<[i32; 2]>,
     pub benchmark: Option<f32>,
 }
 
@@ -15,8 +18,10 @@ impl Launch {
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--capture" => launch.capture = args.next().map(PathBuf::from),
-                "--orbit" => launch.orbit = orbit(&mut args),
-                "--benchmark" => launch.benchmark = args.next().and_then(|arg| arg.parse().ok()),
+                "--capture-at" => launch.capture_at = values(&mut args).map(|[at]| at),
+                "--orbit" => launch.orbit = values(&mut args),
+                "--walk" => launch.walk = values(&mut args),
+                "--benchmark" => launch.benchmark = values(&mut args).map(|[seconds]| seconds),
                 _ => {}
             }
         }
@@ -24,9 +29,9 @@ impl Launch {
     }
 }
 
-fn orbit(args: &mut impl Iterator<Item = String>) -> Option<[f32; 3]> {
-    let values: Vec<f32> = args
-        .take(3)
+fn values<T: FromStr, const N: usize>(args: &mut impl Iterator<Item = String>) -> Option<[T; N]> {
+    let values: Vec<T> = args
+        .take(N)
         .map(|arg| arg.parse().ok())
         .collect::<Option<_>>()?;
     values.try_into().ok()
@@ -84,6 +89,17 @@ mod tests {
     fn benchmark_takes_a_number_of_seconds() {
         assert_eq!(parse(&["--benchmark", "10"]).benchmark, Some(10.0));
         assert_eq!(parse(&["--benchmark", "soon"]), Launch::default());
+    }
+
+    #[test]
+    fn walk_takes_a_tile_offset() {
+        assert_eq!(parse(&["--walk", "6", "-2"]).walk, Some([6, -2]));
+        assert_eq!(parse(&["--walk", "6"]), Launch::default());
+    }
+
+    #[test]
+    fn capture_at_takes_a_delay_in_seconds() {
+        assert_eq!(parse(&["--capture-at", "1.5"]).capture_at, Some(1.5));
     }
 
     #[test]
