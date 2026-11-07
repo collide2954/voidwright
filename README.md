@@ -28,6 +28,11 @@ The game is not complete. The first milestone is an offline prototype for one pl
 
 The three values after `--orbit` are the yaw and the pitch in radians, and the distance in tiles.
 
+| Option | Effect |
+| --- | --- |
+| `--walk <dx> <dy>` | At start, the player walks to the tile at this offset. |
+| `--capture-at <seconds>` | The capture waits for this game time. |
+
 ## Controls
 
 | Input | Action |
