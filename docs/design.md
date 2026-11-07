@@ -80,6 +80,10 @@ The total XP for level 80 is half of the total XP for level 99.
 | Models | Code makes all models. Models have flat faces and vertex colors. Models do not use textures. |
 | Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
 | Island edges | A jagged rock lip and a cliff band surround each island. A rock underside hangs below the island. |
+| Avatar | A low-poly figure in a salvage suit, with a glowing teal visor and a small backpack. |
+| Animation | When the avatar walks, its legs and arms swing, its body bobs, and it turns to face its path. Running uses a longer stride. |
+| Walk marker | A small teal ring pulses on the target tile until the player arrives. |
+| Sky | Deep indigo with magenta and teal nebula clouds and many stars. Vael glows amber low on the horizon. Far fragments of the ring drift in the distance. |
 | Maps | A seed makes each island: outline, hills, rocks, and crystals. |
 
 ## Technology
