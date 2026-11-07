@@ -85,6 +85,7 @@ pub struct Stroke {
     offset: Vec3,
     turn: Quat,
     squash: Vec3,
+    clip: Option<(Vec3, f32)>,
 }
 
 impl Stroke {
@@ -99,11 +100,15 @@ impl Stroke {
             offset: Vec3::ZERO,
             turn: Quat::IDENTITY,
             squash: Vec3::ONE,
+            clip: None,
         }
     }
 
     fn shape(&self, local: Vec3) -> f32 {
-        self.form.distance(local / self.squash) * self.squash.min_element()
+        let value = self.form.distance(local / self.squash) * self.squash.min_element();
+        self.clip.map_or(value, |(normal, offset)| {
+            value.max(local.dot(normal) - offset)
+        })
     }
 
     fn bound(&self) -> (Vec3, f32) {
@@ -137,6 +142,14 @@ impl Stroke {
     #[must_use]
     pub const fn squashed(self, squash: Vec3) -> Self {
         Self { squash, ..self }
+    }
+
+    #[must_use]
+    pub const fn clipped(self, normal: Vec3, offset: f32) -> Self {
+        Self {
+            clip: Some((normal, offset)),
+            ..self
+        }
     }
 }
 
@@ -343,6 +356,16 @@ mod tests {
         assert!((extent(&mesh, 0) - 0.2).abs() < 0.005);
         assert!((extent(&mesh, 1) - 0.1).abs() < 0.005);
         assert!((extent(&mesh, 2) - 0.3).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_clipped_ball_keeps_one_side_of_its_plane() {
+        let mesh = single(Stroke::new(0, Form::Ball(0.2), PAINT).clipped(Vec3::Y, 0.05));
+        let heights = mesh.vertices.iter().map(|vertex| vertex.position[1]);
+        let top = heights.clone().fold(f32::NEG_INFINITY, f32::max);
+        let bottom = heights.fold(f32::INFINITY, f32::min);
+        assert!((top - 0.05).abs() < 0.005);
+        assert!((bottom + 0.2).abs() < 0.005);
     }
 
     #[test]
