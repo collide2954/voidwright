@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use crate::{Map, Tile, Walker, find_path};
 
+pub const TICK: Duration = Duration::from_millis(600);
 const WALK_STEPS: usize = 1;
 const RUN_STEPS: usize = 2;
 
@@ -42,11 +45,16 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use super::World;
+    use super::{TICK, World};
     use crate::{Tile, fixtures};
 
     fn corridor() -> World {
         World::new(fixtures::map(&["......"]), Tile::new(0, 0))
+    }
+
+    #[test]
+    fn a_tick_is_600_milliseconds() {
+        assert_eq!(TICK.as_millis(), 600);
     }
 
     #[test]

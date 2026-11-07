@@ -20,4 +20,4 @@ pub use path::{find_path, reachable};
 pub use rng::Rng;
 pub use tile::Tile;
 pub use walk::Walker;
-pub use world::World;
+pub use world::{TICK, World};
