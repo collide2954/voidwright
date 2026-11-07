@@ -53,9 +53,9 @@ void main() {
     float shine = params.x;
     float diffuse = max(dot(facing, toward_sun), 0.0);
     float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
-    float rim = pow(1.0 - max(dot(facing, view), 0.0), 4.0);
+    float rim = pow(1.0 - abs(dot(facing, view)), 4.0);
     vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5);
-    vec3 lit = albedo * (sun * diffuse + ambient) + sun * highlight + sky * rim * 0.8;
+    vec3 lit = albedo * (sun * diffuse + ambient) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
     vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
@@ -155,6 +155,12 @@ mod tests {
         for uniform in meta().uniforms.uniforms {
             assert!(VERTEX.contains(&uniform.name) || FRAGMENT.contains(&uniform.name));
         }
+    }
+
+    #[test]
+    fn the_rim_light_follows_the_shine_and_ignores_reversed_normals() {
+        assert!(FRAGMENT.contains("1.0 - abs(dot(facing, view))"));
+        assert!(FRAGMENT.contains("rim * (0.15 + 0.6 * shine)"));
     }
 
     #[test]
