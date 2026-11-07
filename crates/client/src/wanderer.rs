@@ -191,71 +191,149 @@ fn body() -> Sculpt {
 }
 
 fn trunk(clay: &mut Sculpt) {
+    let cloth = Vec3::new(14.0, 9.0, 14.0);
     clay.add(stroke(Bone::Pelvis, egg(0.145, 0.11, 0.105), CLOTH).at(Vec3::new(0.0, -0.02, 0.0)));
     clay.add(
         stroke(Bone::Torso, egg(0.145, 0.15, 0.11), COAT)
             .at(Vec3::new(0.0, 0.1, 0.0))
+            .wrinkled(0.006, cloth)
             .blended(0.05),
     );
     clay.add(
-        stroke(Bone::Torso, egg(0.178, 0.15, 0.12), COAT)
+        stroke(Bone::Torso, egg(0.176, 0.15, 0.12), COAT)
             .at(Vec3::new(0.0, 0.27, -0.008))
+            .wrinkled(0.006, cloth)
             .blended(0.07),
     );
     clay.add(
         stroke(Bone::Torso, egg(0.205, 0.085, 0.115), COAT)
             .at(Vec3::new(0.0, 0.39, 0.012))
+            .wrinkled(0.005, cloth)
             .blended(0.06),
     );
+    for side in Side::BOTH {
+        clay.add(
+            stroke(Bone::Torso, egg(0.075, 0.09, 0.05), COAT)
+                .at(Vec3::new(side.sign() * 0.085, 0.33, 0.085))
+                .blended(0.04),
+        );
+    }
+    let closure = [
+        Vec3::new(-0.035, 0.43, -0.096),
+        Vec3::new(0.015, 0.25, -0.124),
+        Vec3::new(0.065, 0.04, -0.094),
+    ];
+    for pair in closure.windows(2) {
+        clay.add(
+            segment(Bone::Torso, pair[0], pair[1], 0.016, COAT)
+                .wrinkled(0.003, cloth)
+                .blended(0.012),
+        );
+    }
+}
+
+fn segment(bone: Bone, from: Vec3, to: Vec3, radius: f32, material: Material) -> Stroke {
+    stroke(bone, limb(from.distance(to), radius, radius), material)
+        .at(from)
+        .turned(toward(to - from))
 }
 
 fn leg(clay: &mut Sculpt, side: Side) {
     let (thigh, shin) = (side.thigh(), side.shin());
-    clay.add(stroke(thigh, limb(0.39, 0.078, 0.058), CLOTH).blended(0.03));
-    clay.add(stroke(shin, limb(0.3, 0.056, 0.045), CLOTH).blended(0.035));
+    let trousers = Vec3::new(10.0, 16.0, 10.0);
     clay.add(
-        stroke(shin, limb(0.17, 0.054, 0.058), BOOT)
-            .at(Vec3::new(0.0, -0.16, 0.0))
-            .blended(0.012),
-    );
-    clay.add(
-        stroke(shin, block(0.043, 0.03, 0.095, 0.028), BOOT)
-            .at(Vec3::new(0.0, -0.352, -0.042))
+        stroke(thigh, limb(0.39, 0.08, 0.06), CLOTH)
+            .wrinkled(0.005, trousers)
             .blended(0.03),
     );
     clay.add(
-        stroke(shin, egg(0.046, 0.034, 0.052), BOOT)
-            .at(Vec3::new(0.0, -0.352, -0.1))
-            .blended(0.02),
+        stroke(shin, egg(0.06, 0.05, 0.06), CLOTH)
+            .at(Vec3::new(0.0, 0.01, -0.006))
+            .blended(0.025),
     );
     clay.add(
-        stroke(shin, block(0.049, 0.011, 0.108, 0.008), SOLE)
-            .at(Vec3::new(0.0, -0.379, -0.045))
-            .blended(0.004),
+        stroke(shin, limb(0.3, 0.055, 0.044), CLOTH)
+            .wrinkled(0.004, trousers)
+            .blended(0.035),
     );
+    clay.add(
+        stroke(shin, egg(0.05, 0.085, 0.052), CLOTH)
+            .at(Vec3::new(0.0, -0.1, 0.014))
+            .blended(0.03),
+    );
+    clay.add(
+        stroke(shin, limb(0.17, 0.055, 0.059), BOOT)
+            .at(Vec3::new(0.0, -0.16, 0.0))
+            .wrinkled(0.003, Vec3::new(18.0, 28.0, 18.0))
+            .blended(0.012),
+    );
+    let splay = Quat::from_rotation_y(-side.sign() * 0.14);
+    let foot = |form: Form, material: Material, offset: Vec3, blend: f32| {
+        stroke(shin, form, material)
+            .at(splay * offset)
+            .turned(splay)
+            .blended(blend)
+    };
+    clay.add(foot(
+        block(0.043, 0.03, 0.095, 0.028),
+        BOOT,
+        Vec3::new(0.0, -0.352, -0.042),
+        0.03,
+    ));
+    clay.add(foot(
+        egg(0.046, 0.034, 0.052),
+        BOOT,
+        Vec3::new(0.0, -0.352, -0.1),
+        0.02,
+    ));
+    clay.add(foot(
+        block(0.049, 0.011, 0.108, 0.008),
+        SOLE,
+        Vec3::new(0.0, -0.379, -0.045),
+        0.004,
+    ));
 }
 
 fn arm(clay: &mut Sculpt, side: Side) {
     let (upper, fore) = (side.upper_arm(), side.forearm());
     let inward = -side.sign();
-    clay.add(stroke(upper, ball(0.07), COAT));
-    clay.add(stroke(upper, limb(0.27, 0.066, 0.054), COAT).blended(0.02));
-    clay.add(stroke(fore, limb(0.165, 0.054, 0.048), COAT).blended(0.025));
+    let sleeve = Vec3::new(10.0, 22.0, 10.0);
     clay.add(
-        stroke(
-            fore,
-            tube(0.05, Vec2::new(0.052, 0.058), 0.014, Vec2::ZERO),
-            COAT,
-        )
-        .lined(LINING)
-        .at(Vec3::new(0.0, -0.11, 0.0))
-        .blended(0.012),
+        stroke(upper, egg(0.076, 0.072, 0.07), COAT)
+            .at(Vec3::new(side.sign() * 0.006, 0.0, 0.0))
+            .wrinkled(0.004, sleeve),
     );
     clay.add(
-        stroke(fore, egg(0.024, 0.05, 0.034), LEATHER)
-            .at(Vec3::new(0.0, -0.215, -0.004))
-            .turned(Quat::from_rotation_x(-0.15))
-            .blended(0.018),
+        stroke(upper, limb(0.27, 0.064, 0.05), COAT)
+            .wrinkled(0.005, sleeve)
+            .blended(0.03),
+    );
+    clay.add(
+        stroke(fore, egg(0.058, 0.04, 0.058), COAT)
+            .at(Vec3::new(0.0, 0.0, 0.006))
+            .blended(0.02),
+    );
+    clay.add(
+        stroke(fore, limb(0.16, 0.054, 0.044), COAT)
+            .wrinkled(0.005, sleeve)
+            .blended(0.025),
+    );
+    clay.add(
+        stroke(fore, egg(0.058, 0.03, 0.058), COAT)
+            .at(Vec3::new(0.0, -0.14, 0.0))
+            .wrinkled(0.004, sleeve)
+            .blended(0.015),
+    );
+    clay.add(
+        stroke(fore, block(0.019, 0.04, 0.034, 0.016), LEATHER)
+            .at(Vec3::new(0.0, -0.205, -0.002))
+            .blended(0.016),
+    );
+    clay.add(
+        stroke(fore, egg(0.017, 0.035, 0.032), LEATHER)
+            .at(Vec3::new(0.0, -0.252, -0.012))
+            .turned(Quat::from_rotation_x(-0.45))
+            .blended(0.012),
     );
     clay.add(
         stroke(fore, limb(0.04, 0.0125, 0.011), LEATHER)
@@ -267,42 +345,58 @@ fn arm(clay: &mut Sculpt, side: Side) {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(0.56, Vec2::new(0.15, 0.25), 0.03, Vec2::new(9.0, 0.06));
+        let panel = tube(0.56, Vec2::new(0.15, 0.25), 0.04, Vec2::new(9.0, 0.07));
         clay.add(
             stroke(side.skirt(), panel, COAT)
                 .lined(LINING)
                 .at(Vec3::new(0.0, 0.1, 0.0))
+                .turned(Quat::from_rotation_x(0.06))
                 .squashed(Vec3::new(1.0, 1.0, 0.82))
                 .clipped(Vec3::X * -side.sign(), -0.01)
+                .wrinkled(0.007, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
         );
     }
     clay.add(
         stroke(Bone::Pelvis, ring(0.15, 0.02), LEATHER)
             .at(Vec3::new(0.0, 0.08, 0.0))
+            .turned(Quat::from_rotation_x(-0.06))
             .squashed(Vec3::new(1.0, 1.0, 0.8))
             .blended(0.006),
     );
 }
 
 fn hood(clay: &mut Sculpt) {
-    clay.add(stroke(Bone::Head, egg(0.132, 0.148, 0.148), COAT).at(Vec3::new(0.0, 0.155, 0.0)));
+    let fabric = Vec3::splat(14.0);
     clay.add(
-        stroke(Bone::Head, egg(0.115, 0.13, 0.1), COAT)
-            .at(Vec3::new(0.0, 0.07, 0.07))
+        stroke(Bone::Head, egg(0.132, 0.145, 0.15), COAT)
+            .at(Vec3::new(0.0, 0.15, 0.005))
+            .wrinkled(0.006, fabric),
+    );
+    clay.add(
+        stroke(Bone::Head, egg(0.118, 0.12, 0.1), COAT)
+            .at(Vec3::new(0.0, 0.06, 0.07))
+            .wrinkled(0.006, fabric)
             .blended(0.05),
     );
     clay.add(
+        stroke(Bone::Head, limb(0.11, 0.075, 0.04), COAT)
+            .at(Vec3::new(0.012, 0.2, 0.07))
+            .turned(toward(Vec3::new(0.1, -0.8, 0.8)))
+            .wrinkled(0.005, fabric)
+            .blended(0.06),
+    );
+    clay.add(
         stroke(Bone::Head, egg(0.1, 0.118, 0.118), LINING)
-            .at(Vec3::new(0.0, 0.15, -0.005))
+            .at(Vec3::new(0.0, 0.148, -0.003))
             .carved()
             .blended(0.01),
     );
     clay.add(
-        stroke(Bone::Head, egg(0.084, 0.102, 0.12), COAT)
-            .at(Vec3::new(0.0, 0.138, -0.14))
+        stroke(Bone::Head, egg(0.086, 0.104, 0.12), COAT)
+            .at(Vec3::new(0.0, 0.135, -0.142))
             .carved()
-            .blended(0.02),
+            .blended(0.025),
     );
 }
 
@@ -316,33 +410,46 @@ fn head(clay: &mut Sculpt) {
 }
 
 fn scarf(clay: &mut Sculpt) {
+    let wool = Vec3::splat(18.0);
     clay.add(
         stroke(Bone::Torso, ring(0.1, 0.042), SCARF)
             .at(Vec3::new(0.0, 0.475, 0.0))
-            .turned(Quat::from_rotation_x(0.12)),
+            .turned(Quat::from_rotation_x(0.12))
+            .wrinkled(0.008, wool),
     );
     clay.add(
         stroke(Bone::Torso, ring(0.085, 0.036), SCARF)
             .at(Vec3::new(0.0, 0.53, -0.005))
             .turned(Quat::from_rotation_x(-0.1) * Quat::from_rotation_z(0.12))
+            .wrinkled(0.007, wool)
             .blended(0.025),
+    );
+    clay.add(
+        stroke(Bone::Torso, egg(0.045, 0.038, 0.032), SCARF)
+            .at(Vec3::new(-0.062, 0.465, -0.108))
+            .wrinkled(0.006, wool)
+            .blended(0.02),
     );
 }
 
 fn pack(clay: &mut Sculpt) {
+    let leather = Vec3::splat(12.0);
     clay.add(
         stroke(Bone::Torso, block(0.11, 0.125, 0.055, 0.03), LEATHER)
-            .at(Vec3::new(0.0, 0.25, 0.17)),
+            .at(Vec3::new(0.0, 0.25, 0.17))
+            .wrinkled(0.004, leather),
     );
     clay.add(
         stroke(Bone::Torso, block(0.114, 0.035, 0.059, 0.018), LEATHER)
             .at(Vec3::new(0.0, 0.35, 0.171))
+            .wrinkled(0.003, leather)
             .blended(0.004),
     );
     clay.add(
         stroke(Bone::Torso, limb(0.26, 0.042, 0.042), WRAP)
             .at(Vec3::new(0.13, 0.42, 0.17))
             .turned(Quat::from_rotation_z(-FRAC_PI_2))
+            .wrinkled(0.005, Vec3::new(16.0, 7.0, 16.0))
             .blended(0.006),
     );
 }
@@ -677,6 +784,61 @@ mod tests {
                 .fold(f32::NEG_INFINITY, f32::max)
         };
         assert!(reach(-1.0) > reach(1.0) + 0.025);
+    }
+
+    #[test]
+    fn the_toes_turn_outward() {
+        for side in [-1.0_f32, 1.0] {
+            let sole: Vec<[f32; 3]> = FIGURE
+                .vertices
+                .iter()
+                .filter(|vertex| vertex.position[1] < 0.03 && vertex.position[0] * side > 0.0)
+                .map(|vertex| vertex.position)
+                .collect();
+            let front = sole.iter().map(|at| at[2]).fold(f32::INFINITY, f32::min);
+            let back = sole
+                .iter()
+                .map(|at| at[2])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let reach = |near: &dyn Fn(f32) -> bool| {
+                let chosen: Vec<f32> = sole
+                    .iter()
+                    .filter(|at| near(at[2]))
+                    .map(|at| at[0].abs())
+                    .collect();
+                chosen.iter().sum::<f32>() / f32::from(u16::try_from(chosen.len()).unwrap())
+            };
+            let toe = reach(&|z| z < front + 0.04);
+            let heel = reach(&|z| z > back - 0.04);
+            assert!(toe > heel + 0.01);
+        }
+    }
+
+    #[test]
+    fn the_hood_slumps_behind_the_head() {
+        let back = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position[1] > 1.47)
+            .map(|vertex| vertex.position[2])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(back > 0.19);
+    }
+
+    #[test]
+    fn the_coat_closes_on_one_side() {
+        let front = |side: f32| {
+            FIGURE
+                .vertices
+                .iter()
+                .filter(|vertex| {
+                    (0.94..0.98).contains(&vertex.position[1])
+                        && (0.03..0.07).contains(&(vertex.position[0] * side))
+                })
+                .map(|vertex| -vertex.position[2])
+                .fold(f32::NEG_INFINITY, f32::max)
+        };
+        assert!(front(1.0) > front(-1.0) + 0.006);
     }
 
     #[test]
