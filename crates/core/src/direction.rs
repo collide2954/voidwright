@@ -63,7 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn every_direction_moves_to_a_neighbour() {
+    fn every_direction_moves_to_a_neighbor() {
         for direction in Direction::ALL {
             let (dx, dy) = direction.delta();
             assert!(dx.abs() <= 1 && dy.abs() <= 1 && (dx, dy) != (0, 0));

@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbouring_samples_are_close() {
+    fn neighboring_samples_are_close() {
         let noise = Noise::new(7, 8);
         for y in -20..20 {
             for x in -20..20 {
