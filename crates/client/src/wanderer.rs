@@ -3,12 +3,15 @@ use std::f32::consts::FRAC_PI_2;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::figure::{Bone, rest};
+use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
 use crate::shape::Material;
+use crate::sky::noise3;
+use crate::spline::smoothstep;
 
-const COAT: Material = Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.08);
-const LINING: Material = Material::matte(Vec3::new(0.26, 0.11, 0.09), 0.05);
-const CLOTH: Material = Material::matte(Vec3::new(0.09, 0.09, 0.1), 0.06);
+const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06);
+const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05);
+const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05);
 const SCARF: Material = Material::matte(Vec3::new(0.5, 0.26, 0.12), 0.05);
 const LEATHER: Material = Material::matte(Vec3::new(0.24, 0.16, 0.1), 0.18);
 const WRAP: Material = Material::matte(Vec3::new(0.36, 0.32, 0.26), 0.04);
@@ -20,6 +23,22 @@ const MASK: Material = Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.55);
 const BRASS: Material = Material::matte(Vec3::new(0.55, 0.42, 0.22), 0.7);
 const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85));
 const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25));
+const DUST: Vec3 = Vec3::new(0.42, 0.36, 0.28);
+
+fn weather(mesh: &mut SkinnedMesh) {
+    let dust = linear(DUST);
+    for vertex in &mut mesh.vertices {
+        if vertex.params[1] > 0.5 {
+            continue;
+        }
+        let at = Vec3::from(vertex.position);
+        let mottle = 0.86 + 0.28 * noise3(at * 11.0, 7);
+        let grime = 1.0 - 0.35 * smoothstep(0.6, 0.15, at.y);
+        let dusting = 0.45 * smoothstep(0.22, 0.0, at.y);
+        let color = Vec3::from(vertex.color) * mottle * grime;
+        vertex.color = color.lerp(dust, dusting).to_array();
+    }
+}
 
 #[derive(Clone, Copy)]
 enum Side {
@@ -107,6 +126,7 @@ pub fn voidwright() -> SkinnedMesh {
         mesh.simplify(piece.budget);
         figure.append(&mesh);
     }
+    weather(&mut figure);
     figure.occlude(&|point| {
         pieces
             .iter()
@@ -669,8 +689,9 @@ fn lantern() -> Sculpt {
 
 #[cfg(test)]
 mod tests {
-    use super::voidwright;
+    use super::{DUST, voidwright, weather};
     use crate::figure::{BONES, Bone};
+    use crate::palette::linear;
     use crate::sculpt::{SkinnedMesh, SkinnedVertex};
     use std::sync::LazyLock;
 
@@ -691,6 +712,56 @@ mod tests {
 
     fn glows(vertex: &SkinnedVertex) -> bool {
         vertex.params[1] > 0.99
+    }
+
+    fn swatch(count: u16, height: f32, glow: f32) -> Vec<SkinnedVertex> {
+        (0..count)
+            .map(|index| {
+                let angle = f32::from(index) * 0.37;
+                SkinnedVertex {
+                    position: [angle.cos() * 0.2, height, angle.sin() * 0.2],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.05, 0.04, 0.03],
+                    params: [0.1, glow],
+                    bones: [0.0; 4],
+                    weights: [1.0, 0.0, 0.0, 0.0],
+                }
+            })
+            .collect()
+    }
+
+    fn mean(vertices: &[SkinnedVertex]) -> glam::Vec3 {
+        vertices
+            .iter()
+            .map(|vertex| glam::Vec3::from(vertex.color))
+            .sum::<glam::Vec3>()
+            / f32::from(u16::try_from(vertices.len()).unwrap())
+    }
+
+    #[test]
+    fn weather_darkens_the_hem_and_dusts_the_boots() {
+        let mut mesh = SkinnedMesh::default();
+        for height in [1.2, 0.35, 0.03] {
+            mesh.vertices.extend(swatch(100, height, 0.0));
+        }
+        let clean = mean(&mesh.vertices[200..]);
+        weather(&mut mesh);
+        let [chest, hem, boot] =
+            [0, 100, 200].map(|start| mean(&mesh.vertices[start..start + 100]));
+        assert!(hem.element_sum() < chest.element_sum() * 0.9);
+        let dust = linear(DUST);
+        assert!(boot.distance(dust) < clean.distance(dust) * 0.85);
+    }
+
+    #[test]
+    fn weather_leaves_lights_clean() {
+        let mut mesh = SkinnedMesh {
+            vertices: swatch(20, 0.03, 1.0),
+            indices: Vec::new(),
+        };
+        let before = mesh.clone();
+        weather(&mut mesh);
+        assert_eq!(mesh, before);
     }
 
     #[test]
