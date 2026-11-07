@@ -22,7 +22,10 @@ pub struct App {
 impl App {
     #[must_use]
     pub fn new(mut context: Box<dyn RenderingBackend>, launch: Launch) -> Self {
-        let game = Game::new(SEED);
+        let mut game = Game::new(SEED);
+        if let Some([yaw, pitch, distance]) = launch.orbit {
+            game.camera_mut().set_orbit(yaw, pitch, distance);
+        }
         let renderer = Renderer::new(context.as_mut(), &game);
         Self {
             context,

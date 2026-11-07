@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Launch {
     pub capture: Option<PathBuf>,
+    pub orbit: Option<[f32; 3]>,
 }
 
 impl Launch {
@@ -11,12 +12,22 @@ impl Launch {
         let mut launch = Self::default();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
-            if arg == "--capture" {
-                launch.capture = args.next().map(PathBuf::from);
+            match arg.as_str() {
+                "--capture" => launch.capture = args.next().map(PathBuf::from),
+                "--orbit" => launch.orbit = orbit(&mut args),
+                _ => {}
             }
         }
         launch
     }
+}
+
+fn orbit(args: &mut impl Iterator<Item = String>) -> Option<[f32; 3]> {
+    let values: Vec<f32> = args
+        .take(3)
+        .map(|arg| arg.parse().ok())
+        .collect::<Option<_>>()?;
+    values.try_into().ok()
 }
 
 #[must_use]
@@ -54,6 +65,17 @@ mod tests {
     #[test]
     fn capture_without_a_file_is_ignored() {
         assert_eq!(parse(&["--capture"]), Launch::default());
+    }
+
+    #[test]
+    fn orbit_takes_yaw_pitch_and_distance() {
+        let launch = parse(&["--orbit", "0.5", "0.6", "30"]);
+        assert_eq!(launch.orbit, Some([0.5, 0.6, 30.0]));
+    }
+
+    #[test]
+    fn an_incomplete_orbit_is_ignored() {
+        assert_eq!(parse(&["--orbit", "0.5", "x"]), Launch::default());
     }
 
     #[test]

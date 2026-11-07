@@ -49,6 +49,12 @@ impl OrbitCamera {
         self.distance
     }
 
+    pub fn set_orbit(&mut self, yaw: f32, pitch: f32, distance: f32) {
+        self.yaw = yaw.rem_euclid(TAU);
+        self.pitch = pitch.clamp(MIN_PITCH, MAX_PITCH);
+        self.distance = distance.clamp(MIN_DISTANCE, MAX_DISTANCE);
+    }
+
     pub fn rotate(&mut self, yaw: f32, pitch: f32) {
         self.yaw = (self.yaw + yaw).rem_euclid(TAU);
         self.pitch = (self.pitch + pitch).clamp(MIN_PITCH, MAX_PITCH);
@@ -131,6 +137,17 @@ mod tests {
         assert!((camera.distance() - MAX_DISTANCE).abs() < 1e-6);
         camera.zoom(-100.0);
         assert!((camera.distance() - MIN_DISTANCE).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_orbit_can_be_set_within_the_limits() {
+        let mut camera = camera();
+        camera.set_orbit(1.0, 0.6, 20.0);
+        assert!((camera.pitch() - 0.6).abs() < 1e-6);
+        assert!((camera.distance() - 20.0).abs() < 1e-6);
+        camera.set_orbit(0.0, 9.0, 900.0);
+        assert!((camera.pitch() - MAX_PITCH).abs() < 1e-6);
+        assert!((camera.distance() - MAX_DISTANCE).abs() < 1e-6);
     }
 
     #[test]
