@@ -13,7 +13,7 @@ This document gives the design decisions for Voidwright.
 
 | Topic | Decision |
 | --- | --- |
-| View | Low-poly 3D models on a grid of tiles. The camera turns around the player. |
+| View | Smooth 3D models on a grid of tiles. The camera turns around the player. |
 | Time | The server changes the world in ticks of 600 ms. A player walks 1 tile in each tick or runs 2 tiles in each tick. |
 | Running | Running uses run energy. Energy recovers when the player walks or stops. Piloting makes the recovery faster. |
 | Setting | A broken ring structure in a nebula. The world is a set of floating fragments. Bridges and gates connect the fragments. |
@@ -79,7 +79,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Effects | Sun shadows, filmic color with bloom, detail textures that code paints at start, moss tufts, and drifting spores. |
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
-| Models | Code makes all models. Models have flat faces and vertex colors. Models do not use textures. |
+| Models | Code sculpts all models. A sculpt is a set of simple solids that blend smoothly, with carved details. Each vertex has a color, a shine value, and a glow value. Models do not use textures. |
 | Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
 | Island edges | A jagged rock lip surrounds each island. The walls below the lip show the layers of the slab. |
 | Fragment shape | Each fragment is a thick, uneven slab from the ring. Soil lies on layers of rock and Wright hull plates. The edges are broken, and the bottom is rough. The thickness changes much from fragment to fragment. |
@@ -115,6 +115,8 @@ The total XP for level 80 is half of the total XP for level 99.
 | Minimum hardware | Lenovo ThinkPad T590: Intel UHD Graphics 620, 8th generation Intel Core i5, 12 GB RAM. The target is 60 fps at 1920 × 1080. |
 | Graphics | miniquad with OpenGL 3.3. |
 | Math | glam. |
+| Sculpts | Each sculpt is a signed distance field. At start, a surface-nets mesher in the client makes one smooth mesh from each sculpt. The mesher is part of the project. |
+| Skinning | Each vertex of a figure follows a maximum of four bones. The GPU moves the vertices. |
 | Network | TCP with a binary protocol that the project defines. |
 | Servers | Many worlds hold the inner islands. Each world holds a maximum of 2,000 players. One war shard holds the outer ring for all players. |
 | Content | Items, NPCs, and quests are typed tables in Rust code. |
