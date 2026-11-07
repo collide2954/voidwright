@@ -63,29 +63,20 @@ void main() {
 
 #[must_use]
 pub fn meta() -> ShaderMeta {
+    let mut uniforms = vec![
+        UniformDesc::new("view_projection", UniformType::Mat4),
+        UniformDesc::new("model", UniformType::Mat4),
+    ];
+    uniforms.extend(Shading::uniforms());
     ShaderMeta {
         images: Vec::new(),
-        uniforms: UniformBlockLayout {
-            uniforms: vec![
-                UniformDesc::new("view_projection", UniformType::Mat4),
-                UniformDesc::new("model", UniformType::Mat4),
-                UniformDesc::new("eye", UniformType::Float3),
-                UniformDesc::new("fog_color", UniformType::Float3),
-                UniformDesc::new("fog_range", UniformType::Float2),
-                UniformDesc::new("toward_sun", UniformType::Float3),
-                UniformDesc::new("sun", UniformType::Float3),
-                UniformDesc::new("sky", UniformType::Float3),
-                UniformDesc::new("below", UniformType::Float3),
-            ],
-        },
+        uniforms: UniformBlockLayout { uniforms },
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Uniforms {
-    pub view_projection: [f32; 16],
-    pub model: [f32; 16],
+pub struct Shading {
     pub eye: [f32; 3],
     pub fog_color: [f32; 3],
     pub fog_range: [f32; 2],
@@ -95,12 +86,10 @@ pub struct Uniforms {
     pub below: [f32; 3],
 }
 
-impl Uniforms {
+impl Shading {
     #[must_use]
-    pub fn new(view_projection: Mat4, model: Mat4, eye: Vec3, light: &Light) -> Self {
+    pub fn new(eye: Vec3, light: &Light) -> Self {
         Self {
-            view_projection: view_projection.to_cols_array(),
-            model: model.to_cols_array(),
             eye: eye.to_array(),
             fog_color: palette::linear(palette::VOID).to_array(),
             fog_range: FOG_RANGE,
@@ -108,6 +97,38 @@ impl Uniforms {
             sun: light.sun.to_array(),
             sky: light.sky.to_array(),
             below: light.below.to_array(),
+        }
+    }
+
+    #[must_use]
+    pub fn uniforms() -> Vec<UniformDesc> {
+        vec![
+            UniformDesc::new("eye", UniformType::Float3),
+            UniformDesc::new("fog_color", UniformType::Float3),
+            UniformDesc::new("fog_range", UniformType::Float2),
+            UniformDesc::new("toward_sun", UniformType::Float3),
+            UniformDesc::new("sun", UniformType::Float3),
+            UniformDesc::new("sky", UniformType::Float3),
+            UniformDesc::new("below", UniformType::Float3),
+        ]
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Uniforms {
+    pub view_projection: [f32; 16],
+    pub model: [f32; 16],
+    pub shading: Shading,
+}
+
+impl Uniforms {
+    #[must_use]
+    pub fn new(view_projection: Mat4, model: Mat4, eye: Vec3, light: &Light) -> Self {
+        Self {
+            view_projection: view_projection.to_cols_array(),
+            model: model.to_cols_array(),
+            shading: Shading::new(eye, light),
         }
     }
 }
@@ -139,7 +160,7 @@ mod tests {
     #[test]
     fn uniforms_carry_the_light() {
         let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO, &VAEL);
-        assert_eq!(uniforms.toward_sun, VAEL.toward_sun.to_array());
-        assert_eq!(uniforms.below, VAEL.below.to_array());
+        assert_eq!(uniforms.shading.toward_sun, VAEL.toward_sun.to_array());
+        assert_eq!(uniforms.shading.below, VAEL.below.to_array());
     }
 }
