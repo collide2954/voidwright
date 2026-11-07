@@ -1,6 +1,6 @@
 use std::f32::consts::TAU;
 
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::palette::linear;
 
@@ -47,6 +47,8 @@ pub struct Section {
     pub center: Vec3,
     pub radius: Vec2,
     pub square: f32,
+    pub ripple: f32,
+    pub folds: f32,
 }
 
 #[must_use]
@@ -55,6 +57,8 @@ pub const fn round(y: f32, x: f32, z: f32) -> Section {
         center: Vec3::new(0.0, y, 0.0),
         radius: Vec2::new(x, z),
         square: 2.0,
+        ripple: 0.0,
+        folds: 0.0,
     }
 }
 
@@ -76,11 +80,21 @@ impl Section {
         Self { square, ..self }
     }
 
+    #[must_use]
+    pub const fn rippled(self, ripple: f32, folds: f32) -> Self {
+        Self {
+            ripple,
+            folds,
+            ..self
+        }
+    }
+
     fn point(&self, angle: f32) -> Vec3 {
         let (sin, cos) = angle.sin_cos();
         let power = 2.0 / self.square;
-        let x = cos.signum() * cos.abs().powf(power) * self.radius.x;
-        let z = sin.signum() * sin.abs().powf(power) * self.radius.y;
+        let fold = 1.0 + self.ripple * (self.folds * angle).sin();
+        let x = cos.signum() * cos.abs().powf(power) * self.radius.x * fold;
+        let z = sin.signum() * sin.abs().powf(power) * self.radius.y * fold;
         self.center + Vec3::new(x, 0.0, z)
     }
 }
@@ -155,6 +169,49 @@ impl LitMesh {
             let edge = (corners[0] + corners[1]) / 2.0;
             self.face(&corners, material, edge - middle);
         }
+    }
+
+    pub fn drape(
+        &mut self,
+        sections: &[Section],
+        arc: (f32, f32),
+        outside: Material,
+        inside: Material,
+    ) {
+        let first = self.vertices.len();
+        let start = self.indices.len();
+        self.sweep(sections, arc, 0.0, outside);
+        let outer = self.vertices[first..].to_vec();
+        let faces = self.indices[start..].to_vec();
+        let offset = u32::try_from(outer.len()).expect("a mesh index fits in u32");
+        for vertex in outer {
+            self.vertex(
+                Vec3::from(vertex.position),
+                -Vec3::from(vertex.normal),
+                inside,
+            );
+        }
+        for face in faces.as_chunks::<3>().0 {
+            let [a, b, c] = face.map(|index| index + offset);
+            self.indices.extend([a, c, b]);
+        }
+    }
+
+    pub fn append_transformed(&mut self, other: &Self, matrix: Mat4) {
+        let offset = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
+        for vertex in &other.vertices {
+            let position = matrix.transform_point3(Vec3::from(vertex.position));
+            let normal = matrix
+                .transform_vector3(Vec3::from(vertex.normal))
+                .normalize_or_zero();
+            self.vertices.push(LitVertex {
+                position: position.to_array(),
+                normal: normal.to_array(),
+                ..*vertex
+            });
+        }
+        self.indices
+            .extend(other.indices.iter().map(|index| index + offset));
     }
 
     pub fn ring(&mut self, inner: f32, outer: f32, material: Material) {
@@ -295,7 +352,7 @@ fn normals(grid: &[Vec<Vec3>], sections: &[Section], closed: bool) -> Vec<Vec<Ve
 #[cfg(test)]
 mod tests {
     use super::{LitMesh, Material, round};
-    use glam::Vec3;
+    use glam::{Mat4, Vec3};
     use std::f32::consts::{PI, TAU};
 
     const PAINT: Material = Material::matte(Vec3::splat(0.5), 0.2);
@@ -364,6 +421,66 @@ mod tests {
             let winding = (pb - pa).cross(pc - pa);
             assert!(winding.dot(Vec3::from(mesh.vertices[a].normal)) > 0.0);
         }
+    }
+
+    #[test]
+    fn a_rippled_section_folds_around_its_ring() {
+        let section = round(0.0, 1.0, 1.0).rippled(0.1, 6.0);
+        let radii: Vec<f32> = (0..64)
+            .map(|step| {
+                let point = section.point(TAU * f32::from(u8::try_from(step).unwrap()) / 64.0);
+                Vec3::new(point.x, 0.0, point.z).length()
+            })
+            .collect();
+        let widest = radii.iter().copied().fold(0.0, f32::max);
+        let narrowest = radii.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!((widest - 1.1).abs() < 0.01 && (narrowest - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_drape_shows_a_lining_inside() {
+        let lining = Material::matte(Vec3::new(0.3, 0.1, 0.1), 0.1);
+        let mut mesh = LitMesh::default();
+        mesh.drape(
+            &[round(0.0, 0.3, 0.3), round(0.5, 0.3, 0.3)],
+            (0.0, PI),
+            PAINT,
+            lining,
+        );
+        let inside = mesh
+            .vertices
+            .iter()
+            .filter(|vertex| {
+                let point = Vec3::from(vertex.position);
+                Vec3::from(vertex.normal).dot(Vec3::new(point.x, 0.0, point.z)) < 0.0
+            })
+            .count();
+        assert_eq!(inside * 2, mesh.vertices.len());
+        for [a, b, c] in faces(&mesh) {
+            let [pa, pb, pc] = [a, b, c].map(|index| position(&mesh, index));
+            let winding = (pb - pa).cross(pc - pa);
+            assert!(winding.dot(Vec3::from(mesh.vertices[a].normal)) > 0.0);
+        }
+    }
+
+    #[test]
+    fn a_transformed_append_moves_points_and_turns_normals() {
+        let mut part = LitMesh::default();
+        part.ring(0.3, 0.4, PAINT);
+        let mut mesh = LitMesh::default();
+        mesh.ring(0.3, 0.4, PAINT);
+        let before = mesh.vertices.len();
+        let turn = Mat4::from_translation(Vec3::X) * Mat4::from_rotation_z(PI / 2.0);
+        mesh.append_transformed(&part, turn);
+        let moved = mesh.vertices[before];
+        assert!(Vec3::from(moved.normal).distance(Vec3::NEG_X) < 1e-5);
+        assert!(Vec3::from(moved.position).x < 1.0 + 1e-5);
+        assert_eq!(mesh.indices.len(), part.indices.len() * 2);
+        assert!(
+            mesh.indices[part.indices.len()..]
+                .iter()
+                .all(|&index| index as usize >= before)
+        );
     }
 
     #[test]
