@@ -138,7 +138,7 @@ mod tests {
         for _ in 0..60 {
             game.update(TICK / 36);
         }
-        assert!(game.stride().amplitude() > 0.3);
+        assert!(game.stride().motion() > 0.3);
         assert!(game.time() > 0.9);
     }
 
