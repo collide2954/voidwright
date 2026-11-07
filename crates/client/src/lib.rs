@@ -29,11 +29,12 @@ mod spline;
 mod stats;
 mod stride;
 mod terrain;
+mod wanderer;
 
 pub use app::App;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
-pub use figure::{BONES, Bone, Part, marker_ring, placement, pulse, skeleton, voidwright};
+pub use figure::{BONES, Bone, marker_ring, placement, pulse, rest, skeleton, skin};
 pub use gait::{Pose, pose_at};
 pub use game::Game;
 pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};
@@ -50,3 +51,4 @@ pub use spline::{catmull_rom, smoothstep};
 pub use stats::FrameStats;
 pub use stride::Stride;
 pub use terrain::{cliff, top, underside};
+pub use wanderer::voidwright;

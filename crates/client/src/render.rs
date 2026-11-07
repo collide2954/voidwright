@@ -5,10 +5,10 @@ use miniquad::{
     TextureFormat, TextureParams, UniformsSource, VertexAttribute, VertexFormat,
 };
 
-use crate::shader::{baked, lit};
+use crate::shader::{baked, lit, skinned};
 use crate::{
-    Bone, Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection,
-    pulse, skeleton, sky, top, underside, voidwright,
+    Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection, pulse,
+    skin, sky, top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -23,9 +23,10 @@ pub struct Renderer {
     backdrop: Pipeline,
     baked: Pipeline,
     lit: Pipeline,
+    skinned: Pipeline,
     sky: Model,
     terrain: Model,
-    avatar: Vec<(Bone, Model)>,
+    avatar: Model,
     marker: Model,
 }
 
@@ -50,16 +51,29 @@ impl Renderer {
             &baked_attributes,
             solid(),
         );
+        let lit_attributes = [
+            VertexAttribute::new("in_position", VertexFormat::Float3),
+            VertexAttribute::new("in_normal", VertexFormat::Float3),
+            VertexAttribute::new("in_color", VertexFormat::Float3),
+            VertexAttribute::new("in_params", VertexFormat::Float2),
+        ];
         let lit = pipeline(
             context,
             [lit::VERTEX, lit::FRAGMENT],
             lit::meta(),
-            &[
-                VertexAttribute::new("in_position", VertexFormat::Float3),
-                VertexAttribute::new("in_normal", VertexFormat::Float3),
-                VertexAttribute::new("in_color", VertexFormat::Float3),
-                VertexAttribute::new("in_params", VertexFormat::Float2),
-            ],
+            &lit_attributes,
+            solid(),
+        );
+        let mut skinned_attributes = lit_attributes.to_vec();
+        skinned_attributes.extend([
+            VertexAttribute::new("in_bones", VertexFormat::Float4),
+            VertexAttribute::new("in_weights", VertexFormat::Float4),
+        ]);
+        let skinned = pipeline(
+            context,
+            [skinned::VERTEX, skinned::FRAGMENT],
+            skinned::meta(),
+            &skinned_attributes,
             solid(),
         );
         let backdrop_mesh = sky();
@@ -70,19 +84,15 @@ impl Renderer {
         terrain.append(&cliff(ground, &painter, &VAEL));
         terrain.append(&underside(ground, &painter, &VAEL));
         let terrain = upload(context, &terrain.vertices, &terrain.indices);
-        let avatar = voidwright()
-            .into_iter()
-            .map(|part| {
-                let model = upload(context, &part.mesh.vertices, &part.mesh.indices);
-                (part.bone, model)
-            })
-            .collect();
+        let figure = voidwright();
+        let avatar = upload(context, &figure.vertices, &figure.indices);
         let ring = marker_ring();
         let marker = upload(context, &ring.vertices, &ring.indices);
         Self {
             backdrop,
             baked,
             lit,
+            skinned,
             sky,
             terrain,
             avatar,
@@ -149,29 +159,27 @@ impl Renderer {
             camera.eye(),
         )));
         context.draw(0, self.terrain.count, 1);
-        context.apply_pipeline(&self.lit);
-        let root = placement(game.player_position(), game.stride());
-        let bones = skeleton(&game.stride().pose(game.time()));
-        let lit = |context: &mut dyn RenderingBackend, model: &Model, matrix: Mat4| {
-            context.apply_bindings(&model.bindings);
+        context.apply_pipeline(&self.skinned);
+        context.apply_bindings(&self.avatar.bindings);
+        context.apply_uniforms(UniformsSource::table(&skinned::Uniforms::new(
+            view_projection,
+            placement(game.player_position(), game.stride()),
+            &skin(&game.stride().pose(game.time())),
+            camera.eye(),
+            &VAEL,
+        )));
+        context.draw(0, self.avatar.count, 1);
+        if let Some(position) = game.marker() {
+            let scale = Mat4::from_scale(Vec3::splat(pulse(game.time())));
+            context.apply_pipeline(&self.lit);
+            context.apply_bindings(&self.marker.bindings);
             context.apply_uniforms(UniformsSource::table(&lit::Uniforms::new(
                 view_projection,
-                matrix,
+                Mat4::from_translation(position) * scale,
                 camera.eye(),
                 &VAEL,
             )));
-            context.draw(0, model.count, 1);
-        };
-        for (bone, model) in &self.avatar {
-            lit(context, model, root * bones[bone.index()]);
-        }
-        if let Some(position) = game.marker() {
-            let scale = Mat4::from_scale(Vec3::splat(pulse(game.time())));
-            lit(
-                context,
-                &self.marker,
-                Mat4::from_translation(position) * scale,
-            );
+            context.draw(0, self.marker.count, 1);
         }
     }
 }
