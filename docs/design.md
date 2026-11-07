@@ -15,6 +15,17 @@ This document gives the design decisions for Voidwright.
 | Player combat | Players can attack players only on the outer fragments. |
 | Death | The player keeps the 3 items that have the highest value. The other items stay at a beacon for 15 minutes. On the outer fragments, the killer gets the other items. |
 
+## Legions
+
+| Topic | Decision |
+| --- | --- |
+| Legions | There are three fixed legions. The Wardens repair the ring to its original condition. The Reclaimers remove parts from the ring for profit and freedom. The Ascendants use void technology to change into a new form. |
+| Membership | Each player pledges to one legion. There are no player groups. |
+| Change of legion | A player can change legion one time in 4 weeks. A change sets the legion rank of the player to zero. |
+| Territory | The outer fragments form a ring of sectors. Each legion holds one continuous arc of sectors. There are three fronts: one front between each pair of legions. |
+| Conquest | Players can capture the core of a sector at a front at any time. A capture moves that front by one sector. |
+| Rewards | The legion that holds a sector gets a part of the salvage from that sector. Its members pay less for fabrication at the stations in that sector. The sector shows the banners of the legion. |
+
 ## Look and feel
 
 | Topic | Decision |
