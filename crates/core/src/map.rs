@@ -6,6 +6,7 @@ pub const ELEVATION_PER_TILE: i16 = 32;
 pub enum Terrain {
     Void,
     Moss,
+    Rock,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

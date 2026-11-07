@@ -1,4 +1,4 @@
-use crate::{ELEVATION_PER_TILE, Map, NOISE_RANGE, Noise, Terrain, Tile, reachable};
+use crate::{Direction, ELEVATION_PER_TILE, Map, NOISE_RANGE, Noise, Terrain, Tile, reachable};
 
 const MARGIN: u16 = 2;
 const OUTLINE_CELL: u32 = 6;
@@ -19,21 +19,37 @@ impl Island {
         let reach = radius + radius / 4 + 1 + MARGIN;
         let size = 2 * reach + 1;
         let center = Tile::new(i32::from(reach), i32::from(reach));
-        let outline = Noise::new(seed ^ OUTLINE_SALT, OUTLINE_CELL);
+        let land = reachable(&outline(seed, size, center, radius), center);
         let hills = Noise::new(seed ^ HILL_SALT, HILL_CELL);
-        let mut land = Map::new(size, size);
-        for tile in land.tiles() {
-            if within_outline(&outline, center, tile, radius) {
-                land.set_terrain(tile, Terrain::Moss);
-            }
-        }
         let mut map = Map::new(size, size);
-        for tile in reachable(&land, center) {
+        for &tile in &land {
             map.set_terrain(tile, Terrain::Moss);
             map.set_elevation(tile, elevation(&hills, center, tile, radius));
         }
+        for &tile in &land {
+            if touches_the_void(&map, tile) {
+                map.set_terrain(tile, Terrain::Rock);
+            }
+        }
         Self { map, center }
     }
+}
+
+fn outline(seed: u64, size: u16, center: Tile, radius: u16) -> Map {
+    let noise = Noise::new(seed ^ OUTLINE_SALT, OUTLINE_CELL);
+    let mut map = Map::new(size, size);
+    for tile in map.tiles() {
+        if within_outline(&noise, center, tile, radius) {
+            map.set_terrain(tile, Terrain::Moss);
+        }
+    }
+    map
+}
+
+fn touches_the_void(map: &Map, tile: Tile) -> bool {
+    Direction::ALL
+        .iter()
+        .any(|&direction| !map.is_walkable(tile.step(direction)))
 }
 
 fn within_outline(outline: &Noise, center: Tile, tile: Tile, radius: u16) -> bool {
@@ -54,7 +70,7 @@ fn elevation(hills: &Noise, center: Tile, tile: Tile, radius: u16) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::Island;
-    use crate::{Direction, ELEVATION_PER_TILE, Tile, reachable};
+    use crate::{Direction, ELEVATION_PER_TILE, Terrain, Tile, reachable};
 
     const RADIUS: u8 = 16;
     const SEEDS: std::ops::Range<u64> = 0..8;
@@ -114,6 +130,30 @@ mod tests {
             .map(|&tile| i64::from(island.map.elevation(tile)))
             .sum();
         total / i64::try_from(tiles.len()).unwrap()
+    }
+
+    fn touches_the_void(island: &Island, tile: Tile) -> bool {
+        Direction::ALL
+            .iter()
+            .any(|&direction| !island.map.is_walkable(tile.step(direction)))
+    }
+
+    #[test]
+    fn land_next_to_the_void_is_rock() {
+        for island in islands() {
+            for tile in walkable(&island).filter(|&tile| touches_the_void(&island, tile)) {
+                assert_eq!(island.map.terrain(tile), Terrain::Rock);
+            }
+        }
+    }
+
+    #[test]
+    fn inner_land_is_moss() {
+        for island in islands() {
+            for tile in walkable(&island).filter(|&tile| !touches_the_void(&island, tile)) {
+                assert_eq!(island.map.terrain(tile), Terrain::Moss);
+            }
+        }
     }
 
     #[test]
