@@ -15,6 +15,7 @@ mod motion;
 pub mod nets;
 mod paint;
 mod palette;
+mod parallel;
 mod picking;
 pub mod png;
 mod render;

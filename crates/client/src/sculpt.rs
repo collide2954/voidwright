@@ -5,6 +5,7 @@ use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
 use crate::field::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
 use crate::nets::{Lattice, mesh};
 use crate::palette::linear;
+use crate::parallel;
 use crate::shape::Material;
 
 pub const INFLUENCES: usize = 4;
@@ -44,8 +45,8 @@ impl SkinnedMesh {
         self.indices.len() / 3
     }
 
-    pub fn occlude(&mut self, field: &impl Fn(Vec3) -> f32) {
-        for vertex in &mut self.vertices {
+    pub fn occlude(&mut self, field: &(impl Fn(Vec3) -> f32 + Sync)) {
+        parallel::fill(&mut self.vertices, |_, vertex| {
             let position = Vec3::from(vertex.position);
             let normal = Vec3::from(vertex.normal);
             let mut hidden = 0.0;
@@ -57,7 +58,7 @@ impl SkinnedMesh {
             let light = (1.0 - OCCLUSION_STRENGTH * hidden).clamp(0.0, 1.0);
             let kept = light + (1.0 - light) * vertex.params[1];
             vertex.color = (Vec3::from(vertex.color) * kept).to_array();
-        }
+        });
     }
 
     pub fn append(&mut self, other: &Self) {
@@ -392,11 +393,7 @@ impl Sculpt {
             &|point| self.distance(point),
             &Lattice::around(low, high, cell),
         );
-        let vertices = net
-            .positions
-            .iter()
-            .map(|&position| self.vertex(position, cell))
-            .collect();
+        let vertices = parallel::map(&net.positions, |&position| self.vertex(position, cell));
         SkinnedMesh {
             vertices,
             indices: net.indices,

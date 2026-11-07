@@ -1,5 +1,7 @@
 use glam::Vec3;
 
+use crate::parallel;
+
 const MARGIN: f32 = 2.0;
 const BLOCK: u16 = 4;
 const SLACK: f32 = 1.5;
@@ -60,6 +62,16 @@ impl Lattice {
         usize::from(x) + width * (usize::from(y) + height * usize::from(z))
     }
 
+    fn corner_at(&self, index: usize) -> [u16; 3] {
+        let [width, height, _] = self.cells.map(|count| usize::from(count) + 1);
+        [
+            index % width,
+            index / width % height,
+            index / (width * height),
+        ]
+        .map(|value| u16::try_from(value).expect("a corner fits in u16"))
+    }
+
     fn cell_index(&self, [x, y, z]: [u16; 3]) -> usize {
         let [width, height, _] = self.cells.map(usize::from);
         usize::from(x) + width * (usize::from(y) + height * usize::from(z))
@@ -75,7 +87,7 @@ pub struct Net {
 type Block = ([u16; 3], [u16; 3]);
 
 #[must_use]
-pub fn mesh(field: &impl Fn(Vec3) -> f32, lattice: &Lattice) -> Net {
+pub fn mesh(field: &(impl Fn(Vec3) -> f32 + Sync), lattice: &Lattice) -> Net {
     let (values, active) = sample(field, lattice);
     let mut net = Net::default();
     let vertices = place(&values, &active, lattice, &mut net.positions);
@@ -94,28 +106,38 @@ fn every(counts: [u16; 3]) -> impl Iterator<Item = [u16; 3]> {
         .flat_map(move |z| (0..counts[1]).flat_map(move |y| (0..counts[0]).map(move |x| [x, y, z])))
 }
 
-fn sample(field: &impl Fn(Vec3) -> f32, lattice: &Lattice) -> (Vec<f32>, Vec<Block>) {
+fn sample(field: &(impl Fn(Vec3) -> f32 + Sync), lattice: &Lattice) -> (Vec<f32>, Vec<Block>) {
     let total = lattice.corner_index(lattice.cells) + 1;
-    let mut values = vec![f32::NAN; total];
     let reach = f32::from(BLOCK) * lattice.cell * 3.0_f32.sqrt() / 2.0 * SLACK;
+    let blocks: Vec<Block> = every(lattice.cells.map(|count| count.div_ceil(BLOCK)))
+        .map(|block| {
+            let low = block.map(|index| index * BLOCK);
+            let high = [0, 1, 2].map(|axis| (low[axis] + BLOCK).min(lattice.cells[axis]));
+            (low, high)
+        })
+        .collect();
+    let centers = parallel::map(&blocks, |&(low, high)| {
+        field((lattice.corner(low) + lattice.corner(high)) / 2.0)
+    });
+    let mut needed = vec![false; total];
     let mut active = Vec::new();
     let mut skipped = Vec::new();
-    for block in every(lattice.cells.map(|count| count.div_ceil(BLOCK))) {
-        let low = block.map(|index| index * BLOCK);
-        let high = [0, 1, 2].map(|axis| (low[axis] + BLOCK).min(lattice.cells[axis]));
-        let value = field((lattice.corner(low) + lattice.corner(high)) / 2.0);
+    for (&block, value) in blocks.iter().zip(centers) {
         if value.abs() > reach {
-            skipped.push((low, high, value));
+            skipped.push((block.0, block.1, value));
             continue;
         }
-        active.push((low, high));
-        for corner in corners((low, high)) {
-            let slot = &mut values[lattice.corner_index(corner)];
-            if slot.is_nan() {
-                *slot = field(lattice.corner(corner));
-            }
+        active.push(block);
+        for corner in corners(block) {
+            needed[lattice.corner_index(corner)] = true;
         }
     }
+    let mut values = vec![f32::NAN; total];
+    parallel::fill(&mut values, |index, slot| {
+        if needed[index] {
+            *slot = field(lattice.corner(lattice.corner_at(index)));
+        }
+    });
     for (low, high, value) in skipped {
         for corner in corners((low, high)) {
             let slot = &mut values[lattice.corner_index(corner)];
