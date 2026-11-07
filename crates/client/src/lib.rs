@@ -1,3 +1,4 @@
+mod app;
 mod camera;
 mod clock;
 mod game;
@@ -7,11 +8,13 @@ mod mesh;
 mod motion;
 mod palette;
 mod picking;
+mod render;
 pub mod shader;
 mod space;
 mod surface;
 mod terrain;
 
+pub use app::App;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
 pub use game::Game;
@@ -20,6 +23,7 @@ pub use light::{Light, VAEL};
 pub use mesh::{Mesh, Vertex, normal};
 pub use motion::{center, position};
 pub use picking::pick;
+pub use render::Renderer;
 pub use space::{to_ground, to_world};
 pub use surface::Surface;
 pub use terrain::{top, underside};
