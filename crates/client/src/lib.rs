@@ -1,7 +1,9 @@
 mod clock;
 mod motion;
+mod space;
 mod surface;
 
 pub use clock::Ticker;
 pub use motion::{center, position};
+pub use space::{to_ground, to_world};
 pub use surface::Surface;
