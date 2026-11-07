@@ -17,7 +17,7 @@ impl Rng {
     }
 }
 
-const fn mix(value: u64) -> u64 {
+pub(crate) const fn mix(value: u64) -> u64 {
     let mut z = value;
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
