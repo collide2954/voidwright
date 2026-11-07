@@ -13,6 +13,7 @@ pub mod png;
 mod render;
 pub mod shader;
 mod space;
+mod spline;
 mod surface;
 mod terrain;
 
@@ -28,5 +29,6 @@ pub use motion::{center, position};
 pub use picking::pick;
 pub use render::Renderer;
 pub use space::{to_ground, to_world};
+pub use spline::catmull_rom;
 pub use surface::Surface;
 pub use terrain::{top, underside};
