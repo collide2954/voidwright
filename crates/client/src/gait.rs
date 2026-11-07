@@ -1,10 +1,20 @@
 use std::f32::consts::PI;
 
+use crate::smoothstep;
+
 const SWAY: f32 = 0.025;
 const RELAXED_ELBOW: f32 = 0.15;
 const ELBOW_REACH: f32 = 0.25;
 const BREATH_RATE: f32 = 1.6;
 const BREATH_DEPTH: f32 = 0.03;
+const SHIFT_RATE: f32 = 0.55;
+const SHIFT_SWAY: f32 = 0.03;
+const SHIFT_ROLL: f32 = 0.05;
+const COUNTER_ROLL: f32 = 1.6;
+const RELAXED_KNEE: f32 = 0.16;
+const RELAXED_THIGH: f32 = 0.06;
+const GLANCE: f32 = 0.36;
+const WALKING_CURL: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pose {
@@ -13,10 +23,16 @@ pub struct Pose {
     pub twist: f32,
     pub lean: f32,
     pub breath: f32,
+    pub roll: f32,
+    pub counter: f32,
+    pub look: f32,
+    pub nod: f32,
     pub thighs: [f32; 2],
     pub knees: [f32; 2],
     pub arms: [f32; 2],
     pub elbows: [f32; 2],
+    pub wrists: [f32; 2],
+    pub curls: [f32; 2],
 }
 
 #[must_use]
@@ -28,33 +44,124 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
     let knee = |at: f32| blend(0.12, 0.2) + blend(0.95, 1.4) * (-at.sin()).max(0.0);
     let elbow =
         |forward: f32| RELAXED_ELBOW + blend(0.15, 1.0) + ELBOW_REACH * motion * forward.max(0.0);
+    let rest = 1.0 - motion;
+    let shift = dwell((time * SHIFT_RATE).sin() + 0.3 * (time * SHIFT_RATE * 2.7 + 1.1).sin());
+    let free = [shift.max(0.0), (-shift).max(0.0)];
+    let roll = SHIFT_ROLL * shift * rest;
+    let drift = |hand: f32, rate: f32| (time * rate + hand * 1.7).sin();
+    let curl = |hand: f32| 0.42 + 0.34 * dwell(drift(hand, 0.53));
     Pose {
-        sway: -SWAY * sin * motion,
+        sway: -SWAY * sin * motion + SHIFT_SWAY * shift * rest,
         bob: -blend(0.025, 0.05) * (2.0 * phase).cos(),
         twist: blend(0.12, 0.16) * cos,
-        lean: blend(0.06, 0.24),
-        breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * (1.0 - motion),
-        thighs: [thigh * cos, -thigh * cos],
-        knees: [knee(phase), knee(phase + PI)],
-        arms: [-arm * cos, arm * cos],
-        elbows: [elbow(-cos), elbow(cos)],
+        lean: blend(0.06, 0.24) + 0.012 * (time * 0.9).sin() * rest,
+        breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * rest,
+        roll,
+        counter: -COUNTER_ROLL * roll,
+        look: GLANCE * dwell(0.6 * (time * 0.23).sin() + 0.4 * (time * 0.41 + 2.0).sin()) * rest,
+        nod: 0.05 * (time * 0.17 + 1.0).sin() * rest,
+        thighs: [
+            thigh * cos + RELAXED_THIGH * free[0] * rest,
+            -thigh * cos + RELAXED_THIGH * free[1] * rest,
+        ],
+        knees: [
+            knee(phase) + RELAXED_KNEE * free[0] * rest,
+            knee(phase + PI) + RELAXED_KNEE * free[1] * rest,
+        ],
+        arms: [
+            -arm * cos + 0.04 * drift(0.0, 0.5) * rest,
+            arm * cos + 0.04 * drift(1.0, 0.5) * rest,
+        ],
+        elbows: [
+            elbow(-cos) + 0.08 * drift(0.0, 0.31) * rest,
+            elbow(cos) + 0.08 * drift(1.0, 0.31) * rest,
+        ],
+        wrists: [0.0, 1.0].map(|hand| (0.12 + 0.08 * drift(hand, 0.6)) * rest + 0.1 * motion),
+        curls: [0.0, 1.0].map(|hand| curl(hand) * rest + WALKING_CURL * motion),
     }
+}
+
+fn dwell(value: f32) -> f32 {
+    value.signum() * smoothstep(0.05, 0.75, value.abs())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::pose_at;
+    use super::{Pose, pose_at};
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     const WALKING: f32 = 1.0;
     const IDLE: f32 = 0.0;
 
+    fn idle_poses() -> impl Iterator<Item = Pose> {
+        (0..600).map(|step| {
+            pose_at(
+                0.0,
+                IDLE,
+                0.0,
+                f32::from(u16::try_from(step).unwrap()) * 0.05,
+            )
+        })
+    }
+
     #[test]
-    fn an_idle_figure_stands_straight() {
-        let pose = pose_at(1.0, IDLE, 0.0, 0.0);
-        assert!(pose.thighs.iter().all(|angle| angle.abs() < 1e-6));
-        assert!(pose.knees.iter().all(|angle| angle.abs() < 1e-6));
-        assert!(pose.sway.abs() < 1e-6 && pose.lean.abs() < 1e-6);
+    fn an_idle_figure_stands_relaxed() {
+        for pose in idle_poses() {
+            assert!(pose.thighs.iter().all(|angle| angle.abs() < 0.1));
+            assert!(pose.knees.iter().all(|angle| (0.0..0.2).contains(angle)));
+            assert!(pose.lean.abs() < 0.03);
+        }
+    }
+
+    #[test]
+    fn an_idle_figure_shifts_its_weight_between_its_legs() {
+        let sways: Vec<f32> = idle_poses().map(|pose| pose.sway).collect();
+        assert!(sways.iter().any(|&sway| sway > 0.02));
+        assert!(sways.iter().any(|&sway| sway < -0.02));
+        for pose in idle_poses().filter(|pose| pose.sway.abs() > 0.02) {
+            assert!(pose.roll * pose.sway > 0.0);
+            assert!(pose.counter * pose.roll < 0.0);
+        }
+    }
+
+    #[test]
+    fn the_free_knee_relaxes_while_the_other_leg_carries_the_weight() {
+        for pose in idle_poses() {
+            if pose.sway > 0.02 {
+                assert!(pose.knees[0] > pose.knees[1] + 0.05);
+            }
+            if pose.sway < -0.02 {
+                assert!(pose.knees[1] > pose.knees[0] + 0.05);
+            }
+        }
+    }
+
+    #[test]
+    fn an_idle_figure_glances_around() {
+        let looks: Vec<f32> = idle_poses().map(|pose| pose.look).collect();
+        assert!(looks.iter().any(|&look| look > 0.2));
+        assert!(looks.iter().any(|&look| look < -0.2));
+        assert!(looks.iter().all(|look| look.abs() < 0.45));
+    }
+
+    #[test]
+    fn idle_hands_curl_and_open() {
+        for hand in 0..2 {
+            let curls: Vec<f32> = idle_poses().map(|pose| pose.curls[hand]).collect();
+            assert!(curls.iter().any(|&curl| curl < 0.3));
+            assert!(curls.iter().any(|&curl| curl > 0.6));
+            assert!(curls.iter().all(|curl| (0.0..1.2).contains(curl)));
+        }
+    }
+
+    #[test]
+    fn walking_hides_the_idle_motions() {
+        for step in 0..100 {
+            let time = f32::from(u8::try_from(step).unwrap()) * 0.37;
+            let pose = pose_at(1.0, WALKING, 0.0, time);
+            assert!(pose.roll.abs() < 1e-6 && pose.counter.abs() < 1e-6);
+            assert!(pose.look.abs() < 1e-6 && pose.nod.abs() < 1e-6);
+        }
     }
 
     #[test]
