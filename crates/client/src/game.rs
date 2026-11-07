@@ -8,6 +8,7 @@ use crate::{OrbitCamera, Stride, Ticker, center, pick, position, to_ground, to_w
 
 const ISLAND_RADIUS: u8 = 20;
 const MARKER_LIFT: f32 = 0.03;
+const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 
 #[derive(Clone, Debug)]
 pub struct Game {
@@ -32,7 +33,7 @@ impl Game {
             stride: Stride::default(),
             time: 0.0,
         };
-        game.camera.target = game.player_position();
+        game.camera.target = game.player_position() + FOCUS;
         game
     }
 
@@ -74,7 +75,7 @@ impl Game {
         self.stride
             .update(before, to_ground(after), delta.as_secs_f32());
         self.time += delta.as_secs_f32();
-        self.camera.target = after;
+        self.camera.target = after + FOCUS;
     }
 
     pub fn click(&mut self, screen: Vec2, aspect: f32) {
@@ -107,18 +108,19 @@ impl Game {
 mod tests {
     use super::Game;
     use crate::{center, pick, to_ground};
-    use glam::Vec2;
+    use glam::{Vec2, Vec3};
     use voidwright_core::{TICK, Tile};
 
     const ASPECT: f32 = 16.0 / 9.0;
     const CLICK: Vec2 = Vec2::new(0.2, -0.1);
 
     #[test]
-    fn the_camera_looks_at_the_player() {
+    fn the_camera_looks_at_the_chest_of_the_player() {
         let mut game = Game::new(3);
         game.click(CLICK, ASPECT);
         game.update(TICK + TICK / 3);
-        assert!(game.camera().target.distance(game.player_position()) < 1e-4);
+        let chest = game.player_position() + Vec3::Y * 0.9;
+        assert!(game.camera().target.distance(chest) < 1e-4);
     }
 
     #[test]

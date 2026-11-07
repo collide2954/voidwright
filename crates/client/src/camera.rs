@@ -5,7 +5,7 @@ use glam::{Mat4, Vec2, Vec3};
 
 const MIN_PITCH: f32 = 0.35;
 const MAX_PITCH: f32 = 1.35;
-const MIN_DISTANCE: f32 = 5.0;
+const MIN_DISTANCE: f32 = 2.5;
 const MAX_DISTANCE: f32 = 40.0;
 const START_PITCH: f32 = 0.85;
 const START_DISTANCE: f32 = 16.0;
@@ -128,6 +128,13 @@ mod tests {
         assert!((camera.pitch() - MAX_PITCH).abs() < 1e-6);
         camera.rotate(0.0, -10.0);
         assert!((camera.pitch() - MIN_PITCH).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_camera_can_come_close_to_the_player() {
+        let mut camera = camera();
+        camera.set_orbit(0.0, 0.5, 2.5);
+        assert!((camera.distance() - 2.5).abs() < 1e-6);
     }
 
     #[test]
