@@ -10,7 +10,7 @@ use crate::shape::Material;
 use crate::sky::noise3;
 
 pub const INFLUENCES: usize = 4;
-const MAX_BONES: usize = 16;
+const MAX_BONES: usize = 24;
 const FAR: f32 = 1e9;
 const SLOPE_STEP: f32 = 1e-3;
 const OCCLUSION_STEPS: [f32; 5] = [0.01, 0.04, 0.07, 0.1, 0.13];
@@ -816,6 +816,22 @@ mod tests {
             widest - radii.iter().copied().fold(f32::INFINITY, f32::min)
         };
         assert!(spread(0.1) > spread(0.0) + 0.02);
+    }
+
+    #[test]
+    fn a_sculpt_follows_up_to_twenty_four_bones() {
+        let rest: Vec<Mat4> = (0..24)
+            .map(|bone| Mat4::from_translation(Vec3::X * f32::from(u8::try_from(bone).unwrap())))
+            .collect();
+        let mut sculpt = Sculpt::new(rest);
+        sculpt.add(Stroke::new(23, Form::Ball(0.2), PAINT));
+        let mesh = sculpt.mesh(CELL);
+        assert!(mesh.triangles() > 200);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| (weight(vertex, 23) - 1.0).abs() < 1e-5)
+        );
     }
 
     #[test]
