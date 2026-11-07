@@ -79,7 +79,9 @@ The total XP for level 80 is half of the total XP for level 99.
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
 | Models | Code makes all models. Models have flat faces and vertex colors. Models do not use textures. |
 | Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
-| Island edges | A jagged rock lip and a cliff band surround each island. A rock underside hangs below the island. |
+| Island edges | A jagged rock lip surrounds each island. The walls below the lip show the layers of the slab. |
+| Fragment shape | Each fragment is a thick, uneven slab from the ring. Soil lies on layers of rock and Wright hull plates. The edges are broken, and the bottom is rough. The thickness changes much from fragment to fragment. |
+| Fragment details | Broken girders and conduits come out of the walls and hang below. Roots and strands of moss hang over the edges. Small pieces of rock and plating float near each fragment. Thin streams of water fall from some edges and become mist in the void. |
 | Avatar | A sculpted low-poly figure in a salvage suit: tapered limbs, a round helmet with a teal visor around the front, shoulder and knee plates, a backpack with tanks, and glowing seams. The faces are flat-shaded. |
 | Animation | A full walk cycle: knees and elbows bend, the feet move with the ground, the hips sway, the torso leans and turns against the hips, and the body bobs two times in each stride. Running leans more and makes the stride longer. The figure breathes when it stands. |
 | Walk marker | A small teal ring pulses on the target tile until the player arrives. |
