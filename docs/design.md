@@ -86,6 +86,22 @@ The total XP for level 80 is half of the total XP for level 99.
 | Sky | Deep indigo with magenta and teal nebula clouds and many stars. Vael glows amber low on the horizon. Far fragments of the ring drift in the distance. |
 | Maps | A seed makes each island: outline, hills, rocks, and crystals. |
 
+## Immersion
+
+| Topic | Decision |
+| --- | --- |
+| Interface style | The panels look like projections from the suit of the voidwright: soft teal glass with thin scan lines. The panels flicker a little when the player is hit. The panels fade when the player only explores. |
+| Sound | Each place has layers of ambient sound. Sounds come from their positions in the world. Footsteps change with the ground. Music becomes stronger in danger and at discoveries. |
+| Creatures | Small void animals live on the islands and drift between them. Some animals run away when a player comes near. |
+| Weather | Field storms move across the fragments, change the light, and make creatures hide. |
+| Day and night | The Gyre turns, so islands move into the shadow of the ring. At night, the stars are brighter, plants glow, and other creatures come out. |
+| Townsfolk | NPCs work, eat in the galley halls, go to shrines, and sleep on a schedule. |
+| Travel | There are no loading screens. Near islands load while the player walks on the bridges. A gate shows a short ride through the void. |
+| Camera | Important quest moments use short camera shots. Then the player gets the camera back. |
+| Dialogue | NPCs say short lines above their heads. When the player talks to an NPC, a panel opens with a portrait and choices. There is no voice acting. |
+| Hits | Small numbers rise and fade. The target flashes, and the suit display pulses. Health bars show only during combat. |
+| Night light | Crystals, bloom moss, town lamps, and the suit lamp light the ground near them. Only a few lights are active at a time. |
+
 ## Technology
 
 | Topic | Decision |
