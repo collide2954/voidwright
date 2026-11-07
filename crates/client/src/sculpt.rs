@@ -7,6 +7,7 @@ use crate::nets::{Lattice, mesh};
 use crate::palette::linear;
 use crate::parallel;
 use crate::shape::Material;
+use crate::sky::noise3;
 
 pub const INFLUENCES: usize = 4;
 const MAX_BONES: usize = 16;
@@ -158,6 +159,8 @@ pub struct Stroke {
     squash: Vec3,
     clip: Option<(Vec3, f32)>,
     lining: Option<Material>,
+    wrinkles: Option<(f32, Vec3)>,
+    seed: u32,
 }
 
 impl Stroke {
@@ -174,6 +177,8 @@ impl Stroke {
             squash: Vec3::ONE,
             clip: None,
             lining: None,
+            wrinkles: None,
+            seed: 0,
         }
     }
 
@@ -185,11 +190,14 @@ impl Stroke {
     }
 
     fn shape(&self, local: Vec3) -> f32 {
-        let value = if self.squash == Vec3::ONE {
+        let mut value = if self.squash == Vec3::ONE {
             self.form.distance(local)
         } else {
             self.unsquashed(local)
         };
+        if let Some((depth, scale)) = self.wrinkles {
+            value += depth * (2.0 * noise3(local * scale, self.seed) - 1.0);
+        }
         self.clip.map_or(value, |(normal, offset)| {
             value.max(local.dot(normal) - offset)
         })
@@ -208,7 +216,11 @@ impl Stroke {
 
     fn bound(&self) -> (Vec3, f32) {
         let (center, reach) = self.form.bound();
-        (center * self.squash, reach * self.squash.max_element())
+        let depth = self.wrinkles.map_or(0.0, |(depth, _)| depth);
+        (
+            center * self.squash,
+            reach * self.squash.max_element() + depth,
+        )
     }
 
     #[must_use]
@@ -251,6 +263,14 @@ impl Stroke {
     pub const fn lined(self, lining: Material) -> Self {
         Self {
             lining: Some(lining),
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub const fn wrinkled(self, depth: f32, scale: Vec3) -> Self {
+        Self {
+            wrinkles: Some((depth, scale)),
             ..self
         }
     }
@@ -350,7 +370,9 @@ impl Sculpt {
         }
     }
 
-    pub fn add(&mut self, stroke: Stroke) {
+    pub fn add(&mut self, mut stroke: Stroke) {
+        let count: usize = self.parts.iter().map(|part| part.strokes.len()).sum();
+        stroke.seed = u32::try_from(count).expect("a sculpt has few strokes");
         let place =
             self.rest[stroke.bone] * Mat4::from_rotation_translation(stroke.turn, stroke.offset);
         let (center, reach) = stroke.bound();
@@ -641,6 +663,40 @@ mod tests {
         sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).squashed(Vec3::new(1.0, 0.25, 1.0)));
         assert!((sculpt.distance(Vec3::new(0.4, 0.0, 0.0)) - 0.2).abs() < 0.005);
         assert!((sculpt.distance(Vec3::new(0.0, 0.15, 0.0)) - 0.1).abs() < 0.005);
+    }
+
+    #[test]
+    fn wrinkles_roughen_a_stroke_within_their_depth() {
+        let mesh = single(Stroke::new(0, Form::Ball(0.2), PAINT).wrinkled(0.01, Vec3::splat(15.0)));
+        let radii: Vec<f32> = mesh
+            .vertices
+            .iter()
+            .map(|vertex| Vec3::from(vertex.position).length())
+            .collect();
+        let highest = radii.iter().copied().fold(0.0, f32::max);
+        let lowest = radii.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(highest - lowest > 0.008);
+        assert!(lowest > 0.1895 && highest < 0.2105);
+    }
+
+    #[test]
+    fn each_stroke_wrinkles_in_its_own_pattern() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        for side in [-1.0, 1.0] {
+            sculpt.add(
+                Stroke::new(0, Form::Ball(0.2), PAINT)
+                    .at(Vec3::X * side * 0.5)
+                    .wrinkled(0.01, Vec3::splat(15.0)),
+            );
+        }
+        let differs = [Vec3::X, Vec3::Y, Vec3::Z, Vec3::NEG_Y]
+            .iter()
+            .any(|&direction| {
+                let left = sculpt.distance(Vec3::X * -0.5 + direction * 0.2);
+                let right = sculpt.distance(Vec3::X * 0.5 + direction * 0.2);
+                (left - right).abs() > 1e-4
+            });
+        assert!(differs);
     }
 
     #[test]
