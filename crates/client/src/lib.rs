@@ -1,5 +1,6 @@
 mod camera;
 mod clock;
+mod light;
 mod mesh;
 mod motion;
 mod picking;
@@ -8,6 +9,7 @@ mod surface;
 
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
+pub use light::{Light, VAEL};
 pub use mesh::{Mesh, Vertex, normal};
 pub use motion::{center, position};
 pub use picking::pick;
