@@ -26,6 +26,15 @@ This document gives the design decisions for Voidwright.
 | Conquest | Players can capture the core of a sector at a front at any time. A capture moves that front by one sector. |
 | Rewards | The legion that holds a sector gets a part of the salvage from that sector. Its members pay less for fabrication at the stations in that sector. The sector shows the banners of the legion. |
 
+## Activities
+
+| Topic | Decision |
+| --- | --- |
+| Goals | Quests tell the story. Each quest has puzzles, unique rewards, and skill requirements. A contract board gives tasks that repeat. |
+| Solo activities | Signal hunts: a chain of clues leads across the ring to a cache of rare items. Wreck dives: short generated dungeons in old hulls for one player. Debris courses: courses across floating debris for a movement skill. Solo bosses: hard fights for one player, with unique items. |
+| Group activities | Breach defense: a team defends the core of a station from swarms. World events: meteor strikes and leviathans that all players near them can join. Raids: dungeons with many stages for a group. Role teams: each player has one role in a team challenge. |
+| Lobbies | Each group activity has a launch bay in the world. Players meet at the bay and start together. |
+
 ## Look and feel
 
 | Topic | Decision |
