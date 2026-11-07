@@ -17,4 +17,4 @@ pub use motion::{center, position};
 pub use picking::pick;
 pub use space::{to_ground, to_world};
 pub use surface::Surface;
-pub use terrain::top;
+pub use terrain::{top, underside};
