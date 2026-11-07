@@ -4,20 +4,26 @@ use voidwright_core::Noise;
 use crate::ground::unit;
 use crate::{palette, smoothstep};
 
+const SOIL_COVER: f32 = 0.6;
+const BLOOM_COVER: f32 = 0.45;
+const SPECKLE: f32 = 0.1;
+
 pub struct Painter {
     patches: Noise,
-    soil: Noise,
-    lichen: Noise,
+    soil: [Noise; 2],
+    bloom: [Noise; 2],
     grain: Noise,
+    speckle: Noise,
 }
 
 impl Default for Painter {
     fn default() -> Self {
         Self {
             patches: Noise::new(0x5041_5443, 20),
-            soil: Noise::new(0x534f_494c, 36),
-            lichen: Noise::new(0x4c49_4348, 3),
+            soil: [Noise::new(0x534f_494c, 28), Noise::new(0x534f_494d, 13)],
+            bloom: [Noise::new(0x424c_4f4f, 11), Noise::new(0x424c_4f50, 5)],
             grain: Noise::new(0x4752_4149, 2),
+            speckle: Noise::new(0x5350_4543, 1),
         }
     }
 }
@@ -26,11 +32,12 @@ impl Painter {
     #[must_use]
     pub fn top(&self, at: IVec2, normal: Vec3, rim: f32) -> Vec3 {
         let moss = palette::MOSS_DARK.lerp(palette::MOSS_LIGHT, unit(&self.patches, at));
-        let soil = smoothstep(0.62, 0.8, unit(&self.soil, at));
-        let lichen = smoothstep(0.8, 0.9, unit(&self.lichen, at)) * (1.0 - soil);
-        let ground = moss.lerp(palette::SOIL, soil).lerp(palette::LICHEN, lichen);
+        let soil = SOIL_COVER * smoothstep(0.6, 0.85, blend(&self.soil, at));
+        let bloom = BLOOM_COVER * smoothstep(0.55, 0.8, blend(&self.bloom, at)) * (1.0 - soil);
+        let ground = moss.lerp(palette::SOIL, soil).lerp(palette::BLOOM, bloom);
         let rock = smoothstep(0.25, 0.5, 1.0 - normal.y).max(rim);
-        ground.lerp(palette::ROCK * self.grain(at), rock)
+        let speckle = 1.0 + SPECKLE * (unit(&self.speckle, at) - 0.5);
+        ground.lerp(palette::ROCK * self.grain(at), rock) * speckle
     }
 
     #[must_use]
@@ -46,6 +53,10 @@ impl Painter {
     fn grain(&self, at: IVec2) -> f32 {
         0.85 + 0.3 * unit(&self.grain, at)
     }
+}
+
+fn blend([coarse, fine]: &[Noise; 2], at: IVec2) -> f32 {
+    0.65 * unit(coarse, at) + 0.35 * unit(fine, at)
 }
 
 #[cfg(test)]

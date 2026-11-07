@@ -1,252 +1,228 @@
-use std::collections::VecDeque;
+use std::collections::HashMap;
 
 use glam::{IVec2, Vec3};
-use voidwright_core::{Direction, Grid, Map, NOISE_RANGE, Noise, Terrain, Tile};
 
-use crate::{Light, Mesh, Surface, normal, palette, to_world};
+use crate::contour::{Cut, Point, cut};
+use crate::ground::{Ground, rim};
+use crate::{Light, Mesh, Painter, normal, to_world};
 
-const SHADE_SALT: u64 = 0x7368_6164_6573;
-const DEPTH_SALT: u64 = 0x6465_7074_6873;
-const SHADE_SPREAD: f32 = 0.16;
-const DEPTH_SCALE: f32 = 0.9;
-const DEPTH_POWER: f32 = 1.2;
-const DEPTH_JITTER: f32 = 0.6;
-const CORNERS: [(i32, i32); 4] = [(0, 0), (1, 0), (1, 1), (0, 1)];
-const AROUND_CORNER: [(i32, i32); 4] = [(-1, -1), (0, -1), (-1, 0), (0, 0)];
-const SIDES: [Direction; 4] = [
-    Direction::North,
-    Direction::East,
-    Direction::South,
-    Direction::West,
-];
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layer {
+    Top,
+    Under,
+}
 
-#[must_use]
-pub fn top(map: &Map, surface: &Surface, light: &Light) -> Mesh {
-    let shades = Noise::new(SHADE_SALT, 1);
-    let mut mesh = Mesh::default();
-    for tile in walkable(map) {
-        let [south_west, south_east, north_east, north_west] =
-            corners(tile).map(|corner| point(surface, corner));
-        let albedo = albedo(map.terrain(tile)) * shade(&shades, tile);
-        for triangle in [
-            [south_west, south_east, north_east],
-            [south_west, north_east, north_west],
-        ] {
-            mesh.triangle(triangle, light.shade(albedo, normal(triangle)));
-        }
-    }
-    mesh
+struct Sample {
+    position: Vec3,
+    normal: Vec3,
+    at: IVec2,
+    land: f32,
 }
 
 #[must_use]
-pub fn underside(map: &Map, surface: &Surface, light: &Light) -> Mesh {
-    let distances = edge_distance(map);
-    let shades = Noise::new(SHADE_SALT, 1);
-    let jitter = Noise::new(DEPTH_SALT, 1);
+pub fn top(ground: &Ground, painter: &Painter, light: &Light) -> Mesh {
+    surface(ground, Layer::Top, light, |sample| {
+        painter.top(sample.at, sample.normal, rim(sample.land))
+    })
+}
+
+#[must_use]
+pub fn underside(ground: &Ground, painter: &Painter, light: &Light) -> Mesh {
+    surface(ground, Layer::Under, light, |sample| {
+        painter.under(sample.at)
+    })
+}
+
+#[must_use]
+pub fn cliff(ground: &Ground, painter: &Painter, light: &Light) -> Mesh {
     let mut mesh = Mesh::default();
-    for tile in walkable(map) {
-        let [south_west, south_east, north_east, north_west] = corners(tile).map(|corner| {
-            point(surface, corner) - Vec3::Y * depth(map, &distances, &jitter, corner)
-        });
-        let albedo = palette::UNDERSIDE * shade(&shades, tile);
-        for triangle in [
-            [south_west, north_east, south_east],
-            [south_west, north_west, north_east],
-        ] {
-            mesh.triangle(triangle, light.shade(albedo, normal(triangle)));
-        }
-    }
-    mesh
-}
-
-fn walkable(map: &Map) -> impl Iterator<Item = Tile> + '_ {
-    map.tiles().filter(|&tile| map.is_walkable(tile))
-}
-
-fn corners(tile: Tile) -> [Tile; 4] {
-    CORNERS.map(|(dx, dy)| Tile::new(tile.x + dx, tile.y + dy))
-}
-
-fn point(surface: &Surface, corner: Tile) -> Vec3 {
-    to_world(
-        IVec2::new(corner.x, corner.y).as_vec2(),
-        surface.corner(corner),
-    )
-}
-
-const fn albedo(terrain: Terrain) -> Vec3 {
-    match terrain {
-        Terrain::Rock => palette::ROCK,
-        Terrain::Moss | Terrain::Void => palette::MOSS,
-    }
-}
-
-fn shade(shades: &Noise, tile: Tile) -> f32 {
-    1.0 - SHADE_SPREAD / 2.0 + SHADE_SPREAD * fraction(shades, tile)
-}
-
-fn fraction(noise: &Noise, tile: Tile) -> f32 {
-    let sample = u16::try_from(noise.sample(tile)).unwrap_or(0);
-    let range = u16::try_from(NOISE_RANGE).unwrap_or(u16::MAX);
-    f32::from(sample) / f32::from(range)
-}
-
-fn depth(map: &Map, distances: &Grid<u16>, jitter: &Noise, corner: Tile) -> f32 {
-    let around = AROUND_CORNER.map(|(dx, dy)| Tile::new(corner.x + dx, corner.y + dy));
-    if around.iter().any(|&tile| !map.is_walkable(tile)) {
-        return 0.0;
-    }
-    let total: f32 = around
-        .iter()
-        .map(|&tile| f32::from(distances.get(tile).copied().unwrap_or(0)))
-        .sum();
-    DEPTH_SCALE * (total / 4.0).powf(DEPTH_POWER) + DEPTH_JITTER * (fraction(jitter, corner) - 0.5)
-}
-
-fn edge_distance(map: &Map) -> Grid<u16> {
-    let mut distances = Grid::filled(map.width(), map.height(), u16::MAX);
-    let mut frontier = VecDeque::new();
-    for tile in map.tiles() {
-        let distance = if !map.is_walkable(tile) {
-            0
-        } else if SIDES.iter().any(|&side| !map.is_walkable(tile.step(side))) {
-            frontier.push_back(tile);
-            1
-        } else {
-            continue;
-        };
-        if let Some(cell) = distances.get_mut(tile) {
-            *cell = distance;
-        }
-    }
-    while let Some(tile) = frontier.pop_front() {
-        let next_distance = distances.get(tile).copied().unwrap_or(0).saturating_add(1);
-        for side in SIDES {
-            let next = tile.step(side);
-            if let Some(cell) = distances.get_mut(next)
-                && *cell > next_distance
-            {
-                *cell = next_distance;
-                frontier.push_back(next);
+    for origin in cells(ground) {
+        for [from, to] in cell(ground, origin).boundary {
+            let start = sample(ground, Layer::Top, from);
+            let end = sample(ground, Layer::Top, to);
+            let [start_under, end_under] =
+                [from, to].map(|point| sample(ground, Layer::Under, point).position);
+            let color = painter.cliff(start.at);
+            for face in [
+                [start.position, start_under, end_under],
+                [start.position, end_under, end.position],
+            ] {
+                mesh.triangle(face, light.shade(color, normal(face)));
             }
         }
     }
-    distances
+    mesh
+}
+
+fn surface(ground: &Ground, layer: Layer, light: &Light, paint: impl Fn(&Sample) -> Vec3) -> Mesh {
+    let mut mesh = Mesh::default();
+    let mut shared: HashMap<Point, u32> = HashMap::new();
+    for origin in cells(ground) {
+        for polygon in cell(ground, origin).polygons {
+            let indices: Vec<u32> = polygon
+                .iter()
+                .map(|&point| {
+                    *shared.entry(point).or_insert_with(|| {
+                        let sample = sample(ground, layer, point);
+                        let color = light.shade(paint(&sample), sample.normal);
+                        mesh.vertex(sample.position, color)
+                    })
+                })
+                .collect();
+            for pair in indices[1..].windows(2) {
+                match layer {
+                    Layer::Top => mesh.face([indices[0], pair[0], pair[1]]),
+                    Layer::Under => mesh.face([indices[0], pair[1], pair[0]]),
+                }
+            }
+        }
+    }
+    mesh
+}
+
+fn cells(ground: &Ground) -> impl Iterator<Item = IVec2> {
+    let last = ground.size() - IVec2::ONE;
+    (0..last.y).flat_map(move |y| (0..last.x).map(move |x| IVec2::new(x, y)))
+}
+
+fn cell(ground: &Ground, origin: IVec2) -> Cut {
+    let values =
+        [IVec2::ZERO, IVec2::X, IVec2::ONE, IVec2::Y].map(|offset| ground.land(origin + offset));
+    cut(origin, values)
+}
+
+fn sample(ground: &Ground, layer: Layer, point: Point) -> Sample {
+    let (from, to, weight) = point.blend(|at| ground.land(at));
+    let height = |at: IVec2| match layer {
+        Layer::Top => ground.top(at),
+        Layer::Under => ground.under(at),
+    };
+    let place = Ground::place(from).lerp(Ground::place(to), weight);
+    let level = height(from) + (height(to) - height(from)) * weight;
+    Sample {
+        position: to_world(place, level),
+        normal: slope_normal(&height, layer, from)
+            .lerp(slope_normal(&height, layer, to), weight)
+            .normalize_or_zero(),
+        at: from,
+        land: ground.land(from) + (ground.land(to) - ground.land(from)) * weight,
+    }
+}
+
+fn slope_normal(height: &impl Fn(IVec2) -> f32, layer: Layer, at: IVec2) -> Vec3 {
+    let span = 2.0 * Ground::place(IVec2::X).x;
+    let east = (height(at + IVec2::X) - height(at - IVec2::X)) / span;
+    let north = (height(at + IVec2::Y) - height(at - IVec2::Y)) / span;
+    match layer {
+        Layer::Top => Vec3::new(-east, 1.0, north).normalize(),
+        Layer::Under => Vec3::new(east, -1.0, -north).normalize(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{edge_distance, top, underside};
-    use crate::{Mesh, Surface, VAEL, normal, to_ground};
+    use super::{cliff, top, underside};
+    use crate::ground::Ground;
+    use crate::{Mesh, Painter, VAEL, normal, to_ground};
     use glam::Vec3;
-    use voidwright_core::{Island, Map, Terrain, Tile};
+    use std::collections::HashSet;
+    use voidwright_core::{Island, Map};
 
-    fn touches_the_void(map: &Map, corner: Tile) -> bool {
-        [(-1, -1), (0, -1), (-1, 0), (0, 0)]
-            .iter()
-            .any(|&(dx, dy)| !map.is_walkable(Tile::new(corner.x + dx, corner.y + dy)))
-    }
-
-    fn corner_of(position: Vec3) -> Tile {
-        let ground = to_ground(position).round().as_ivec2();
-        Tile::new(ground.x, ground.y)
-    }
-
-    #[test]
-    fn edge_distance_counts_steps_to_the_void() {
-        let mut map = Map::new(5, 5);
-        for tile in map.tiles() {
-            if (1..4).contains(&tile.x) && (1..4).contains(&tile.y) {
-                map.set_terrain(tile, Terrain::Moss);
-            }
-        }
-        let distances = edge_distance(&map);
-        assert_eq!(distances.get(Tile::new(0, 0)), Some(&0));
-        assert_eq!(distances.get(Tile::new(1, 2)), Some(&1));
-        assert_eq!(distances.get(Tile::new(2, 2)), Some(&2));
-    }
-
-    #[test]
-    fn each_walkable_tile_has_two_bottom_triangles() {
-        let (map, surface) = island();
-        let walkable = map.tiles().filter(|&tile| map.is_walkable(tile)).count();
-        assert_eq!(
-            underside(&map, &surface, &VAEL).vertices.len(),
-            walkable * 6
-        );
-    }
-
-    #[test]
-    fn bottom_faces_point_down() {
-        let (map, surface) = island();
-        for triangle in triangles(&underside(&map, &surface, &VAEL)) {
-            assert!(normal(triangle).y < 0.0);
-        }
-    }
-
-    #[test]
-    fn the_underside_meets_the_top_at_the_rim() {
-        let (map, surface) = island();
-        for vertex in underside(&map, &surface, &VAEL).vertices {
-            let position = Vec3::from(vertex.position);
-            let corner = corner_of(position);
-            let top = surface.corner(corner);
-            if touches_the_void(&map, corner) {
-                assert!((position.y - top).abs() < 1e-4);
-            } else {
-                assert!(position.y < top);
-            }
-        }
-    }
-
-    #[test]
-    fn the_underside_hangs_deep_below_the_middle() {
-        let (map, surface) = island();
-        let deepest = underside(&map, &surface, &VAEL)
-            .vertices
-            .iter()
-            .map(|vertex| vertex.position[1])
-            .fold(f32::INFINITY, f32::min);
-        assert!(deepest < -3.0);
-    }
-
-    fn island() -> (Map, Surface) {
-        let island = Island::generate(5, 10);
-        let surface = Surface::new(&island.map);
-        (island.map, surface)
+    fn island() -> (Map, Ground) {
+        let map = Island::generate(5, 10).map;
+        let ground = Ground::new(&map);
+        (map, ground)
     }
 
     fn triangles(mesh: &Mesh) -> Vec<[Vec3; 3]> {
-        mesh.vertices
+        mesh.indices
             .as_chunks::<3>()
             .0
             .iter()
-            .map(|chunk| chunk.map(|vertex| Vec3::from(vertex.position)))
+            .map(|face| face.map(|index| Vec3::from(mesh.vertices[index as usize].position)))
             .collect()
     }
 
+    fn key(position: Vec3) -> [i32; 3] {
+        (position * 1000.0).round().as_ivec3().to_array()
+    }
+
+    fn land_near(ground: &Ground, position: Vec3) -> f32 {
+        let at = (to_ground(position) * 8.0).round().as_ivec2();
+        ground.land(at)
+    }
+
     #[test]
-    fn each_walkable_tile_has_two_top_triangles() {
-        let (map, surface) = island();
+    fn the_top_covers_about_the_walkable_area() {
+        let (map, ground) = island();
         let walkable = map.tiles().filter(|&tile| map.is_walkable(tile)).count();
-        assert_eq!(top(&map, &surface, &VAEL).vertices.len(), walkable * 6);
+        let area: f32 = triangles(&top(&ground, &Painter::default(), &VAEL))
+            .iter()
+            .map(|[a, b, c]| (*b - *a).cross(*c - *a).y.abs() / 2.0)
+            .sum();
+        let expected = f32::from(u16::try_from(walkable).unwrap());
+        assert!((area / expected - 1.0).abs() < 0.15);
     }
 
     #[test]
     fn top_faces_point_up() {
-        let (map, surface) = island();
-        for triangle in triangles(&top(&map, &surface, &VAEL)) {
+        let (_, ground) = island();
+        for triangle in triangles(&top(&ground, &Painter::default(), &VAEL)) {
             assert!(normal(triangle).y > 0.0);
         }
     }
 
     #[test]
-    fn top_corners_sit_on_the_surface() {
-        let (map, surface) = island();
-        for vertex in top(&map, &surface, &VAEL).vertices {
+    fn top_vertices_sit_on_the_ground() {
+        let (_, ground) = island();
+        for vertex in top(&ground, &Painter::default(), &VAEL).vertices {
             let position = Vec3::from(vertex.position);
-            let height = surface.height_at(to_ground(position));
-            assert!((position.y - height).abs() < 1e-4);
+            assert!((position.y - ground.height_at(to_ground(position))).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn cliffs_face_the_void() {
+        let (_, ground) = island();
+        for triangle in triangles(&cliff(&ground, &Painter::default(), &VAEL)) {
+            let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
+            let outward = (normal(triangle) * Vec3::new(1.0, 0.0, 1.0)).normalize_or_zero() * 0.4;
+            assert!(land_near(&ground, center + outward) <= land_near(&ground, center - outward));
+        }
+    }
+
+    #[test]
+    fn the_cliff_joins_the_top_and_the_underside() {
+        let (_, ground) = island();
+        let painter = Painter::default();
+        let edges: HashSet<[i32; 3]> = top(&ground, &painter, &VAEL)
+            .vertices
+            .iter()
+            .chain(&underside(&ground, &painter, &VAEL).vertices)
+            .map(|vertex| key(Vec3::from(vertex.position)))
+            .collect();
+        for vertex in cliff(&ground, &painter, &VAEL).vertices {
+            assert!(edges.contains(&key(Vec3::from(vertex.position))));
+        }
+    }
+
+    #[test]
+    fn underside_faces_point_down() {
+        let (_, ground) = island();
+        for triangle in triangles(&underside(&ground, &Painter::default(), &VAEL)) {
+            assert!(normal(triangle).y < 0.0);
+        }
+    }
+
+    #[test]
+    fn the_underside_hangs_deep_below_the_middle() {
+        let (_, ground) = island();
+        let middle = Ground::place(ground.size() / 2);
+        let deepest = underside(&ground, &Painter::default(), &VAEL)
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[1])
+            .fold(f32::INFINITY, f32::min);
+        assert!(deepest < ground.height_at(middle) - 3.0);
     }
 }

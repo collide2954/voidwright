@@ -17,7 +17,6 @@ mod render;
 pub mod shader;
 mod space;
 mod spline;
-mod surface;
 mod terrain;
 
 pub use app::App;
@@ -34,5 +33,4 @@ pub use picking::pick;
 pub use render::Renderer;
 pub use space::{to_ground, to_world};
 pub use spline::{catmull_rom, smoothstep};
-pub use surface::Surface;
-pub use terrain::{top, underside};
+pub use terrain::{cliff, top, underside};

@@ -47,7 +47,7 @@ impl Ground {
         for y in 0..size.y {
             for x in 0..size.x {
                 let at = IVec2::new(x, y);
-                let tile_space = point(at);
+                let tile_space = Self::place(at);
                 let land = blend_tiles(tile_space, |tile| {
                     f32::from(u8::from(map.is_walkable(tile)))
                 }) + layers.coast.centered(at);
@@ -90,6 +90,11 @@ impl Ground {
     }
 
     #[must_use]
+    pub fn place(at: IVec2) -> Vec2 {
+        at.as_vec2() / SCALE
+    }
+
+    #[must_use]
     pub fn height_at(&self, point: Vec2) -> f32 {
         let scaled = point * SCALE;
         let cell = scaled.floor();
@@ -116,11 +121,6 @@ impl Ground {
             .copied()
             .unwrap_or(0.0)
     }
-}
-
-#[must_use]
-pub fn point(at: IVec2) -> Vec2 {
-    at.as_vec2() / SCALE
 }
 
 struct Layer {
@@ -157,8 +157,8 @@ struct Layers {
 impl Layers {
     fn new() -> Self {
         Self {
-            ripple: Layer::new(0x5249_5050, 4, 0.05),
-            swell: Layer::new(0x5357_454c, 16, 0.12),
+            ripple: Layer::new(0x5249_5050, 4, 0.08),
+            swell: Layer::new(0x5357_454c, 16, 0.2),
             coast: Layer::new(0x434f_4153, 6, 0.24),
             lip: Layer::new(0x4c49_5000, 3, 1.0),
             drop: Layer::new(0x4452_4f50, 5, 0.5),
@@ -304,7 +304,7 @@ fn edge_distance(map: &Map) -> Grid<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DETAIL, Ground, LIP_HEIGHT, LIP_WIDTH, edge_distance, lip, point};
+    use super::{DETAIL, Ground, LIP_HEIGHT, LIP_WIDTH, edge_distance, lip};
     use crate::contour::LEVEL;
     use glam::IVec2;
     use voidwright_core::{ELEVATION_PER_TILE, Island, Map, Terrain, Tile};
@@ -396,8 +396,8 @@ mod tests {
     fn heights_between_points_follow_the_lattice() {
         let ground = Ground::new(&island());
         let at = center(Tile::new(15, 15));
-        assert!((ground.height_at(point(at)) - ground.top(at)).abs() < 1e-5);
-        let between = (point(at) + point(at + IVec2::X)) / 2.0;
+        assert!((ground.height_at(Ground::place(at)) - ground.top(at)).abs() < 1e-5);
+        let between = (Ground::place(at) + Ground::place(at + IVec2::X)) / 2.0;
         let expected = f32::midpoint(ground.top(at), ground.top(at + IVec2::X));
         assert!((ground.height_at(between) - expected).abs() < 1e-5);
     }

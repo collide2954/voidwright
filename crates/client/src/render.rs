@@ -6,7 +6,9 @@ use miniquad::{
 };
 
 use crate::shader::{self, Uniforms};
-use crate::{Game, Mesh, Surface, VAEL, flip_rows, palette, png, projection, top, underside};
+use crate::{
+    Game, Mesh, Painter, VAEL, cliff, flip_rows, palette, png, projection, top, underside,
+};
 
 const CAPTURE_WIDTH: u16 = 1280;
 const CAPTURE_HEIGHT: u16 = 720;
@@ -45,10 +47,11 @@ impl Renderer {
                 ..PipelineParams::default()
             },
         );
-        let map = game.world().map();
-        let surface = Surface::new(map);
-        let mut terrain = top(map, &surface, &VAEL);
-        terrain.append(&underside(map, &surface, &VAEL));
+        let ground = game.ground();
+        let painter = Painter::default();
+        let mut terrain = top(ground, &painter, &VAEL);
+        terrain.append(&cliff(ground, &painter, &VAEL));
+        terrain.append(&underside(ground, &painter, &VAEL));
         Self {
             pipeline,
             terrain: upload(context, &terrain),
