@@ -43,6 +43,28 @@ pub fn ring(point: Vec3, radius: f32, thickness: f32) -> f32 {
 }
 
 #[must_use]
+pub fn drape(point: Vec3, length: f32, radii: Vec2, thickness: f32, folds: Vec2) -> f32 {
+    let flat = unfold(point, length, folds);
+    let top = Vec2::new(radii.x, 0.0);
+    let side = Vec2::new(radii.y, -length) - top;
+    let along = ((flat - top).dot(side) / side.length_squared()).clamp(0.0, 1.0);
+    (flat - top - side * along).length() - thickness / 2.0
+}
+
+#[must_use]
+pub fn inside_drape(point: Vec3, length: f32, radii: Vec2, folds: Vec2) -> bool {
+    let flat = unfold(point, length, folds);
+    let down = (-flat.y / length).clamp(0.0, 1.0);
+    flat.x < radii.x + (radii.y - radii.x) * down
+}
+
+fn unfold(point: Vec3, length: f32, folds: Vec2) -> Vec2 {
+    let down = (-point.y / length).clamp(0.0, 1.0);
+    let fold = 1.0 + folds.y * down * (folds.x * point.z.atan2(point.x)).sin();
+    Vec2::new(point.xz().length() / fold, point.y)
+}
+
+#[must_use]
 pub fn smooth_union(base: f32, added: f32, blend: f32) -> (f32, f32) {
     if blend <= 0.0 {
         return if added < base {
@@ -72,8 +94,9 @@ pub fn smooth_carve(base: f32, carved: f32, blend: f32) -> (f32, f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ball, block, egg, limb, ring, smooth_carve, smooth_union};
+    use super::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
     use glam::{Vec2, Vec3};
+    use std::f32::consts::PI;
 
     fn near(value: f32, expected: f32) -> bool {
         (value - expected).abs() < 1e-3
@@ -119,6 +142,39 @@ mod tests {
         assert!(near(ring(Vec3::new(0.0, 0.0, 0.35), 0.3, 0.05), 0.0));
         assert!(near(ring(Vec3::new(0.3, 0.05, 0.0), 0.3, 0.05), 0.0));
         assert!(near(ring(Vec3::ZERO, 0.3, 0.05), 0.25));
+    }
+
+    #[test]
+    fn a_drape_is_a_thick_open_wall_around_its_axis() {
+        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::ZERO);
+        let middle = Vec3::new(0.0, -0.2, 0.0);
+        assert!(near(
+            drape(Vec3::X * 0.1, length, radii, 0.04, folds),
+            -0.02
+        ));
+        assert!(near(drape(middle, length, radii, 0.04, folds), 0.1255));
+        assert!(near(
+            drape(Vec3::new(0.0, -0.4, 0.22), length, radii, 0.04, folds),
+            0.0
+        ));
+        assert!(inside_drape(middle, length, radii, folds));
+        assert!(!inside_drape(
+            Vec3::new(0.3, -0.2, 0.0),
+            length,
+            radii,
+            folds
+        ));
+    }
+
+    #[test]
+    fn folds_push_a_drape_out_more_toward_its_hem() {
+        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::new(4.0, 0.1));
+        let crest = Vec3::new((PI / 8.0).cos(), 0.0, (PI / 8.0).sin()) * 0.3;
+        let push = |down: f32| {
+            let point = crest - Vec3::Y * down;
+            drape(point, length, radii, 0.0, Vec2::ZERO) - drape(point, length, radii, 0.0, folds)
+        };
+        assert!(push(0.38) > push(0.04) + 0.01);
     }
 
     #[test]

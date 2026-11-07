@@ -2,7 +2,7 @@ use std::array::from_fn;
 
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
 
-use crate::field::{ball, block, egg, limb, ring, smooth_carve, smooth_union};
+use crate::field::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
 use crate::nets::{Lattice, mesh};
 use crate::palette::linear;
 use crate::shape::Material;
@@ -45,9 +45,24 @@ impl SkinnedMesh {
 pub enum Form {
     Ball(f32),
     Egg(Vec3),
-    Limb { length: f32, radii: Vec2 },
-    Block { half: Vec3, rounding: f32 },
-    Ring { radius: f32, thickness: f32 },
+    Limb {
+        length: f32,
+        radii: Vec2,
+    },
+    Block {
+        half: Vec3,
+        rounding: f32,
+    },
+    Ring {
+        radius: f32,
+        thickness: f32,
+    },
+    Drape {
+        length: f32,
+        radii: Vec2,
+        thickness: f32,
+        folds: Vec2,
+    },
 }
 
 impl Form {
@@ -58,6 +73,24 @@ impl Form {
             Self::Limb { length, radii } => limb(point, length, radii),
             Self::Block { half, rounding } => block(point, half, rounding),
             Self::Ring { radius, thickness } => ring(point, radius, thickness),
+            Self::Drape {
+                length,
+                radii,
+                thickness,
+                folds,
+            } => drape(point, length, radii, thickness, folds),
+        }
+    }
+
+    fn inside(self, point: Vec3) -> bool {
+        match self {
+            Self::Drape {
+                length,
+                radii,
+                folds,
+                ..
+            } => inside_drape(point, length, radii, folds),
+            _ => false,
         }
     }
 
@@ -71,6 +104,16 @@ impl Form {
             ),
             Self::Block { half, .. } => (Vec3::ZERO, half.length()),
             Self::Ring { radius, thickness } => (Vec3::ZERO, radius + thickness),
+            Self::Drape {
+                length,
+                radii,
+                thickness,
+                folds,
+            } => (
+                Vec3::new(0.0, -length / 2.0, 0.0),
+                Vec2::new(length / 2.0, radii.max_element() * (1.0 + folds.y)).length()
+                    + thickness / 2.0,
+            ),
         }
     }
 }
@@ -86,6 +129,7 @@ pub struct Stroke {
     turn: Quat,
     squash: Vec3,
     clip: Option<(Vec3, f32)>,
+    lining: Option<Material>,
 }
 
 impl Stroke {
@@ -101,6 +145,14 @@ impl Stroke {
             turn: Quat::IDENTITY,
             squash: Vec3::ONE,
             clip: None,
+            lining: None,
+        }
+    }
+
+    fn paint(&self, local: Vec3) -> Material {
+        match self.lining {
+            Some(lining) if self.form.inside(local / self.squash) => lining,
+            _ => self.material,
         }
     }
 
@@ -151,6 +203,14 @@ impl Stroke {
             ..self
         }
     }
+
+    #[must_use]
+    pub const fn lined(self, lining: Material) -> Self {
+        Self {
+            lining: Some(lining),
+            ..self
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -191,7 +251,7 @@ impl Sculpt {
 
     #[must_use]
     pub fn distance(&self, point: Vec3) -> f32 {
-        self.evaluate(point, |_, _| {})
+        self.evaluate(point, |_, _, _| {})
     }
 
     #[must_use]
@@ -214,7 +274,7 @@ impl Sculpt {
         }
     }
 
-    fn evaluate(&self, point: Vec3, mut visit: impl FnMut(&Stroke, f32)) -> f32 {
+    fn evaluate(&self, point: Vec3, mut visit: impl FnMut(&Stroke, f32, Vec3)) -> f32 {
         let mut distance = FAR;
         for placed in &self.strokes {
             let stroke = &placed.stroke;
@@ -226,7 +286,8 @@ impl Sculpt {
             if placed.center.distance(point) - placed.reach >= limit {
                 continue;
             }
-            let value = stroke.shape(placed.inverse.transform_point3(point));
+            let local = placed.inverse.transform_point3(point);
+            let value = stroke.shape(local);
             let (next, mix) = if stroke.carve {
                 smooth_carve(distance, value, stroke.blend)
             } else {
@@ -234,7 +295,7 @@ impl Sculpt {
             };
             distance = next;
             if mix > 0.0 {
-                visit(stroke, mix);
+                visit(stroke, mix, local);
             }
         }
         distance
@@ -266,8 +327,8 @@ impl Sculpt {
         let mut color = Vec3::ZERO;
         let mut params = Vec2::ZERO;
         let mut weights = [0.0; MAX_BONES];
-        self.evaluate(position, |stroke, mix| {
-            let material = stroke.material;
+        self.evaluate(position, |stroke, mix, local| {
+            let material = stroke.paint(local);
             color = color.lerp(linear(material.color), mix);
             params = params.lerp(Vec2::new(material.shine, material.glow), mix);
             for (bone, weight) in weights.iter_mut().enumerate() {
@@ -299,11 +360,13 @@ fn strongest(weights: &[f32; MAX_BONES]) -> ([f32; INFLUENCES], [f32; INFLUENCES
 #[cfg(test)]
 mod tests {
     use super::{Form, INFLUENCES, Sculpt, SkinnedMesh, SkinnedVertex, Stroke};
+    use crate::palette::linear;
     use crate::shape::Material;
     use glam::{Mat4, Quat, Vec2, Vec3};
     use std::f32::consts::FRAC_PI_2;
 
     const PAINT: Material = Material::matte(Vec3::splat(0.5), 0.2);
+    const LINING: Material = Material::matte(Vec3::new(0.3, 0.05, 0.05), 0.1);
     const GLOW: Material = Material::light(Vec3::new(0.3, 1.0, 0.9));
     const CELL: f32 = 0.03;
 
@@ -366,6 +429,59 @@ mod tests {
         let bottom = heights.fold(f32::INFINITY, f32::min);
         assert!((top - 0.05).abs() < 0.005);
         assert!((bottom + 0.2).abs() < 0.005);
+    }
+
+    fn painted(vertex: &SkinnedVertex, material: Material) -> bool {
+        Vec3::from(vertex.color).distance(linear(material.color)) < 1e-3
+    }
+
+    fn drape(depth: f32) -> Form {
+        Form::Drape {
+            length: 0.4,
+            radii: Vec2::new(0.1, 0.2),
+            thickness: 0.04,
+            folds: Vec2::new(8.0, depth),
+        }
+    }
+
+    #[test]
+    fn a_drape_is_open_at_both_ends_and_lined_inside() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, drape(0.0), PAINT).lined(LINING));
+        let mesh = sculpt.mesh(0.015);
+        let (mut outside, mut inside) = (0, 0);
+        for vertex in &mesh.vertices {
+            let radial = Vec3::new(vertex.position[0], 0.0, vertex.position[2]);
+            assert!(radial.length() > 0.07);
+            let facing = Vec3::from(vertex.normal).dot(radial.normalize());
+            if facing > 0.8 {
+                assert!(painted(vertex, PAINT));
+                outside += 1;
+            }
+            if facing < -0.8 {
+                assert!(painted(vertex, LINING));
+                inside += 1;
+            }
+        }
+        assert!(outside > 100 && inside > 100);
+    }
+
+    #[test]
+    fn a_folded_drape_ripples_around_its_hem() {
+        let spread = |depth: f32| {
+            let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+            sculpt.add(Stroke::new(0, drape(depth), PAINT));
+            let radii: Vec<f32> = sculpt
+                .mesh(0.015)
+                .vertices
+                .iter()
+                .filter(|vertex| (vertex.position[1] + 0.36).abs() < 0.01)
+                .map(|vertex| vertex.position[0].hypot(vertex.position[2]))
+                .collect();
+            let widest = radii.iter().copied().fold(0.0, f32::max);
+            widest - radii.iter().copied().fold(f32::INFINITY, f32::min)
+        };
+        assert!(spread(0.1) > spread(0.0) + 0.02);
     }
 
     #[test]
