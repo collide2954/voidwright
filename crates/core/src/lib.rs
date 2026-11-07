@@ -14,7 +14,7 @@ pub use direction::Direction;
 pub use grid::Grid;
 pub use map::{Map, Terrain};
 pub use noise::{NOISE_RANGE, Noise};
-pub use path::find_path;
+pub use path::{find_path, reachable};
 pub use rng::Rng;
 pub use tile::Tile;
 pub use walk::Walker;

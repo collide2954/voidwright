@@ -20,16 +20,30 @@ enum Visit {
 
 #[must_use]
 pub fn find_path(map: &Map, from: Tile, to: Tile) -> Vec<Tile> {
+    let (visits, order) = search(map, from, Some(to));
+    let nearest = order
+        .into_iter()
+        .min_by_key(|tile| tile.distance_squared(to))
+        .unwrap_or(from);
+    trace(&visits, nearest)
+}
+
+#[must_use]
+pub fn reachable(map: &Map, from: Tile) -> Vec<Tile> {
+    search(map, from, None).1
+}
+
+fn search(map: &Map, from: Tile, goal: Option<Tile>) -> (Grid<Visit>, Vec<Tile>) {
     let mut visits = Grid::filled(map.width(), map.height(), Visit::Unseen);
     let Some(start) = visits.get_mut(from) else {
-        return Vec::new();
+        return (visits, Vec::new());
     };
     *start = Visit::Start;
     let mut order = vec![from];
     let mut next_index = 0;
     while let Some(&tile) = order.get(next_index) {
         next_index += 1;
-        if tile == to {
+        if Some(tile) == goal {
             break;
         }
         for direction in SEARCH_ORDER {
@@ -43,11 +57,7 @@ pub fn find_path(map: &Map, from: Tile, to: Tile) -> Vec<Tile> {
             }
         }
     }
-    let nearest = order
-        .into_iter()
-        .min_by_key(|tile| tile.distance_squared(to))
-        .unwrap_or(from);
-    trace(&visits, nearest)
+    (visits, order)
 }
 
 fn trace(visits: &Grid<Visit>, end: Tile) -> Vec<Tile> {
@@ -63,8 +73,16 @@ fn trace(visits: &Grid<Visit>, end: Tile) -> Vec<Tile> {
 
 #[cfg(test)]
 mod tests {
-    use super::find_path;
+    use super::{find_path, reachable};
     use crate::{Direction, Map, Tile, fixtures};
+
+    #[test]
+    fn reachable_tiles_leave_out_cut_off_ground() {
+        let map = fixtures::map(&["..#..", "..#.."]);
+        let tiles = reachable(&map, Tile::new(0, 0));
+        assert_eq!(tiles.len(), 4);
+        assert!(!tiles.contains(&Tile::new(3, 0)));
+    }
 
     fn is_legal(map: &Map, from: Tile, path: &[Tile]) -> bool {
         let mut previous = from;
