@@ -24,6 +24,7 @@ The game is not complete. The first milestone is an offline prototype for one pl
 | Start the client | `cargo run --release -p voidwright-client` |
 | Save one frame as a PNG file | `cargo run --release -p voidwright-client -- --capture shot.png` |
 | Set the camera for a capture | `cargo run --release -p voidwright-client -- --capture shot.png --orbit 0.7 0.45 40` |
+| Measure the frame rate | `cargo run --release -p voidwright-client -- --benchmark 10` |
 
 The three values after `--orbit` are the yaw and the pitch in radians, and the distance in tiles.
 
@@ -44,6 +45,7 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | `crates/client` | Game client. |
 | `docs/design.md` | Design decisions. |
 | `docs/lore.md` | Lore of the game world. |
+| `docs/performance.md` | Performance target, method, and results. |
 
 ## License
 
