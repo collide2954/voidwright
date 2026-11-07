@@ -21,6 +21,7 @@ mod render;
 pub mod sculpt;
 pub mod shader;
 pub mod shape;
+mod simplify;
 mod sky;
 mod space;
 mod spline;
