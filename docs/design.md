@@ -15,6 +15,33 @@ This document gives the design decisions for Voidwright.
 | Player combat | Players can attack players only on the outer fragments. |
 | Death | The player keeps the 3 items that have the highest value. The other items stay at a beacon for 15 minutes. On the outer fragments, the killer gets the other items. |
 
+## Skills
+
+| Skill | Group | Use |
+| --- | --- | --- |
+| Bladework | Combat | Accuracy of Melee attacks. |
+| Brawn | Combat | Damage of Melee attacks. |
+| Marksmanship | Combat | Accuracy of Ballistics attacks. |
+| Ordnance | Combat | Damage of Ballistics attacks. |
+| Targeting | Combat | Accuracy of Tech attacks. |
+| Overload | Combat | Damage of Tech attacks. |
+| Shielding | Combat | Defense against all attacks. |
+| Vitality | Combat | Health points. |
+| Salvaging | Gathering | Get metal, parts, and cores from wrecks and asteroid hulks. |
+| Harvesting | Gathering | Grow and cut void moss, crystal stands, and hydroponic crops. |
+| Trawling | Gathering | Catch creatures that drift in the void. |
+| Hunting | Gathering | Track and trap void animals for hides, glands, and pets. |
+| Fabrication | Production | Make gear, weapons, and tools from salvage. |
+| Engineering | Production | Build bridges, devices, and a personal station. Repair broken parts of the ring. |
+| Synthesis | Production | Mix stims, medkits, and void chemicals. |
+| Circuitry | Production | Make implants, chips, and the tech charges for Tech attacks. |
+| Piloting | Support | Move across debris courses. Recover run energy faster and use shortcuts. |
+| Hacking | Support | Open locks, terminals, and drones for loot and hidden routes. |
+| Provisioning | Support | Cook rations. Rations heal in combat. |
+| Resonance | Support | Use void signals for short combat blessings. Blessings use resonance points. |
+
+The total XP for level 80 is half of the total XP for level 99.
+
 ## Legions
 
 | Topic | Decision |
