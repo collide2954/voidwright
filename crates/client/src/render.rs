@@ -8,7 +8,7 @@ use miniquad::{
 use crate::shader::{baked, lit};
 use crate::{
     Bone, Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection,
-    pulse, skeleton, top, underside, voidwright,
+    pulse, skeleton, sky, top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -20,8 +20,10 @@ struct Model {
 }
 
 pub struct Renderer {
+    backdrop: Pipeline,
     baked: Pipeline,
     lit: Pipeline,
+    sky: Model,
     terrain: Model,
     avatar: Vec<(Bone, Model)>,
     marker: Model,
@@ -30,14 +32,23 @@ pub struct Renderer {
 impl Renderer {
     #[must_use]
     pub fn new(context: &mut dyn RenderingBackend, game: &Game) -> Self {
+        let baked_attributes = [
+            VertexAttribute::new("in_position", VertexFormat::Float3),
+            VertexAttribute::new("in_color", VertexFormat::Float3),
+        ];
+        let backdrop = pipeline(
+            context,
+            [baked::VERTEX, baked::FRAGMENT],
+            baked::meta(),
+            &baked_attributes,
+            behind(),
+        );
         let baked = pipeline(
             context,
             [baked::VERTEX, baked::FRAGMENT],
             baked::meta(),
-            &[
-                VertexAttribute::new("in_position", VertexFormat::Float3),
-                VertexAttribute::new("in_color", VertexFormat::Float3),
-            ],
+            &baked_attributes,
+            solid(),
         );
         let lit = pipeline(
             context,
@@ -48,7 +59,10 @@ impl Renderer {
                 VertexAttribute::new("in_normal", VertexFormat::Float3),
                 VertexAttribute::new("in_color", VertexFormat::Float4),
             ],
+            solid(),
         );
+        let backdrop_mesh = sky();
+        let sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
         let ground = game.ground();
         let painter = Painter::default();
         let mut terrain = top(ground, &painter, &VAEL);
@@ -65,8 +79,10 @@ impl Renderer {
         let ring = marker_ring();
         let marker = upload(context, &ring.vertices, &ring.indices);
         Self {
+            backdrop,
             baked,
             lit,
+            sky,
             terrain,
             avatar,
             marker,
@@ -113,6 +129,17 @@ impl Renderer {
     fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
         let camera = game.camera();
         let view_projection = projection(aspect) * camera.view();
+        context.apply_pipeline(&self.backdrop);
+        context.apply_bindings(&self.sky.bindings);
+        context.apply_uniforms(UniformsSource::table(
+            &baked::Uniforms::new(
+                view_projection,
+                Mat4::from_translation(camera.eye()),
+                camera.eye(),
+            )
+            .unfogged(),
+        ));
+        context.draw(0, self.sky.count, 1);
         context.apply_pipeline(&self.baked);
         context.apply_bindings(&self.terrain.bindings);
         context.apply_uniforms(UniformsSource::table(&baked::Uniforms::new(
@@ -153,21 +180,30 @@ fn pipeline(
     [vertex, fragment]: [&str; 2],
     meta: ShaderMeta,
     attributes: &[VertexAttribute],
+    params: PipelineParams,
 ) -> Pipeline {
     let program = context
         .new_shader(ShaderSource::Glsl { vertex, fragment }, meta)
         .expect("the shader compiles");
-    context.new_pipeline(
-        &[BufferLayout::default()],
-        attributes,
-        program,
-        PipelineParams {
-            cull_face: CullFace::Back,
-            depth_test: Comparison::LessOrEqual,
-            depth_write: true,
-            ..PipelineParams::default()
-        },
-    )
+    context.new_pipeline(&[BufferLayout::default()], attributes, program, params)
+}
+
+fn solid() -> PipelineParams {
+    PipelineParams {
+        cull_face: CullFace::Back,
+        depth_test: Comparison::LessOrEqual,
+        depth_write: true,
+        ..PipelineParams::default()
+    }
+}
+
+fn behind() -> PipelineParams {
+    PipelineParams {
+        cull_face: CullFace::Nothing,
+        depth_test: Comparison::Always,
+        depth_write: false,
+        ..PipelineParams::default()
+    }
 }
 
 fn clear() -> PassAction {

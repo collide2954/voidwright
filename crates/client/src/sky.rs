@@ -75,7 +75,7 @@ pub fn stars() -> Mesh {
     let mut mesh = Mesh::default();
     for _ in 0..STAR_COUNT {
         let direction = random_direction(&mut rng);
-        let size = 0.3 + 0.6 * unit(&mut rng);
+        let size = 0.12 + 0.3 * unit(&mut rng).powi(3);
         let brightness = 0.4 + 0.6 * unit(&mut rng).powi(2);
         let tint =
             STAR_TINTS[usize::from(unit(&mut rng) > 0.8) + usize::from(unit(&mut rng) > 0.9)];

@@ -4,6 +4,7 @@ use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 use crate::palette;
 
 const FOG_RANGE: [f32; 2] = [30.0, 90.0];
+const NO_FOG: [f32; 2] = [1.0e6, 2.0e6];
 
 pub const VERTEX: &str = "#version 100
 attribute vec3 in_position;
@@ -70,6 +71,12 @@ impl Uniforms {
             fog_range: FOG_RANGE,
         }
     }
+
+    #[must_use]
+    pub const fn unfogged(mut self) -> Self {
+        self.fog_range = NO_FOG;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -99,6 +106,12 @@ mod tests {
     fn both_shaders_use_glsl_100() {
         assert!(VERTEX.starts_with("#version 100"));
         assert!(FRAGMENT.starts_with("#version 100"));
+    }
+
+    #[test]
+    fn unfogged_uniforms_push_the_fog_beyond_the_sky() {
+        let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO).unfogged();
+        assert!(uniforms.fog_range[0] > 1000.0);
     }
 
     #[test]
