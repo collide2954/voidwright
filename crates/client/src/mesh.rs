@@ -14,15 +14,22 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    pub fn vertex(&mut self, position: Vec3, color: Vec3) -> u32 {
+        let index = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
+        self.vertices.push(Vertex {
+            position: position.to_array(),
+            color: color.to_array(),
+        });
+        index
+    }
+
+    pub fn face(&mut self, corners: [u32; 3]) {
+        self.indices.extend_from_slice(&corners);
+    }
+
     pub fn triangle(&mut self, corners: [Vec3; 3], color: Vec3) {
-        for corner in corners {
-            let index = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
-            self.indices.push(index);
-            self.vertices.push(Vertex {
-                position: corner.to_array(),
-                color: color.to_array(),
-            });
-        }
+        let indices = corners.map(|corner| self.vertex(corner, color));
+        self.face(indices);
     }
 
     pub fn append(&mut self, other: &Self) {
@@ -57,6 +64,17 @@ mod tests {
         mesh.triangle(FLAT, Vec3::ONE);
         assert_eq!(mesh.vertices.len(), 6);
         assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn faces_can_share_vertices() {
+        let mut mesh = Mesh::default();
+        let [a, b, c, d] = [Vec3::ZERO, Vec3::X, Vec3::NEG_Z, Vec3::ONE]
+            .map(|corner| mesh.vertex(corner, Vec3::ONE));
+        mesh.face([a, b, c]);
+        mesh.face([b, d, c]);
+        assert_eq!(mesh.vertices.len(), 4);
+        assert_eq!(mesh.indices, [0, 1, 2, 1, 3, 2]);
     }
 
     #[test]
