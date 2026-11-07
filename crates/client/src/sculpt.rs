@@ -11,6 +11,9 @@ pub const INFLUENCES: usize = 4;
 const MAX_BONES: usize = 16;
 const FAR: f32 = 1e9;
 const SLOPE_STEP: f32 = 1e-3;
+const OCCLUSION_STEPS: [f32; 5] = [0.01, 0.04, 0.07, 0.1, 0.13];
+const OCCLUSION_DECAY: f32 = 0.95;
+const OCCLUSION_STRENGTH: f32 = 3.0;
 const TETRAHEDRON: [Vec3; 4] = [
     Vec3::new(1.0, -1.0, -1.0),
     Vec3::new(-1.0, -1.0, 1.0),
@@ -39,6 +42,22 @@ impl SkinnedMesh {
     #[must_use]
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    pub fn occlude(&mut self, field: &impl Fn(Vec3) -> f32) {
+        for vertex in &mut self.vertices {
+            let position = Vec3::from(vertex.position);
+            let normal = Vec3::from(vertex.normal);
+            let mut hidden = 0.0;
+            let mut weight = 1.0;
+            for step in OCCLUSION_STEPS {
+                hidden += (step - field(position + normal * step)).max(0.0) * weight;
+                weight *= OCCLUSION_DECAY;
+            }
+            let light = (1.0 - OCCLUSION_STRENGTH * hidden).clamp(0.0, 1.0);
+            let kept = light + (1.0 - light) * vertex.params[1];
+            vertex.color = (Vec3::from(vertex.color) * kept).to_array();
+        }
     }
 
     pub fn append(&mut self, other: &Self) {
@@ -452,6 +471,44 @@ mod tests {
                 .iter()
                 .all(|&index| index as usize >= first.vertices.len())
         );
+    }
+
+    #[test]
+    fn occlusion_darkens_the_crevice_between_two_balls() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        for side in [-1.0, 1.0] {
+            sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).at(Vec3::X * 0.19 * side));
+        }
+        let mut mesh = sculpt.mesh(CELL);
+        mesh.occlude(&|point| sculpt.distance(point));
+        let brightness = |near: bool| {
+            let chosen: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .filter(|vertex| (vertex.position[0].abs() < 0.03) == near)
+                .map(|vertex| vertex.color[0])
+                .collect();
+            chosen.iter().sum::<f32>() / f32::from(u16::try_from(chosen.len()).unwrap())
+        };
+        assert!(brightness(true) < brightness(false) * 0.7);
+        let open = mesh
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position[0].abs() > 0.35)
+            .map(|vertex| vertex.color[0])
+            .fold(0.0, f32::max);
+        assert!((open - linear(PAINT.color).x).abs() < 1e-3);
+    }
+
+    #[test]
+    fn occlusion_leaves_glowing_vertices_bright() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, Form::Ball(0.2), GLOW));
+        sculpt.add(Stroke::new(0, Form::Ball(0.2), GLOW).at(Vec3::X * 0.3));
+        let mut mesh = sculpt.mesh(CELL);
+        let before = mesh.clone();
+        mesh.occlude(&|point| sculpt.distance(point));
+        assert_eq!(mesh, before);
     }
 
     #[test]
