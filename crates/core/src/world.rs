@@ -24,6 +24,11 @@ impl World {
     }
 
     #[must_use]
+    pub const fn map(&self) -> &Map {
+        &self.map
+    }
+
+    #[must_use]
     pub const fn player(&self) -> &Walker {
         &self.player
     }
@@ -55,6 +60,12 @@ mod tests {
     #[test]
     fn a_tick_is_600_milliseconds() {
         assert_eq!(TICK.as_millis(), 600);
+    }
+
+    #[test]
+    fn the_world_shows_its_map() {
+        let world = corridor();
+        assert_eq!(world.map(), &fixtures::map(&["......"]));
     }
 
     #[test]
