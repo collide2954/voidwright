@@ -13,19 +13,19 @@ pub struct Map {
 
 impl Map {
     #[must_use]
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u16, height: u16) -> Self {
         Self {
             terrain: Grid::filled(width, height, Terrain::Void),
         }
     }
 
     #[must_use]
-    pub const fn width(&self) -> u32 {
+    pub const fn width(&self) -> u16 {
         self.terrain.width()
     }
 
     #[must_use]
-    pub const fn height(&self) -> u32 {
+    pub const fn height(&self) -> u16 {
         self.terrain.height()
     }
 

@@ -2,31 +2,30 @@ use crate::Tile;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grid<T> {
-    width: u32,
-    height: u32,
+    width: u16,
+    height: u16,
     cells: Vec<T>,
 }
 
 impl<T: Clone> Grid<T> {
     #[must_use]
-    pub fn filled(width: u32, height: u32, value: T) -> Self {
-        let len = width as usize * height as usize;
+    pub fn filled(width: u16, height: u16, value: T) -> Self {
         Self {
             width,
             height,
-            cells: vec![value; len],
+            cells: vec![value; usize::from(width) * usize::from(height)],
         }
     }
 }
 
 impl<T> Grid<T> {
     #[must_use]
-    pub const fn width(&self) -> u32 {
+    pub const fn width(&self) -> u16 {
         self.width
     }
 
     #[must_use]
-    pub const fn height(&self) -> u32 {
+    pub const fn height(&self) -> u16 {
         self.height
     }
 
@@ -40,9 +39,9 @@ impl<T> Grid<T> {
     }
 
     fn index(&self, tile: Tile) -> Option<usize> {
-        let x = u32::try_from(tile.x).ok().filter(|&x| x < self.width)?;
-        let y = u32::try_from(tile.y).ok().filter(|&y| y < self.height)?;
-        Some(y as usize * self.width as usize + x as usize)
+        let x = u16::try_from(tile.x).ok().filter(|&x| x < self.width)?;
+        let y = u16::try_from(tile.y).ok().filter(|&y| y < self.height)?;
+        Some(usize::from(y) * usize::from(self.width) + usize::from(x))
     }
 }
 

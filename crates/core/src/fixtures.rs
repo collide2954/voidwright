@@ -4,8 +4,8 @@ pub fn map(rows: &[&str]) -> Map {
     let height = rows.len();
     let width = rows.first().map_or(0, |row| row.len());
     let mut map = Map::new(
-        u32::try_from(width).unwrap(),
-        u32::try_from(height).unwrap(),
+        u16::try_from(width).unwrap(),
+        u16::try_from(height).unwrap(),
     );
     for (row, line) in rows.iter().enumerate() {
         let y = i32::try_from(height - 1 - row).unwrap();
