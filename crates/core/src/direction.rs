@@ -35,6 +35,20 @@ impl Direction {
             Self::NorthWest => (-1, 1),
         }
     }
+
+    #[must_use]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::North => Self::South,
+            Self::NorthEast => Self::SouthWest,
+            Self::East => Self::West,
+            Self::SouthEast => Self::NorthWest,
+            Self::South => Self::North,
+            Self::SouthWest => Self::NorthEast,
+            Self::West => Self::East,
+            Self::NorthWest => Self::SouthEast,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -53,6 +67,15 @@ mod tests {
         for direction in Direction::ALL {
             let (dx, dy) = direction.delta();
             assert!(dx.abs() <= 1 && dy.abs() <= 1 && (dx, dy) != (0, 0));
+        }
+    }
+
+    #[test]
+    fn opposite_directions_cancel_out() {
+        for direction in Direction::ALL {
+            let (dx, dy) = direction.delta();
+            let (ox, oy) = direction.opposite().delta();
+            assert_eq!((dx + ox, dy + oy), (0, 0));
         }
     }
 
