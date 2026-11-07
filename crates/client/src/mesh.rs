@@ -24,6 +24,13 @@ impl Mesh {
             });
         }
     }
+
+    pub fn append(&mut self, other: &Self) {
+        let offset = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices
+            .extend(other.indices.iter().map(|index| index + offset));
+    }
 }
 
 #[must_use]
@@ -50,6 +57,18 @@ mod tests {
         mesh.triangle(FLAT, Vec3::ONE);
         assert_eq!(mesh.vertices.len(), 6);
         assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn append_moves_the_other_indices_past_these_vertices() {
+        let mut first = Mesh::default();
+        first.triangle(FLAT, Vec3::ONE);
+        let mut second = Mesh::default();
+        second.triangle(FLAT, Vec3::ZERO);
+        first.append(&second);
+        assert_eq!(first.vertices.len(), 6);
+        assert_eq!(first.indices, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(first.vertices[3].color, [0.0, 0.0, 0.0]);
     }
 
     #[test]
