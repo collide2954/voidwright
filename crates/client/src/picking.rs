@@ -1,19 +1,20 @@
 use glam::Vec2;
 use voidwright_core::{Map, Tile};
 
-use crate::{Ray, Surface, to_ground};
+use crate::ground::Ground;
+use crate::{Ray, to_ground};
 
 const STEP: f32 = 0.01;
 const REACH: f32 = 200.0;
 
 #[must_use]
-pub fn pick(ray: Ray, map: &Map, surface: &Surface) -> Option<Tile> {
+pub fn pick(ray: Ray, map: &Map, ground: &Ground) -> Option<Tile> {
     let mut travelled = 0.0;
     while travelled < REACH {
         let point = ray.origin + ray.direction * travelled;
-        let ground = to_ground(point);
-        let tile = tile_at(ground);
-        if map.is_walkable(tile) && point.y <= surface.height_at(ground) {
+        let below = to_ground(point);
+        let tile = tile_at(below);
+        if map.is_walkable(tile) && point.y <= ground.height_at(below) {
             return Some(tile);
         }
         travelled += STEP;
@@ -29,7 +30,8 @@ fn tile_at(ground: Vec2) -> Tile {
 #[cfg(test)]
 mod tests {
     use super::pick;
-    use crate::{OrbitCamera, Ray, Surface, center, to_world};
+    use crate::ground::Ground;
+    use crate::{OrbitCamera, Ray, center, to_world};
     use glam::{Vec2, Vec3};
     use voidwright_core::{ELEVATION_PER_TILE, Map, Terrain, Tile};
 
@@ -52,37 +54,37 @@ mod tests {
     #[test]
     fn a_ray_straight_down_hits_the_tile_below() {
         let map = plateau(5, |_| true);
-        let surface = Surface::new(&map);
-        let hit = pick(straight_down(Tile::new(2, 3)), &map, &surface);
+        let ground = Ground::new(&map);
+        let hit = pick(straight_down(Tile::new(2, 3)), &map, &ground);
         assert_eq!(hit, Some(Tile::new(2, 3)));
     }
 
     #[test]
     fn the_screen_center_picks_the_tile_under_the_camera_target() {
         let map = plateau(9, |_| true);
-        let surface = Surface::new(&map);
-        let ground = center(Tile::new(4, 5));
-        let mut camera = OrbitCamera::new(to_world(ground, surface.height_at(ground)));
+        let ground = Ground::new(&map);
+        let target = center(Tile::new(4, 5));
+        let mut camera = OrbitCamera::new(to_world(target, ground.height_at(target)));
         camera.rotate(0.6, -0.2);
-        let hit = pick(camera.ray(Vec2::ZERO, 1.5), &map, &surface);
+        let hit = pick(camera.ray(Vec2::ZERO, 1.5), &map, &ground);
         assert_eq!(hit, Some(Tile::new(4, 5)));
     }
 
     #[test]
     fn a_ray_into_the_void_hits_nothing() {
         let map = plateau(5, |tile| tile == Tile::new(0, 0));
-        let surface = Surface::new(&map);
-        assert_eq!(pick(straight_down(Tile::new(3, 3)), &map, &surface), None);
+        let ground = Ground::new(&map);
+        assert_eq!(pick(straight_down(Tile::new(3, 3)), &map, &ground), None);
     }
 
     #[test]
     fn a_ray_toward_the_sky_hits_nothing() {
         let map = plateau(5, |_| true);
-        let surface = Surface::new(&map);
+        let ground = Ground::new(&map);
         let ray = Ray {
             origin: to_world(center(Tile::new(2, 2)), 5.0),
             direction: Vec3::Y,
         };
-        assert_eq!(pick(ray, &map, &surface), None);
+        assert_eq!(pick(ray, &map, &ground), None);
     }
 }
