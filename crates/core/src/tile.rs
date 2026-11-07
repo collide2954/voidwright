@@ -17,12 +17,25 @@ impl Tile {
         let (dx, dy) = direction.delta();
         Self::new(self.x + dx, self.y + dy)
     }
+
+    #[must_use]
+    pub const fn distance_squared(self, other: Self) -> i64 {
+        let dx = other.x as i64 - self.x as i64;
+        let dy = other.y as i64 - self.y as i64;
+        dx * dx + dy * dy
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Tile;
     use crate::Direction;
+
+    #[test]
+    fn distance_squared_is_the_square_of_the_straight_line() {
+        assert_eq!(Tile::new(1, 2).distance_squared(Tile::new(4, 6)), 25);
+        assert_eq!(Tile::new(4, 6).distance_squared(Tile::new(1, 2)), 25);
+    }
 
     #[test]
     fn step_adds_the_direction_delta() {

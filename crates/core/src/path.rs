@@ -43,7 +43,11 @@ pub fn find_path(map: &Map, from: Tile, to: Tile) -> Vec<Tile> {
             }
         }
     }
-    trace(&visits, to)
+    let nearest = order
+        .into_iter()
+        .min_by_key(|tile| tile.distance_squared(to))
+        .unwrap_or(from);
+    trace(&visits, nearest)
 }
 
 fn trace(visits: &Grid<Visit>, end: Tile) -> Vec<Tile> {
@@ -90,6 +94,34 @@ mod tests {
         assert_eq!(path.len(), 5);
         assert_eq!(path.last(), Some(&Tile::new(5, 2)));
         assert!(is_legal(&map, from, &path));
+    }
+
+    #[test]
+    fn an_unreachable_target_gives_a_path_to_the_nearest_tile() {
+        let map = fixtures::map(&["..#.."]);
+        let path = find_path(&map, Tile::new(0, 0), Tile::new(4, 0));
+        assert_eq!(path, vec![Tile::new(1, 0)]);
+    }
+
+    #[test]
+    fn a_target_in_the_void_gives_a_path_to_the_edge() {
+        let map = fixtures::map(&["...#"]);
+        let path = find_path(&map, Tile::new(0, 0), Tile::new(3, 0));
+        assert_eq!(path, vec![Tile::new(1, 0), Tile::new(2, 0)]);
+    }
+
+    #[test]
+    fn a_target_outside_the_map_gives_a_path_to_the_edge() {
+        let map = fixtures::map(&["..."]);
+        let path = find_path(&map, Tile::new(0, 0), Tile::new(9, 0));
+        assert_eq!(path, vec![Tile::new(1, 0), Tile::new(2, 0)]);
+    }
+
+    #[test]
+    fn equally_near_tiles_go_to_the_shorter_path() {
+        let map = fixtures::map(&["...", ".#.", "..."]);
+        let path = find_path(&map, Tile::new(0, 0), Tile::new(1, 1));
+        assert_eq!(path.len(), 1);
     }
 
     #[test]
