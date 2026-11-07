@@ -3,9 +3,11 @@ mod clock;
 mod light;
 mod mesh;
 mod motion;
+mod palette;
 mod picking;
 mod space;
 mod surface;
+mod terrain;
 
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
@@ -15,3 +17,4 @@ pub use motion::{center, position};
 pub use picking::pick;
 pub use space::{to_ground, to_world};
 pub use surface::Surface;
+pub use terrain::top;
