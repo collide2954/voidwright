@@ -1,4 +1,4 @@
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
     PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderMeta, ShaderSource,
@@ -7,8 +7,8 @@ use miniquad::{
 
 use crate::shader::{baked, lit};
 use crate::{
-    Bone, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, skeleton,
-    top, underside, voidwright,
+    Bone, Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection,
+    pulse, skeleton, top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -24,6 +24,7 @@ pub struct Renderer {
     lit: Pipeline,
     terrain: Model,
     avatar: Vec<(Bone, Model)>,
+    marker: Model,
 }
 
 impl Renderer {
@@ -61,11 +62,14 @@ impl Renderer {
                 (part.bone, model)
             })
             .collect();
+        let ring = marker_ring();
+        let marker = upload(context, &ring.vertices, &ring.indices);
         Self {
             baked,
             lit,
             terrain,
             avatar,
+            marker,
         }
     }
 
@@ -120,15 +124,26 @@ impl Renderer {
         context.apply_pipeline(&self.lit);
         let root = placement(game.player_position(), game.stride());
         let bones = skeleton(&game.stride().pose(game.time()));
-        for (bone, model) in &self.avatar {
+        let lit = |context: &mut dyn RenderingBackend, model: &Model, matrix: Mat4| {
             context.apply_bindings(&model.bindings);
             context.apply_uniforms(UniformsSource::table(&lit::Uniforms::new(
                 view_projection,
-                root * bones[bone.index()],
+                matrix,
                 camera.eye(),
                 &VAEL,
             )));
             context.draw(0, model.count, 1);
+        };
+        for (bone, model) in &self.avatar {
+            lit(context, model, root * bones[bone.index()]);
+        }
+        if let Some(position) = game.marker() {
+            let scale = Mat4::from_scale(Vec3::splat(pulse(game.time())));
+            lit(
+                context,
+                &self.marker,
+                Mat4::from_translation(position) * scale,
+            );
         }
     }
 }

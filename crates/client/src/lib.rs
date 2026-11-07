@@ -26,7 +26,9 @@ mod terrain;
 pub use app::App;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
-pub use figure::{BONES, Bone, LitMesh, LitVertex, Part, placement, skeleton, voidwright};
+pub use figure::{
+    BONES, Bone, LitMesh, LitVertex, Part, marker_ring, placement, pulse, skeleton, voidwright,
+};
 pub use gait::{Pose, pose_at};
 pub use game::Game;
 pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};

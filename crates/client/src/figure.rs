@@ -15,6 +15,8 @@ const VISOR: Vec4 = Vec4::new(0.45, 1.0, 0.92, 1.0);
 const SEAM: Vec4 = Vec4::new(0.3, 0.8, 0.78, 1.0);
 const BEACON: Vec4 = Vec4::new(1.0, 0.65, 0.3, 1.0);
 const SIDES: u16 = 8;
+const PULSE: f32 = 0.12;
+const PULSE_RATE: f32 = 5.0;
 const FACES: [(Vec3, Vec3, Vec3); 6] = [
     (Vec3::X, Vec3::Y, Vec3::Z),
     (Vec3::NEG_X, Vec3::Z, Vec3::Y),
@@ -158,10 +160,39 @@ impl LitMesh {
         }
     }
 
+    pub fn ring(&mut self, inner: f32, outer: f32, color: Vec4) {
+        let segments = SIDES * 2;
+        let point = |segment: u16, radius: f32| {
+            let (sin, cos) = (TAU * f32::from(segment) / f32::from(segments)).sin_cos();
+            Vec3::new(cos * radius, 0.0, sin * radius)
+        };
+        for segment in 0..segments {
+            let corners = [
+                point(segment, inner),
+                point(segment, outer),
+                point(segment + 1, outer),
+                point(segment + 1, inner),
+            ];
+            self.face(&corners, color, Vec3::Y);
+        }
+    }
+
     #[must_use]
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
     }
+}
+
+#[must_use]
+pub fn pulse(time: f32) -> f32 {
+    1.0 + PULSE * (time * PULSE_RATE).sin()
+}
+
+#[must_use]
+pub fn marker_ring() -> LitMesh {
+    let mut mesh = LitMesh::default();
+    mesh.ring(0.26, 0.36, VISOR);
+    mesh
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -506,7 +537,7 @@ fn forearm() -> LitMesh {
 
 #[cfg(test)]
 mod tests {
-    use super::{BONES, Bone, LitMesh, placement, skeleton, voidwright};
+    use super::{BONES, Bone, LitMesh, placement, pulse, skeleton, voidwright};
     use crate::{Pose, Stride, pose_at};
     use glam::{Vec2, Vec3, Vec4};
 
@@ -560,6 +591,27 @@ mod tests {
         let mut mesh = LitMesh::default();
         mesh.dome(Vec3::ONE, 0.5, 6, Vec4::ONE);
         faces_point_outward(&mesh, Vec3::ONE);
+    }
+
+    #[test]
+    fn a_ring_faces_up_between_its_radii() {
+        let mut mesh = LitMesh::default();
+        mesh.ring(0.3, 0.4, Vec4::ONE);
+        for vertex in &mesh.vertices {
+            let position = Vec3::from(vertex.position);
+            let radius = Vec2::new(position.x, position.z).length();
+            assert!((0.299..=0.401).contains(&radius));
+            assert!(Vec3::from(vertex.normal).distance(Vec3::Y) < 1e-6);
+        }
+        assert!(mesh.triangles() >= 16);
+    }
+
+    #[test]
+    fn the_marker_pulse_stays_gentle() {
+        for step in 0..100 {
+            let scale = pulse(f32::from(u8::try_from(step).unwrap()) * 0.05);
+            assert!((0.85..=1.15).contains(&scale));
+        }
     }
 
     #[test]

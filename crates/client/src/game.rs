@@ -4,9 +4,10 @@ use glam::{Vec2, Vec3};
 use voidwright_core::{Island, TICK, Tile, World};
 
 use crate::ground::Ground;
-use crate::{OrbitCamera, Stride, Ticker, pick, position, to_ground, to_world};
+use crate::{OrbitCamera, Stride, Ticker, center, pick, position, to_ground, to_world};
 
 const ISLAND_RADIUS: u8 = 20;
+const MARKER_LIFT: f32 = 0.03;
 
 #[derive(Clone, Debug)]
 pub struct Game {
@@ -88,6 +89,14 @@ impl Game {
     }
 
     #[must_use]
+    pub fn marker(&self) -> Option<Vec3> {
+        self.world.player().destination().map(|tile| {
+            let below = center(tile);
+            to_world(below, self.ground.height_at(below) + MARKER_LIFT)
+        })
+    }
+
+    #[must_use]
     pub fn player_position(&self) -> Vec3 {
         let below = position(self.world.player().trail(), self.ticker.alpha());
         to_world(below, self.ground.height_at(below))
@@ -133,6 +142,21 @@ mod tests {
         assert_eq!(game.world().player().tile(), start);
         game.update(TICK / 2);
         assert_ne!(game.world().player().tile(), start);
+    }
+
+    #[test]
+    fn the_marker_shows_the_destination_until_arrival() {
+        let mut game = Game::new(3);
+        assert_eq!(game.marker(), None);
+        let start = game.world().player().tile();
+        let target = Tile::new(start.x + 2, start.y);
+        game.walk_to(target);
+        let marker = game.marker().expect("a walk order shows a marker");
+        assert!(to_ground(marker).distance(center(target)) < 1e-5);
+        for _ in 0..5 {
+            game.update(TICK);
+        }
+        assert_eq!(game.marker(), None);
     }
 
     #[test]
