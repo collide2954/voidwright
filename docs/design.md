@@ -8,6 +8,7 @@ This document gives the design decisions for Voidwright.
 | --- | --- |
 | View | Low-poly 3D models on a grid of tiles. The camera turns around the player. |
 | Time | The server changes the world in ticks of 600 ms. A player walks 1 tile in each tick or runs 2 tiles in each tick. |
+| Running | Running uses run energy. Energy recovers when the player walks or stops. Piloting makes the recovery faster. |
 | Setting | A broken ring structure in a nebula. The world is a set of floating fragments. Bridges and gates connect the fragments. |
 | Progression | There are no classes. Each player can increase each skill from level 1 to level 99. |
 | Combat | Attacks occur on ticks. There are three styles: Melee, Ballistics, and Tech. Each style is strong against one style and weak against the other style. |
