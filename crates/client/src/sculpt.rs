@@ -39,6 +39,13 @@ impl SkinnedMesh {
     pub fn triangles(&self) -> usize {
         self.indices.len() / 3
     }
+
+    pub fn append(&mut self, other: &Self) {
+        let offset = u32::try_from(self.vertices.len()).expect("a mesh index fits in u32");
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices
+            .extend(other.indices.iter().map(|index| index + offset));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -410,6 +417,25 @@ mod tests {
             .iter()
             .map(|vertex| vertex.position[axis].abs())
             .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn an_appended_mesh_keeps_its_own_faces() {
+        let first = single(Stroke::new(0, Form::Ball(0.2), PAINT));
+        let second = single(Stroke::new(1, Form::Ball(0.1), PAINT));
+        let mut merged = first.clone();
+        merged.append(&second);
+        assert_eq!(
+            merged.vertices.len(),
+            first.vertices.len() + second.vertices.len()
+        );
+        assert_eq!(merged.triangles(), first.triangles() + second.triangles());
+        assert_eq!(merged.vertices[first.vertices.len()], second.vertices[0]);
+        assert!(
+            merged.indices[first.indices.len()..]
+                .iter()
+                .all(|&index| index as usize >= first.vertices.len())
+        );
     }
 
     #[test]
