@@ -8,6 +8,7 @@ mod mesh;
 mod motion;
 mod palette;
 mod picking;
+pub mod png;
 mod render;
 pub mod shader;
 mod space;
