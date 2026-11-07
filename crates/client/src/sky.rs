@@ -3,6 +3,7 @@ use std::f32::consts::TAU;
 use glam::{IVec3, Vec3};
 use voidwright_core::Rng;
 
+use crate::palette::linear;
 use crate::{Mesh, VAEL, normal, smoothstep};
 
 pub const SKY_RADIUS: f32 = 300.0;
@@ -28,6 +29,8 @@ const STAR_TINTS: [Vec3; 3] = [
 const MOSS: Vec3 = Vec3::new(0.12, 0.35, 0.34);
 const STONE: Vec3 = Vec3::new(0.3, 0.24, 0.34);
 const HAZE: f32 = 0.55;
+const SKY_GAIN: f32 = 2.0;
+const GLOW_GAIN: f32 = 3.0;
 
 #[must_use]
 pub fn sky() -> Mesh {
@@ -91,7 +94,8 @@ pub fn stars() -> Mesh {
         if normal([corners[0], corners[1], corners[2]]).dot(middle) > 0.0 {
             corners.reverse();
         }
-        let indices = corners.map(|corner| mesh.vertex(corner, tint * brightness));
+        let indices =
+            corners.map(|corner| mesh.vertex(corner, linear(tint) * brightness * GLOW_GAIN));
         mesh.face([indices[0], indices[1], indices[2]]);
         mesh.face([indices[0], indices[2], indices[3]]);
     }
@@ -130,7 +134,10 @@ fn dome() -> Mesh {
                     -polar.cos(),
                     polar.sin() * around.sin(),
                 );
-                mesh.vertex(direction * SKY_RADIUS, sky_color(direction))
+                mesh.vertex(
+                    direction * SKY_RADIUS,
+                    linear(sky_color(direction)) * SKY_GAIN,
+                )
             })
             .collect();
         rows.push(row);
@@ -152,11 +159,14 @@ fn vael() -> Mesh {
     let across = toward.any_orthonormal_vector();
     let up = toward.cross(across);
     let radius = SKY_RADIUS * VAEL_SIZE;
-    let center = mesh.vertex(middle, VAEL_CORE);
+    let center = mesh.vertex(middle, linear(VAEL_CORE) * GLOW_GAIN);
     let rim: Vec<u32> = (0..=DOME_SEGMENTS)
         .map(|segment| {
             let (sin, cos) = (TAU * f32::from(segment) / f32::from(DOME_SEGMENTS)).sin_cos();
-            mesh.vertex(middle + (across * cos + up * sin) * radius, AMBER)
+            mesh.vertex(
+                middle + (across * cos + up * sin) * radius,
+                linear(AMBER) * GLOW_GAIN,
+            )
         })
         .collect();
     for pair in rim.windows(2) {
@@ -181,7 +191,7 @@ fn rock(mesh: &mut Mesh, center: Vec3, size: f32, rng: &mut Rng) {
     let tip = center - Vec3::Y * size * (1.4 + 0.8 * unit(rng));
     let crown = center + Vec3::Y * size * 0.15;
     let core = center - Vec3::Y * size * 0.5;
-    let haze = sky_color(center);
+    let haze = linear(sky_color(center)) * SKY_GAIN;
     for side in 0..top.len() {
         let next = (side + 1) % top.len();
         facet(mesh, [crown, top[next], top[side]], MOSS, core, haze);
@@ -202,7 +212,7 @@ fn facet(mesh: &mut Mesh, mut corners: [Vec3; 3], albedo: Vec3, core: Vec3, haze
     if normal(corners).dot(middle - core) < 0.0 {
         corners.swap(1, 2);
     }
-    let lit = VAEL.shade(albedo, normal(corners));
+    let lit = VAEL.shade(linear(albedo), normal(corners));
     mesh.triangle(corners, lit.lerp(haze, HAZE));
 }
 

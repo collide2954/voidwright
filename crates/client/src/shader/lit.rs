@@ -17,14 +17,14 @@ uniform vec3 toward_sun;
 uniform vec3 sun;
 uniform vec3 sky;
 uniform vec3 below;
-varying lowp vec3 color;
+varying mediump vec3 color;
 varying mediump float fog;
 void main() {
     vec4 world = model * vec4(in_position, 1.0);
     vec3 normal = normalize((model * vec4(in_normal, 0.0)).xyz);
     vec3 ambient = mix(below, sky, normal.y * 0.5 + 0.5);
     vec3 lit = in_color.rgb * (sun * max(dot(normal, toward_sun), 0.0) + ambient);
-    color = mix(lit, in_color.rgb, in_color.a);
+    color = mix(lit, in_color.rgb * 2.5, in_color.a);
     gl_Position = view_projection * world;
     float depth = length(world.xyz - eye) - fog_range.x;
     fog = clamp(depth / (fog_range.y - fog_range.x), 0.0, 1.0);
@@ -34,10 +34,14 @@ void main() {
 pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform vec3 fog_color;
-varying lowp vec3 color;
+varying mediump vec3 color;
 varying mediump float fog;
+vec3 filmic(vec3 x) {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
 void main() {
-    gl_FragColor = vec4(mix(color, fog_color, fog), 1.0);
+    vec3 shaded = mix(color, fog_color, fog);
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
 ";
 
@@ -82,7 +86,7 @@ impl Uniforms {
             view_projection: view_projection.to_cols_array(),
             model: model.to_cols_array(),
             eye: eye.to_array(),
-            fog_color: palette::VOID.to_array(),
+            fog_color: palette::linear(palette::VOID).to_array(),
             fog_range: FOG_RANGE,
             toward_sun: light.toward_sun.to_array(),
             sun: light.sun.to_array(),

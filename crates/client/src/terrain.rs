@@ -4,6 +4,7 @@ use glam::{IVec2, Vec3};
 
 use crate::contour::{Cut, Point, cut};
 use crate::ground::{Ground, rim};
+use crate::palette::linear;
 use crate::{Light, Mesh, Painter, normal, to_world};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -47,7 +48,7 @@ pub fn cliff(ground: &Ground, painter: &Painter, light: &Light) -> Mesh {
                 [start.position, start_under, end_under],
                 [start.position, end_under, end.position],
             ] {
-                mesh.triangle(face, light.shade(color, normal(face)));
+                mesh.triangle(face, light.shade(linear(color), normal(face)));
             }
         }
     }
@@ -64,7 +65,7 @@ fn surface(ground: &Ground, layer: Layer, light: &Light, paint: impl Fn(&Sample)
                 .map(|&point| {
                     *shared.entry(point).or_insert_with(|| {
                         let sample = sample(ground, layer, point);
-                        let color = light.shade(paint(&sample), sample.normal);
+                        let color = light.shade(linear(paint(&sample)), sample.normal);
                         mesh.vertex(sample.position, color)
                     })
                 })

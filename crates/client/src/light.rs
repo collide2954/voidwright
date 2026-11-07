@@ -10,9 +10,9 @@ pub struct Light {
 
 pub const VAEL: Light = Light {
     toward_sun: Vec3::new(0.64, 0.48, 0.6),
-    sun: Vec3::new(0.95, 0.68, 0.4),
-    sky: Vec3::new(0.22, 0.26, 0.45),
-    below: Vec3::new(0.32, 0.12, 0.3),
+    sun: Vec3::new(1.9, 1.35, 0.85),
+    sky: Vec3::new(0.12, 0.14, 0.26),
+    below: Vec3::new(0.1, 0.05, 0.1),
 };
 
 impl Light {

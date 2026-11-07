@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
+use crate::palette::linear;
 use crate::{Pose, Stride};
 
 const SUIT: Vec4 = Vec4::new(0.36, 0.39, 0.47, 0.0);
@@ -55,7 +56,7 @@ impl LitMesh {
             self.vertices.push(LitVertex {
                 position: corner.to_array(),
                 normal: normal.to_array(),
-                color: color.to_array(),
+                color: linear(color.truncate()).extend(color.w).to_array(),
             });
         }
         let count = u32::try_from(ordered.len()).expect("a face has few corners");
