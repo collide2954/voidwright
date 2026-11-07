@@ -3,6 +3,7 @@ mod camera;
 mod clock;
 pub mod contour;
 mod game;
+pub mod ground;
 mod input;
 mod launch;
 mod light;
