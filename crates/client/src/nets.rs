@@ -1,6 +1,8 @@
 use glam::Vec3;
 
 const MARGIN: f32 = 2.0;
+const BLOCK: u16 = 4;
+const SLACK: f32 = 1.5;
 const CORNERS: [[u16; 3]; 8] = [
     [0, 0, 0],
     [1, 0, 0],
@@ -70,13 +72,19 @@ pub struct Net {
     pub indices: Vec<u32>,
 }
 
+type Block = ([u16; 3], [u16; 3]);
+
 #[must_use]
 pub fn mesh(field: &impl Fn(Vec3) -> f32, lattice: &Lattice) -> Net {
-    let values = sample(field, lattice);
+    let (values, active) = sample(field, lattice);
     let mut net = Net::default();
-    let vertices = place(&values, lattice, &mut net.positions);
-    for axis in 0..3 {
-        connect(&values, &vertices, lattice, axis, &mut net);
+    let vertices = place(&values, &active, lattice, &mut net.positions);
+    for &block in &active {
+        for cell in cells(block) {
+            for axis in 0..3 {
+                connect(&values, &vertices, lattice, (cell, axis), &mut net);
+            }
+        }
     }
     net
 }
@@ -86,13 +94,57 @@ fn every(counts: [u16; 3]) -> impl Iterator<Item = [u16; 3]> {
         .flat_map(move |z| (0..counts[1]).flat_map(move |y| (0..counts[0]).map(move |x| [x, y, z])))
 }
 
-fn sample(field: &impl Fn(Vec3) -> f32, lattice: &Lattice) -> Vec<f32> {
-    every(lattice.cells.map(|count| count + 1))
-        .map(|corner| field(lattice.corner(corner)))
-        .collect()
+fn sample(field: &impl Fn(Vec3) -> f32, lattice: &Lattice) -> (Vec<f32>, Vec<Block>) {
+    let total = lattice.corner_index(lattice.cells) + 1;
+    let mut values = vec![f32::NAN; total];
+    let reach = f32::from(BLOCK) * lattice.cell * 3.0_f32.sqrt() / 2.0 * SLACK;
+    let mut active = Vec::new();
+    let mut skipped = Vec::new();
+    for block in every(lattice.cells.map(|count| count.div_ceil(BLOCK))) {
+        let low = block.map(|index| index * BLOCK);
+        let high = [0, 1, 2].map(|axis| (low[axis] + BLOCK).min(lattice.cells[axis]));
+        let value = field((lattice.corner(low) + lattice.corner(high)) / 2.0);
+        if value.abs() > reach {
+            skipped.push((low, high, value));
+            continue;
+        }
+        active.push((low, high));
+        for corner in corners((low, high)) {
+            let slot = &mut values[lattice.corner_index(corner)];
+            if slot.is_nan() {
+                *slot = field(lattice.corner(corner));
+            }
+        }
+    }
+    for (low, high, value) in skipped {
+        for corner in corners((low, high)) {
+            let slot = &mut values[lattice.corner_index(corner)];
+            if slot.is_nan() {
+                *slot = value;
+            }
+        }
+    }
+    (values, active)
 }
 
-fn place(values: &[f32], lattice: &Lattice, positions: &mut Vec<Vec3>) -> Vec<u32> {
+fn corners((low, high): Block) -> impl Iterator<Item = [u16; 3]> {
+    (low[2]..=high[2]).flat_map(move |z| {
+        (low[1]..=high[1]).flat_map(move |y| (low[0]..=high[0]).map(move |x| [x, y, z]))
+    })
+}
+
+fn cells((low, high): Block) -> impl Iterator<Item = [u16; 3]> {
+    (low[2]..high[2]).flat_map(move |z| {
+        (low[1]..high[1]).flat_map(move |y| (low[0]..high[0]).map(move |x| [x, y, z]))
+    })
+}
+
+fn place(
+    values: &[f32],
+    active: &[Block],
+    lattice: &Lattice,
+    positions: &mut Vec<Vec3>,
+) -> Vec<u32> {
     let mut vertices = vec![
         u32::MAX;
         lattice
@@ -101,7 +153,7 @@ fn place(values: &[f32], lattice: &Lattice, positions: &mut Vec<Vec3>) -> Vec<u3
             .map(|&count| usize::from(count))
             .product()
     ];
-    for cell in every(lattice.cells) {
+    for cell in active.iter().flat_map(|&block| cells(block)) {
         let samples = CORNERS.map(|offset| {
             values[lattice.corner_index([0, 1, 2].map(|axis| cell[axis] + offset[axis]))]
         });
@@ -127,41 +179,39 @@ fn place(values: &[f32], lattice: &Lattice, positions: &mut Vec<Vec3>) -> Vec<u3
     vertices
 }
 
-fn connect(values: &[f32], vertices: &[u32], lattice: &Lattice, axis: usize, net: &mut Net) {
+fn connect(
+    values: &[f32],
+    vertices: &[u32],
+    lattice: &Lattice,
+    (corner, axis): ([u16; 3], usize),
+    net: &mut Net,
+) {
     let (across, up) = ((axis + 1) % 3, (axis + 2) % 3);
-    let mut counts = lattice.cells.map(|count| count + 1);
-    counts[axis] -= 1;
-    for corner in every(counts) {
-        if corner[across] == 0
-            || corner[up] == 0
-            || corner[across] == lattice.cells[across]
-            || corner[up] == lattice.cells[up]
-        {
-            continue;
-        }
-        let mut end = corner;
-        end[axis] += 1;
-        let inside = values[lattice.corner_index(corner)] < 0.0;
-        if inside == (values[lattice.corner_index(end)] < 0.0) {
-            continue;
-        }
-        let shifted = |steps: [u16; 2]| {
-            let mut cell = corner;
-            cell[across] -= steps[0];
-            cell[up] -= steps[1];
-            vertices[lattice.cell_index(cell)]
-        };
-        let mut quad = [
-            shifted([1, 1]),
-            shifted([0, 1]),
-            shifted([0, 0]),
-            shifted([1, 0]),
-        ];
-        if !inside {
-            quad.reverse();
-        }
-        split(quad, net);
+    if corner[across] == 0 || corner[up] == 0 {
+        return;
     }
+    let mut end = corner;
+    end[axis] += 1;
+    let inside = values[lattice.corner_index(corner)] < 0.0;
+    if inside == (values[lattice.corner_index(end)] < 0.0) {
+        return;
+    }
+    let shifted = |steps: [u16; 2]| {
+        let mut cell = corner;
+        cell[across] -= steps[0];
+        cell[up] -= steps[1];
+        vertices[lattice.cell_index(cell)]
+    };
+    let mut quad = [
+        shifted([1, 1]),
+        shifted([0, 1]),
+        shifted([0, 0]),
+        shifted([1, 0]),
+    ];
+    if !inside {
+        quad.reverse();
+    }
+    split(quad, net);
 }
 
 fn split([a, b, c, d]: [u32; 4], net: &mut Net) {
@@ -179,6 +229,7 @@ mod tests {
     use glam::Vec3;
     use std::collections::HashMap;
     use std::f32::consts::PI;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     const RADIUS: f32 = 0.3;
     const CELL: f32 = 0.05;
@@ -202,6 +253,29 @@ mod tests {
         let lattice = Lattice::around(Vec3::ZERO, high, 0.1);
         assert!(lattice.origin.cmplt(Vec3::ZERO).all());
         assert!(lattice.corner(lattice.cells).cmpgt(high).all());
+    }
+
+    #[test]
+    fn empty_space_costs_few_samples() {
+        let samples = AtomicUsize::new(0);
+        let lattice = Lattice::around(Vec3::splat(-1.0), Vec3::splat(1.0), 0.02);
+        let net = mesh(
+            &|point: Vec3| {
+                samples.fetch_add(1, Ordering::Relaxed);
+                point.length() - RADIUS
+            },
+            &lattice,
+        );
+        let corners: usize = lattice
+            .cells
+            .iter()
+            .map(|&count| usize::from(count) + 1)
+            .product();
+        assert!(samples.load(Ordering::Relaxed) * 10 < corners);
+        let area: f32 = triangles(&net)
+            .map(|[a, b, c]| (b - a).cross(c - a).length() / 2.0)
+            .sum();
+        assert!((area / (4.0 * PI * RADIUS * RADIUS) - 1.0).abs() < 0.05);
     }
 
     #[test]
