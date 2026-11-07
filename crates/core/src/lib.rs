@@ -1,4 +1,6 @@
 mod direction;
+#[cfg(test)]
+mod fixtures;
 mod grid;
 mod map;
 mod tile;

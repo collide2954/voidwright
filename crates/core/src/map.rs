@@ -1,4 +1,4 @@
-use crate::{Grid, Tile};
+use crate::{Direction, Grid, Tile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Terrain {
@@ -34,12 +34,38 @@ impl Map {
     pub fn is_walkable(&self, tile: Tile) -> bool {
         self.terrain(tile) != Terrain::Void
     }
+
+    #[must_use]
+    pub fn can_step(&self, from: Tile, direction: Direction) -> bool {
+        let (dx, dy) = direction.delta();
+        self.is_walkable(from.step(direction))
+            && self.is_walkable(Tile::new(from.x + dx, from.y))
+            && self.is_walkable(Tile::new(from.x, from.y + dy))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Map, Terrain};
-    use crate::Tile;
+    use crate::{Direction, Tile, fixtures};
+
+    #[test]
+    fn a_step_needs_a_walkable_target() {
+        let map = fixtures::map(&[".#"]);
+        assert!(!map.can_step(Tile::new(0, 0), Direction::East));
+    }
+
+    #[test]
+    fn a_diagonal_step_cannot_cut_a_corner() {
+        let map = fixtures::map(&["#.", ".."]);
+        assert!(!map.can_step(Tile::new(0, 0), Direction::NorthEast));
+    }
+
+    #[test]
+    fn a_diagonal_step_passes_between_open_sides() {
+        let map = fixtures::map(&["..", ".."]);
+        assert!(map.can_step(Tile::new(0, 0), Direction::NorthEast));
+    }
 
     #[test]
     fn a_new_map_is_void() {
