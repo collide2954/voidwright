@@ -264,56 +264,16 @@ struct Placed {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Sculpt {
-    rest: Vec<Mat4>,
+struct Part {
     strokes: Vec<Placed>,
+    bounds: Option<(Vec3, Vec3)>,
 }
 
-impl Sculpt {
-    #[must_use]
-    pub fn new(rest: Vec<Mat4>) -> Self {
-        assert!(rest.len() <= MAX_BONES);
-        Self {
-            rest,
-            strokes: Vec::new(),
-        }
-    }
-
-    pub fn add(&mut self, stroke: Stroke) {
-        let place =
-            self.rest[stroke.bone] * Mat4::from_rotation_translation(stroke.turn, stroke.offset);
-        let (center, reach) = stroke.bound();
-        self.strokes.push(Placed {
-            stroke,
-            inverse: Affine3A::from_mat4(place).inverse(),
-            center: place.transform_point3(center),
-            reach,
-        });
-    }
-
-    #[must_use]
-    pub fn distance(&self, point: Vec3) -> f32 {
-        self.evaluate(point, |_, _, _| {})
-    }
-
-    #[must_use]
-    pub fn mesh(&self, cell: f32) -> SkinnedMesh {
-        let Some((low, high)) = self.bounds() else {
-            return SkinnedMesh::default();
-        };
-        let net = mesh(
-            &|point| self.distance(point),
-            &Lattice::around(low, high, cell),
-        );
-        let vertices = net
-            .positions
-            .iter()
-            .map(|&position| self.vertex(position, cell))
-            .collect();
-        SkinnedMesh {
-            vertices,
-            indices: net.indices,
-        }
+impl Part {
+    fn gap(&self, point: Vec3) -> f32 {
+        self.bounds.map_or(FAR, |(low, high)| {
+            (low - point).max(point - high).max(Vec3::ZERO).length()
+        })
     }
 
     fn evaluate(&self, point: Vec3, mut visit: impl FnMut(&Stroke, f32, Vec3)) -> f32 {
@@ -342,15 +302,111 @@ impl Sculpt {
         }
         distance
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Paint {
+    distance: f32,
+    color: Vec3,
+    params: Vec2,
+    weights: [f32; MAX_BONES],
+}
+
+impl Paint {
+    const NONE: Self = Self {
+        distance: FAR,
+        color: Vec3::ZERO,
+        params: Vec2::ZERO,
+        weights: [0.0; MAX_BONES],
+    };
+
+    fn mix(&mut self, stroke: &Stroke, mix: f32, local: Vec3) {
+        let material = stroke.paint(local);
+        self.color = self.color.lerp(linear(material.color), mix);
+        self.params = self
+            .params
+            .lerp(Vec2::new(material.shine, material.glow), mix);
+        for (bone, weight) in self.weights.iter_mut().enumerate() {
+            let goal = if bone == stroke.bone { 1.0 } else { 0.0 };
+            *weight += (goal - *weight) * mix;
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sculpt {
+    rest: Vec<Mat4>,
+    parts: Vec<Part>,
+}
+
+impl Sculpt {
+    #[must_use]
+    pub fn new(rest: Vec<Mat4>) -> Self {
+        assert!(rest.len() <= MAX_BONES);
+        Self {
+            rest,
+            parts: vec![Part::default()],
+        }
+    }
+
+    pub fn add(&mut self, stroke: Stroke) {
+        let place =
+            self.rest[stroke.bone] * Mat4::from_rotation_translation(stroke.turn, stroke.offset);
+        let (center, reach) = stroke.bound();
+        let center = place.transform_point3(center);
+        let part = self.parts.last_mut().expect("a sculpt has a part");
+        if !stroke.carve {
+            let reach = Vec3::splat(reach + stroke.blend);
+            let (low, high) = part.bounds.unwrap_or((center, center));
+            part.bounds = Some((low.min(center - reach), high.max(center + reach)));
+        }
+        part.strokes.push(Placed {
+            stroke,
+            inverse: Affine3A::from_mat4(place).inverse(),
+            center,
+            reach,
+        });
+    }
+
+    pub fn part(&mut self) {
+        self.parts.push(Part::default());
+    }
+
+    #[must_use]
+    pub fn distance(&self, point: Vec3) -> f32 {
+        self.parts.iter().fold(FAR, |nearest, part| {
+            if part.gap(point) >= nearest {
+                nearest
+            } else {
+                nearest.min(part.evaluate(point, |_, _, _| {}))
+            }
+        })
+    }
+
+    #[must_use]
+    pub fn mesh(&self, cell: f32) -> SkinnedMesh {
+        let Some((low, high)) = self.bounds() else {
+            return SkinnedMesh::default();
+        };
+        let net = mesh(
+            &|point| self.distance(point),
+            &Lattice::around(low, high, cell),
+        );
+        let vertices = net
+            .positions
+            .iter()
+            .map(|&position| self.vertex(position, cell))
+            .collect();
+        SkinnedMesh {
+            vertices,
+            indices: net.indices,
+        }
+    }
 
     fn bounds(&self) -> Option<(Vec3, Vec3)> {
-        self.strokes
+        self.parts
             .iter()
-            .filter(|placed| !placed.stroke.carve)
-            .map(|placed| {
-                let reach = Vec3::splat(placed.reach + placed.stroke.blend);
-                (placed.center - reach, placed.center + reach)
-            })
+            .filter_map(|part| part.bounds)
             .reduce(|(low, high), (near, far)| (low.min(near), high.max(far)))
     }
 
@@ -362,28 +418,34 @@ impl Sculpt {
             .normalize_or_zero()
     }
 
+    fn paint(&self, point: Vec3) -> Paint {
+        let mut best = Paint::NONE;
+        for part in &self.parts {
+            if part.gap(point) >= best.distance {
+                continue;
+            }
+            let mut layer = Paint::NONE;
+            layer.distance = part.evaluate(point, |stroke, mix, local| {
+                layer.mix(stroke, mix, local);
+            });
+            if layer.distance < best.distance {
+                best = layer;
+            }
+        }
+        best
+    }
+
     fn vertex(&self, position: Vec3, cell: f32) -> SkinnedVertex {
         let step = cell * 0.25;
         let pull = self.distance(position).clamp(-cell / 2.0, cell / 2.0);
         let position = position - self.gradient(position, step) * pull;
-        let mut color = Vec3::ZERO;
-        let mut params = Vec2::ZERO;
-        let mut weights = [0.0; MAX_BONES];
-        self.evaluate(position, |stroke, mix, local| {
-            let material = stroke.paint(local);
-            color = color.lerp(linear(material.color), mix);
-            params = params.lerp(Vec2::new(material.shine, material.glow), mix);
-            for (bone, weight) in weights.iter_mut().enumerate() {
-                let goal = if bone == stroke.bone { 1.0 } else { 0.0 };
-                *weight += (goal - *weight) * mix;
-            }
-        });
-        let (bones, weights) = strongest(&weights);
+        let paint = self.paint(position);
+        let (bones, weights) = strongest(&paint.weights);
         SkinnedVertex {
             position: position.to_array(),
             normal: self.gradient(position, step).to_array(),
-            color: color.to_array(),
-            params: params.to_array(),
+            color: paint.color.to_array(),
+            params: paint.params.to_array(),
             bones,
             weights,
         }
@@ -509,6 +571,62 @@ mod tests {
         let before = mesh.clone();
         mesh.occlude(&|point| sculpt.distance(point));
         assert_eq!(mesh, before);
+    }
+
+    #[test]
+    fn separate_parts_join_without_blending() {
+        let joined = |separate: bool| {
+            let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+            sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).at(Vec3::X * -0.15));
+            if separate {
+                sculpt.part();
+            }
+            sculpt.add(
+                Stroke::new(0, Form::Ball(0.2), PAINT)
+                    .at(Vec3::X * 0.15)
+                    .blended(0.1),
+            );
+            sculpt.distance(Vec3::ZERO)
+        };
+        assert!((joined(true) + 0.05).abs() < 1e-4);
+        assert!((joined(false) + 0.075).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_carve_cuts_only_its_own_part() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, Form::Ball(0.1), PAINT).at(Vec3::X * -0.3));
+        sculpt.part();
+        sculpt.add(Stroke::new(0, Form::Ball(0.1), PAINT).at(Vec3::X * 0.3));
+        let tool = Form::Block {
+            half: Vec3::splat(0.5),
+            rounding: 0.0,
+        };
+        sculpt.add(Stroke::new(0, tool, GLOW).carved());
+        assert!(sculpt.distance(Vec3::X * -0.3) < -0.09);
+        assert!(sculpt.distance(Vec3::X * 0.3) > 0.0);
+    }
+
+    #[test]
+    fn each_part_paints_its_own_surface() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY, Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).at(Vec3::X * -0.15));
+        sculpt.part();
+        sculpt.add(
+            Stroke::new(1, Form::Ball(0.2), GLOW)
+                .at(Vec3::X * 0.15)
+                .blended(0.1),
+        );
+        let mesh = sculpt.mesh(CELL);
+        for vertex in &mesh.vertices {
+            let x = vertex.position[0];
+            if x < -0.02 {
+                assert!(painted(vertex, PAINT) && (weight(vertex, 0) - 1.0).abs() < 1e-5);
+            }
+            if x > 0.02 {
+                assert!(painted(vertex, GLOW) && (weight(vertex, 1) - 1.0).abs() < 1e-5);
+            }
+        }
     }
 
     #[test]
