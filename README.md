@@ -22,7 +22,9 @@ The game is not complete. The first milestone is an offline prototype for one pl
 | Path | Contents |
 | --- | --- |
 | `crates/core` | Game rules. No input or output. |
+| `crates/client` | Game client. |
 | `docs/design.md` | Design decisions. |
+| `docs/lore.md` | Lore of the game world. |
 
 ## License
 
