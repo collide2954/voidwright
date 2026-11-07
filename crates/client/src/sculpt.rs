@@ -10,6 +10,7 @@ use crate::shape::Material;
 pub const INFLUENCES: usize = 4;
 const MAX_BONES: usize = 16;
 const FAR: f32 = 1e9;
+const SLOPE_STEP: f32 = 1e-3;
 const TETRAHEDRON: [Vec3; 4] = [
     Vec3::new(1.0, -1.0, -1.0),
     Vec3::new(-1.0, -1.0, 1.0),
@@ -164,10 +165,25 @@ impl Stroke {
     }
 
     fn shape(&self, local: Vec3) -> f32 {
-        let value = self.form.distance(local / self.squash) * self.squash.min_element();
+        let value = if self.squash == Vec3::ONE {
+            self.form.distance(local)
+        } else {
+            self.unsquashed(local)
+        };
         self.clip.map_or(value, |(normal, offset)| {
             value.max(local.dot(normal) - offset)
         })
+    }
+
+    fn unsquashed(&self, local: Vec3) -> f32 {
+        let raw = |point: Vec3| self.form.distance(point / self.squash);
+        let slope = TETRAHEDRON
+            .iter()
+            .map(|&corner| corner * raw(local + corner * SLOPE_STEP))
+            .sum::<Vec3>()
+            .length()
+            / (4.0 * SLOPE_STEP);
+        raw(local) / slope.max(self.squash.max_element().recip())
     }
 
     fn bound(&self) -> (Vec3, f32) {
@@ -445,6 +461,14 @@ mod tests {
         assert!((extent(&mesh, 0) - 0.2).abs() < 0.005);
         assert!((extent(&mesh, 1) - 0.1).abs() < 0.005);
         assert!((extent(&mesh, 2) - 0.3).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_squashed_stroke_measures_true_distances() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).squashed(Vec3::new(1.0, 0.25, 1.0)));
+        assert!((sculpt.distance(Vec3::new(0.4, 0.0, 0.0)) - 0.2).abs() < 0.005);
+        assert!((sculpt.distance(Vec3::new(0.0, 0.15, 0.0)) - 0.1).abs() < 0.005);
     }
 
     #[test]
