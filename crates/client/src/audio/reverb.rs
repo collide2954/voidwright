@@ -4,6 +4,10 @@ use std::f32::consts::FRAC_1_SQRT_2;
 const LINES: usize = 8;
 const SPREAD: [f32; LINES] = [0.030, 0.0351, 0.0411, 0.048, 0.0562, 0.0658, 0.0769, 0.090];
 const SCALE: f32 = FRAC_1_SQRT_2 * 0.5;
+const TAPS: [[f32; LINES]; 2] = [
+    [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0],
+    [1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0],
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Room {
@@ -49,7 +53,13 @@ impl Reverb {
         for (value, line) in values.iter_mut().zip(&self.lines) {
             *value = line.samples[line.index] * line.gain;
         }
-        let wet = values.iter().sum::<f32>() * SCALE;
+        let wet = TAPS.map(|taps| {
+            taps.iter()
+                .zip(&values)
+                .map(|(tap, value)| tap * value)
+                .sum::<f32>()
+                * SCALE
+        });
         mix(&mut values);
         for (index, (line, value)) in self.lines.iter_mut().zip(values).enumerate() {
             line.samples[line.index] = value + input[index % 2];
@@ -58,7 +68,7 @@ impl Reverb {
                 line.index = 0;
             }
         }
-        [wet; 2]
+        wet
     }
 }
 
@@ -159,5 +169,18 @@ mod tests {
                 "{measured} s for {expected} s"
             );
         }
+    }
+
+    #[test]
+    fn the_left_and_right_tails_are_decorrelated() {
+        let (mut both, mut left, mut right) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for frame in impulse(OPEN_ISLAND, 2 * SECOND) {
+            let [one, two] = frame.map(f64::from);
+            both += one * two;
+            left += one * one;
+            right += two * two;
+        }
+        let correlation = both / (left * right).sqrt();
+        assert!(correlation.abs() < 0.3, "{correlation}");
     }
 }
