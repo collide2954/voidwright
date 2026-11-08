@@ -122,8 +122,8 @@ fn grained(at: Vec2) -> f32 {
 }
 
 fn brushed(at: Vec2) -> f32 {
-    let streaks = 0.5 * noise(at, IVec2::new(3, 160), 61) + 0.3 * noise(at, IVec2::new(6, 80), 62);
-    let dents = 0.3 * noise(at, IVec2::splat(8), 63);
+    let streaks = 0.3 * noise(at, IVec2::new(3, 160), 61) + 0.1 * noise(at, IVec2::new(6, 80), 62);
+    let dents = 0.4 * noise(at, IVec2::splat(8), 63);
     let scratch = (0..SCRATCHES)
         .map(|index| {
             let key = IVec2::new(i32::try_from(index).unwrap_or(0), 7);
@@ -137,7 +137,7 @@ fn brushed(at: Vec2) -> f32 {
             (1.0 - distance / 0.005).max(0.0).powi(2)
         })
         .fold(0.0, f32::max);
-    streaks + dents - 0.35 * scratch
+    streaks + dents - 0.3 * scratch
 }
 
 fn noise(at: Vec2, period: IVec2, seed: u32) -> f32 {

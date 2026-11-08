@@ -74,7 +74,7 @@ const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
 const float BEND = 0.12;
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
-const vec4 STRENGTH = vec4(0.48, 0.65, 0.52, 0.74);
+const vec4 STRENGTH = vec4(0.56, 0.74, 0.52, 0.6);
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -185,6 +185,7 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
+    use crate::detail::{DETAIL_SIZE, Detail, paint};
     use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
     use glam::{Mat4, Vec3, Vec3Swizzles, Vec4};
@@ -418,14 +419,44 @@ mod tests {
         Vec4::from_slice(&values)
     }
 
+    const MIDDLE: [f32; 4] = [0.55, 0.75, 0.6, 0.85];
+    const SPREADS_THEN: [f32; 4] = [0.1919, 0.3384, 0.2411, 0.1294];
+    const SLOPES_THEN: [f32; 4] = [0.1137, 0.1097, 0.1872, 0.0522];
+
+    fn contrast(detail: &Detail, kind: usize) -> (f32, f32) {
+        let texel = |bytes: &[u8], index: usize| f32::from(bytes[index * 4 + kind]) / 255.0;
+        let count = usize::from(DETAIL_SIZE).pow(2);
+        let total = f32::from(DETAIL_SIZE).powi(2);
+        let mean = (0..count)
+            .map(|index| texel(&detail.height, index))
+            .sum::<f32>()
+            / total;
+        let spread = ((0..count)
+            .map(|index| (texel(&detail.height, index) - mean).powi(2))
+            .sum::<f32>()
+            / total)
+            .sqrt();
+        let slope = (0..count)
+            .map(|index| {
+                let across = texel(&detail.slope_u, index) - 0.5;
+                let along = texel(&detail.slope_v, index) - 0.5;
+                across.hypot(along)
+            })
+            .sum::<f32>()
+            / total;
+        (spread, slope)
+    }
+
     #[test]
-    fn the_strength_divides_out_the_mean_weather_gain() {
-        let middle = Vec4::new(0.55, 0.75, 0.6, 0.85);
-        let strength = constant("STRENGTH");
-        assert!(
-            (strength * 1.15 - middle).abs().max_element() < 0.01,
-            "{strength}"
-        );
+    fn each_surface_keeps_the_middle_strength() {
+        let detail = paint();
+        let strength = constant("STRENGTH").to_array();
+        for kind in 0..4 {
+            let (spread, slope) = contrast(&detail, kind);
+            let change = f32::midpoint(spread / SPREADS_THEN[kind], slope / SLOPES_THEN[kind]);
+            let now = strength[kind] * 1.15 * change;
+            assert!((now / MIDDLE[kind] - 1.0).abs() < 0.05, "{kind} {now}");
+        }
     }
 
     #[test]
