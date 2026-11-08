@@ -1,6 +1,7 @@
 mod app;
 pub mod audio;
 mod camera;
+pub mod catalog;
 mod clock;
 pub mod cloth;
 pub mod contour;
