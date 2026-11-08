@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 voidwright-core = { path = "crates/core" }
+voidwright-protocol = { path = "crates/protocol" }
 glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
 miniquad = "0.4"
 
