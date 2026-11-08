@@ -6,7 +6,7 @@ use crate::smoothstep;
 
 pub const DETAIL_SIZE: u16 = 256;
 const SLOPE_GAIN: f32 = 1.5;
-const SCRATCHES: u32 = 10;
+const SCRATCHES: u32 = 14;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Detail {
@@ -120,8 +120,8 @@ fn grained(at: Vec2) -> f32 {
 }
 
 fn brushed(at: Vec2) -> f32 {
-    let streaks = 0.5 * noise(at, IVec2::new(3, 64), 61) + 0.3 * noise(at, IVec2::new(6, 32), 62);
-    let dents = 0.3 * noise(at, IVec2::splat(5), 63);
+    let streaks = 0.5 * noise(at, IVec2::new(3, 160), 61) + 0.3 * noise(at, IVec2::new(6, 80), 62);
+    let dents = 0.3 * noise(at, IVec2::splat(8), 63);
     let scratch = (0..SCRATCHES)
         .map(|index| {
             let key = IVec2::new(i32::try_from(index).unwrap_or(0), 7);
@@ -132,7 +132,7 @@ fn brushed(at: Vec2) -> f32 {
             offset -= offset.round();
             let along = (offset.dot(reach) / reach.length_squared()).clamp(0.0, 1.0);
             let distance = (offset - reach * along).length();
-            (1.0 - distance / 0.008).max(0.0).powi(2)
+            (1.0 - distance / 0.005).max(0.0).powi(2)
         })
         .fold(0.0, f32::max);
     streaks + dents - 0.35 * scratch
@@ -164,7 +164,8 @@ fn hash(at: IVec2, seed: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DETAIL_SIZE, Detail, SLOPE_GAIN, paint};
+    use super::{DETAIL_SIZE, Detail, SLOPE_GAIN, brushed, grained, knitted, paint, woven};
+    use glam::Vec2;
     use std::sync::LazyLock;
 
     static DETAIL: LazyLock<Detail> = LazyLock::new(paint);
@@ -192,26 +193,36 @@ mod tests {
         }
     }
 
+    fn step(channel: usize, (dx, dy): (usize, usize), (x, y): (usize, usize)) -> f32 {
+        (at(&DETAIL.height, x + dx, y + dy, channel) - at(&DETAIL.height, x, y, channel)).abs()
+    }
+
+    fn change(channel: usize, offset: (usize, usize)) -> f32 {
+        let total: f32 = (0..SIZE * SIZE)
+            .map(|index| step(channel, offset, (index % SIZE, index / SIZE)))
+            .sum();
+        total / f32::from(DETAIL_SIZE).powi(2)
+    }
+
+    #[test]
+    fn brushed_streaks_run_long_and_fine() {
+        let across = change(3, (0, 1));
+        assert!(across > change(3, (0, 8)) * 0.6, "{across}");
+        assert!(change(3, (1, 0)) < across * 0.25, "{across}");
+    }
+
     #[test]
     fn the_detail_tiles_without_a_seam() {
-        for channel in 0..4 {
-            let mut inner = 0.0;
-            let mut seam = 0.0;
-            for line in 0..SIZE {
-                for x in 0..SIZE - 1 {
-                    inner += (at(&DETAIL.height, x + 1, line, channel)
-                        - at(&DETAIL.height, x, line, channel))
-                    .abs();
+        let patterns: [fn(Vec2) -> f32; 4] = [woven, knitted, grained, brushed];
+        for (channel, pattern) in patterns.into_iter().enumerate() {
+            for index in 0..400_u16 {
+                let step = f32::from(index);
+                let at = Vec2::new((step * 0.618).fract(), (step * 0.377).fract());
+                for edge in [Vec2::X, Vec2::Y] {
+                    let jump = (pattern(at + edge) - pattern(at)).abs();
+                    assert!(jump < 1e-3, "channel {channel} {at} {jump}");
                 }
-                seam += (at(&DETAIL.height, 0, line, channel)
-                    - at(&DETAIL.height, SIZE - 1, line, channel))
-                .abs();
-                seam += (at(&DETAIL.height, line, 0, channel)
-                    - at(&DETAIL.height, line, SIZE - 1, channel))
-                .abs();
             }
-            let inner = inner / f32::from(DETAIL_SIZE - 1);
-            assert!(seam / 2.0 < inner * 2.0, "channel {channel}");
         }
     }
 
