@@ -27,6 +27,7 @@ mod simplify;
 mod sky;
 mod space;
 mod spline;
+pub mod spring;
 mod stats;
 mod stride;
 mod terrain;
