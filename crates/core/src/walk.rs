@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::Tile;
+use crate::{Direction, Tile};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Walker {
@@ -46,6 +46,16 @@ impl Walker {
 
     pub fn follow(&mut self, route: Vec<Tile>) {
         self.route = route.into();
+    }
+
+    pub fn sync(&mut self, tile: Tile, next: Option<Tile>) {
+        self.trail.clear();
+        if Direction::between(self.tile, tile).is_some() {
+            self.trail.push(self.tile);
+        }
+        self.trail.push(tile);
+        self.tile = tile;
+        self.route = next.into_iter().collect();
     }
 
     pub fn advance(&mut self, steps: usize) {
@@ -128,6 +138,33 @@ mod tests {
         assert_eq!(walker.next_step(), Some(east(2)));
         walker.advance(1);
         assert_eq!(walker.next_step(), None);
+    }
+
+    #[test]
+    fn a_sync_to_a_neighbor_steps_there() {
+        let mut walker = Walker::new(east(0));
+        walker.sync(east(1), Some(east(2)));
+        assert_eq!(walker.tile(), east(1));
+        assert_eq!(walker.trail(), [east(0), east(1)]);
+        assert_eq!(walker.next_step(), Some(east(2)));
+    }
+
+    #[test]
+    fn a_sync_in_place_stands_still() {
+        let mut walker = Walker::new(east(0));
+        walker.follow(vec![east(1), east(2)]);
+        walker.sync(east(0), None);
+        assert_eq!(walker.trail(), [east(0)]);
+        assert!(!walker.is_moving());
+    }
+
+    #[test]
+    fn a_sync_to_a_far_tile_jumps_there() {
+        let mut walker = Walker::new(east(0));
+        walker.sync(east(5), Some(east(6)));
+        assert_eq!(walker.tile(), east(5));
+        assert_eq!(walker.trail(), [east(5)]);
+        assert_eq!(walker.destination(), Some(east(6)));
     }
 
     #[test]
