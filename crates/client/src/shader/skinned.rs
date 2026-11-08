@@ -74,7 +74,7 @@ const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
 const float BEND = 0.12;
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
-const vec4 STRENGTH = vec4(0.56, 0.74, 0.52, 0.6);
+const vec4 STRENGTH = vec4(0.56, 0.74, 0.21, 0.6);
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -420,7 +420,7 @@ mod tests {
         Vec4::from_slice(&values)
     }
 
-    const MIDDLE: [f32; 4] = [0.55, 0.75, 0.6, 0.85];
+    const MIDDLE: [f32; 4] = [0.55, 0.75, 0.3, 0.85];
     const SPREADS_THEN: [f32; 4] = [0.1919, 0.3384, 0.2411, 0.1294];
     const SLOPES_THEN: [f32; 4] = [0.1137, 0.1097, 0.1872, 0.0522];
 

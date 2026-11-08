@@ -7,6 +7,7 @@ use crate::smoothstep;
 pub const DETAIL_SIZE: u16 = 256;
 const SLOPE_GAIN: f32 = 1.5;
 const SCRATCHES: u32 = 14;
+pub const GRAIN: u8 = 48;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Detail {
@@ -96,8 +97,8 @@ fn knitted(at: Vec2) -> f32 {
 }
 
 fn grained(at: Vec2) -> f32 {
-    let cells = 20;
-    let scaled = at * 20.0;
+    let cells = i32::from(GRAIN);
+    let scaled = at * f32::from(GRAIN);
     let base = scaled.floor().as_ivec2();
     let mut nearest = f32::MAX;
     let mut second = f32::MAX;
@@ -115,9 +116,9 @@ fn grained(at: Vec2) -> f32 {
             }
         }
     }
-    let pebble = smoothstep(0.0, 0.35, second - nearest);
+    let pebble = smoothstep(0.0, 0.6, second - nearest);
     let dome = (1.0 - nearest * 0.9).max(0.0);
-    let crease = 1.0 - (2.0 * noise(at, IVec2::splat(4), 53) - 1.0).abs();
+    let crease = 1.0 - (2.0 * noise(at, IVec2::splat(6), 53) - 1.0).abs();
     0.6 * pebble + 0.3 * dome - 0.3 * smoothstep(0.88, 1.0, crease)
 }
 
@@ -234,6 +235,21 @@ mod tests {
             })
             .collect();
         assert!(variation(&peaks) > 0.08, "{}", variation(&peaks));
+    }
+
+    #[test]
+    fn grained_leather_shows_many_small_cells() {
+        let height = |x: usize, y: usize| at(&DETAIL.height, x, y, 2);
+        let peaks = (0..SIZE * SIZE)
+            .filter(|&index| {
+                let (x, y) = (index % SIZE + SIZE, index / SIZE + SIZE);
+                let middle = height(x, y);
+                (0..9)
+                    .filter(|&near| near != 4)
+                    .all(|near| height(x + near % 3 - 1, y + near / 3 - 1) < middle)
+            })
+            .count();
+        assert!(peaks > 1500, "{peaks}");
     }
 
     #[test]
