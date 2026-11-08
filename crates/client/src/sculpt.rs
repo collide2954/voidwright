@@ -189,6 +189,7 @@ pub struct Stroke {
     turn: Quat,
     squash: Vec3,
     clip: Option<(Vec3, f32)>,
+    hem: f32,
     lining: Option<Material>,
     wrinkles: Option<(f32, Vec3)>,
     seed: u32,
@@ -207,6 +208,7 @@ impl Stroke {
             turn: Quat::IDENTITY,
             squash: Vec3::ONE,
             clip: None,
+            hem: 0.0,
             lining: None,
             wrinkles: None,
             seed: 0,
@@ -230,7 +232,12 @@ impl Stroke {
             value += depth * (2.0 * noise3(local * scale, self.seed) - 1.0);
         }
         self.clip.map_or(value, |(normal, offset)| {
-            value.max(local.dot(normal) - offset)
+            let plane = local.dot(normal) - offset;
+            if self.hem > 0.0 {
+                -smooth_union(-value, -plane, self.hem).0
+            } else {
+                value.max(plane)
+            }
         })
     }
 
@@ -280,6 +287,11 @@ impl Stroke {
     #[must_use]
     pub const fn squashed(self, squash: Vec3) -> Self {
         Self { squash, ..self }
+    }
+
+    #[must_use]
+    pub const fn hemmed(self, hem: f32) -> Self {
+        Self { hem, ..self }
     }
 
     #[must_use]
@@ -787,6 +799,29 @@ mod tests {
         let bottom = heights.fold(f32::INFINITY, f32::min);
         assert!((top - 0.05).abs() < 0.005);
         assert!((bottom + 0.2).abs() < 0.005);
+    }
+
+    #[test]
+    fn a_hemmed_clip_rounds_the_cut_edge_and_keeps_the_cut_face() {
+        let cut = |hem: f32| {
+            let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+            sculpt.add(
+                Stroke::new(0, Form::Ball(0.2), PAINT)
+                    .clipped(Vec3::X, 0.0)
+                    .hemmed(hem),
+            );
+            sculpt
+        };
+        let (sharp, hemmed) = (cut(0.0), cut(0.02));
+        let rim = Vec3::new(0.0, 0.2, 0.0);
+        assert!(sharp.distance(rim).abs() < 1e-4);
+        assert!(hemmed.distance(rim) > 0.004);
+        for point in [Vec3::new(-0.15, 0.0, 0.0), Vec3::new(0.0, 0.0, 0.05)] {
+            assert!(
+                (hemmed.distance(point) - sharp.distance(point)).abs() < 1e-4,
+                "{point}"
+            );
+        }
     }
 
     fn painted(vertex: &SkinnedVertex, material: Material) -> bool {

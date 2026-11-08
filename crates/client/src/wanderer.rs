@@ -757,6 +757,7 @@ fn coat(clay: &mut Sculpt) {
             waistband(panel, Vec3::ZERO, COAT)
                 .lined(LINING)
                 .clipped(Vec3::X * -side.sign(), -0.01)
+                .hemmed(0.012)
                 .wrinkled(0.003, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
         );
@@ -1810,6 +1811,26 @@ mod tests {
         assert!(low > 0.98 && high - low > 0.12, "hem {low} {high}");
         let (low, high) = folds(0.15);
         assert!(low > 0.98 && high - low < 0.03, "hips {low} {high}");
+    }
+
+    #[test]
+    fn the_coat_panels_end_in_rounded_hems_at_the_slits() {
+        use crate::figure::{COAT_CUT, rest, waist};
+        let garments = super::garments();
+        let frame = waist(rest()[Bone::Pelvis.index()]);
+        let mut gaps = Vec::new();
+        for step in 0..12_u8 {
+            let drop = 0.12 + f32::from(step) * 0.03;
+            let oval = super::section(&COAT_CUT, -drop) + super::SHELL / 2.0;
+            for (side, back) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+                let x = side * 0.01;
+                let z = back * oval.y * (1.0 - (x / oval.x).powi(2)).sqrt();
+                let corner = Vec3::new(x, -drop, z);
+                gaps.push(garments.distance(frame.transform_point3(corner)));
+            }
+        }
+        let mean = gaps.iter().sum::<f32>() / f32::from(u16::try_from(gaps.len()).unwrap());
+        assert!(mean > 0.002, "{mean}");
     }
 
     #[test]
