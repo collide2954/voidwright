@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::{Map, Tile, Walker, find_path};
 
 pub const TICK: Duration = Duration::from_millis(600);
+pub const WALK_REACH: u16 = 64;
 const WALK_STEPS: usize = 1;
 const RUN_STEPS: usize = 2;
 
@@ -25,6 +26,7 @@ impl PlayerId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     Absent,
+    Far,
     Void,
     Unreachable,
 }
@@ -98,10 +100,13 @@ impl World {
 
     pub fn try_walk_to(&mut self, id: PlayerId, target: Tile) -> Result<(), Refusal> {
         let player = self.players.get_mut(&id).ok_or(Refusal::Absent)?;
+        let from = player.walker.tile();
+        if from.distance_squared(target) > i64::from(WALK_REACH).pow(2) {
+            return Err(Refusal::Far);
+        }
         if !self.map.is_walkable(target) {
             return Err(Refusal::Void);
         }
-        let from = player.walker.tile();
         let route = find_path(&self.map, from, target);
         if route.last().copied().unwrap_or(from) != target {
             return Err(Refusal::Unreachable);
@@ -129,7 +134,7 @@ impl World {
 }
 #[cfg(test)]
 mod tests {
-    use super::{PlayerId, Refusal, TICK, World};
+    use super::{PlayerId, Refusal, TICK, WALK_REACH, World};
     use crate::{Tile, Walker, fixtures};
 
     fn corridor() -> (World, PlayerId) {
@@ -308,5 +313,18 @@ mod tests {
         world.walk_to(id, Tile::new(5, 0));
         assert_eq!(world.try_walk_to(id, Tile::new(0, 0)), Ok(()));
         assert_eq!(destination(&world, id), None);
+    }
+
+    #[test]
+    fn an_order_beyond_the_walk_reach_is_refused() {
+        let row = ".".repeat(usize::from(WALK_REACH) + 2);
+        let mut world = World::new(fixtures::map(&[row.as_str()]));
+        let id = world.join(Tile::new(0, 0)).unwrap();
+        let edge = i32::from(WALK_REACH);
+        assert_eq!(
+            world.try_walk_to(id, Tile::new(edge + 1, 0)),
+            Err(Refusal::Far)
+        );
+        assert_eq!(world.try_walk_to(id, Tile::new(edge, 0)), Ok(()));
     }
 }
