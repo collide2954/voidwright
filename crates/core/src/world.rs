@@ -91,6 +91,19 @@ impl World {
         self.players.get(&id).map(|player| &player.walker)
     }
 
+    #[must_use]
+    pub fn near(&self, tile: Tile, reach: u16) -> Vec<(PlayerId, &Walker)> {
+        let limit = i64::from(reach).pow(2);
+        let mut near: Vec<(PlayerId, &Walker)> = self
+            .players
+            .iter()
+            .map(|(&id, player)| (id, &player.walker))
+            .filter(|(_, walker)| walker.tile().distance_squared(tile) <= limit)
+            .collect();
+        near.sort_by_key(|&(id, walker)| (walker.tile().distance_squared(tile), id));
+        near
+    }
+
     pub fn walk_to(&mut self, id: PlayerId, target: Tile) {
         if let Some(player) = self.players.get_mut(&id) {
             let route = find_path(&self.map, player.walker.tile(), target);
@@ -326,5 +339,40 @@ mod tests {
             Err(Refusal::Far)
         );
         assert_eq!(world.try_walk_to(id, Tile::new(edge, 0)), Ok(()));
+    }
+
+    fn near(world: &World, tile: Tile, reach: u16) -> Vec<PlayerId> {
+        world
+            .near(tile, reach)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    #[test]
+    fn near_players_come_nearest_first() {
+        let mut world = World::new(fixtures::map(&["........"]));
+        let far = world.join(Tile::new(7, 0)).unwrap();
+        let close = world.join(Tile::new(2, 0)).unwrap();
+        let here = world.join(Tile::new(0, 0)).unwrap();
+        assert_eq!(near(&world, Tile::new(0, 0), 7), [here, close, far]);
+    }
+
+    #[test]
+    fn players_beyond_the_reach_are_not_near() {
+        let mut world = World::new(fixtures::map(&["........"]));
+        let here = world.join(Tile::new(0, 0)).unwrap();
+        world.join(Tile::new(7, 0)).unwrap();
+        assert_eq!(near(&world, Tile::new(0, 0), 6), [here]);
+    }
+
+    #[test]
+    fn equally_near_players_come_in_the_order_of_their_ids() {
+        let mut world = World::new(fixtures::map(&["...", "...", "..."]));
+        let ids: Vec<PlayerId> = [Tile::new(2, 1), Tile::new(0, 1)]
+            .into_iter()
+            .map(|tile| world.join(tile).unwrap())
+            .collect();
+        assert_eq!(near(&world, Tile::new(1, 1), 1), ids);
     }
 }
