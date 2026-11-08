@@ -72,8 +72,7 @@ fn weather(mesh: &mut SkinnedMesh) {
         let base = Vec3::from(vertex.color) * mottle * tone;
         let grey = Vec3::splat(base.dot(Vec3::new(0.3, 0.59, 0.11)));
         let faded = grey.lerp(base, 0.55) * 1.3;
-        let grime = 1.0 - 0.35 * smoothstep(0.6, 0.15, at.y);
-        let dusting = 0.45 * smoothstep(0.22, 0.0, at.y);
+        let (grime, dusting) = soil(at, Vec3::from(vertex.normal));
         let color = base
             .lerp(faded, 0.45 * bleach)
             .lerp(grey.lerp(base, 0.6) * 1.7, 0.6 * scuff)
@@ -86,6 +85,15 @@ fn weather(mesh: &mut SkinnedMesh) {
         let gain = (1.15 + 0.5 * (swell - mean)) * (1.0 - 0.4 * (scuff + polish));
         vertex.surface = (Vec4::from(vertex.surface) * gain).to_array();
     }
+}
+
+fn soil(at: Vec3, normal: Vec3) -> (f32, f32) {
+    let splash = noise3(at * 7.0, 17) - 0.5;
+    let grime = 1.0 - 0.35 * smoothstep(0.6, 0.15, at.y + 0.16 * splash);
+    let patches = smoothstep(0.25, 0.75, noise3(at * 25.0, 18));
+    let settle = 0.6 + 0.4 * normal.y.max(-normal.z).max(0.0);
+    let dusting = 0.5 * smoothstep(0.22, 0.0, at.y) * (0.55 + 0.45 * patches) * settle;
+    (grime, dusting)
 }
 
 fn bends(mesh: &SkinnedMesh) -> Vec<f32> {
@@ -955,7 +963,7 @@ fn lantern() -> Sculpt {
 
 #[cfg(test)]
 mod tests {
-    use super::{DUST, voidwright, weather};
+    use super::{DUST, soil, voidwright, weather};
     use crate::figure::{BONES, Bone, JOINTS, LANTERN_BONE};
     use crate::palette::linear;
     use crate::sculpt::{SkinnedMesh, SkinnedVertex};
@@ -1243,6 +1251,41 @@ mod tests {
         let shine = |vertex: &SkinnedVertex| vertex.params[0];
         assert!(average(&ball(0.01, metal), shine) > average(&ball(0.4, metal), shine) + 0.05);
         assert!(average(&ball(0.01, leather), shine) < average(&ball(0.4, leather), shine) - 0.02);
+    }
+
+    fn row(height: f32) -> impl Iterator<Item = Vec3> {
+        (0..120_u16).map(move |step| {
+            let along = f32::from(step) * 0.01;
+            Vec3::new(along - 0.6, height, -0.15 + 0.3 * (along * 7.0).sin())
+        })
+    }
+
+    fn spread(values: impl Iterator<Item = f32>) -> (f32, f32) {
+        values.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| {
+            (low.min(value), high.max(value))
+        })
+    }
+
+    #[test]
+    fn grime_climbs_the_hem_in_an_uneven_line() {
+        let grime = |at: Vec3| soil(at, Vec3::NEG_Z).0;
+        let (low, high) = spread(row(1.2).map(grime));
+        assert!(low > 0.999 && high <= 1.0);
+        let (low, high) = spread(row(0.02).map(grime));
+        assert!(low > 0.6 && high < 0.7, "{low} {high}");
+        let (low, high) = spread(row(0.375).map(grime));
+        assert!(high - low > 0.08, "{low} {high}");
+    }
+
+    #[test]
+    fn dust_settles_in_patches_on_faces_that_look_up_or_ahead() {
+        let dusting = |normal: Vec3| move |at: Vec3| soil(at, normal).1;
+        let (low, high) = spread(row(0.03).map(dusting(Vec3::Y)));
+        assert!(high - low > 0.1 && low > 0.15, "{low} {high}");
+        let mean = |normal: Vec3| row(0.03).map(dusting(normal)).sum::<f32>();
+        assert!(mean(Vec3::Y) > mean(Vec3::X) * 1.2);
+        assert!(mean(Vec3::NEG_Z) > mean(Vec3::X) * 1.2);
+        assert!(row(0.3).map(dusting(Vec3::Y)).all(|dust| dust == 0.0));
     }
 
     #[test]
