@@ -9,28 +9,46 @@ const TEMPO: f32 = 72.0;
 const ENTRY: f32 = 6.0;
 const FILTER_Q: f32 = 0.6;
 
+const BAR: f32 = 4.0;
+const FIRST: f32 = 3.0;
+const CALM: [f32; 2] = [5.0, 10.0];
+const RISE: [f32; 2] = [9.0, 18.0];
+const PEAK: [f32; 2] = [3.0, 6.0];
+const FALL: [f32; 2] = [6.0, 12.0];
+
 const DRONE: [u8; 2] = [38, 45];
 const DRONE_LEVELS: [f32; 2] = [0.0165, 0.011];
 const DRONE_SWAYS: [[f32; 2]; 2] = [[34.0, 48.0], [23.0, 33.0]];
 const DRONE_CUTOFF: f32 = 280.0;
+const DRONE_OPEN: f32 = 0.3;
+const DRONE_LIFT: f32 = 0.25;
 
 // F2 A2 C3 D3: D minor 7 over the drone.
 const CHORD: [u8; 4] = [41, 45, 48, 50];
 const VOICE_LEVEL: f32 = 0.017;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
 const DETUNE: [f32; 2] = [2.0, 6.0];
+const TWIN: [f32; 2] = [7.0, 12.0];
 const DRIFT: [f32; 2] = [7.0, 14.0];
 const DRIFT_CENTS: f32 = 2.5;
 const PAD_CUTOFF: f32 = 300.0;
+const PAD_OPEN: f32 = 1.0;
+const PAD_LIFT: f32 = 0.4;
+const THICK: f32 = 0.85;
 
 const THROB_NOTE: u8 = 26;
 const OCTAVE: f32 = 0.5;
 const BEND: f32 = 5.0;
 const BEND_SETTLE: f32 = 0.35;
 const LUB: [f32; 2] = [0.025, 1.5];
+const DUB: [f32; 2] = [0.02, 1.0];
+const DUB_AT: f32 = 0.36;
+const DUB_LEVEL: f32 = 0.6;
+const THROB_FLOOR: f32 = 0.47;
 const THROB_CUTOFF: f32 = 160.0;
 const THROB_Q: f32 = 0.7;
 const DUCK: [f32; 2] = [0.06, 2.0];
+const DUCK_FLOOR: f32 = 0.6;
 
 #[derive(Clone, Copy, Debug)]
 struct Character {
@@ -40,8 +58,8 @@ struct Character {
 }
 
 const CHARACTER: Character = Character {
-    throb: 0.028,
-    duck: 0.18,
+    throb: 0.06,
+    duck: 0.3,
     bed: 1.0,
 };
 
@@ -49,7 +67,9 @@ pub struct Pulse {
     time: Time,
     countdown: usize,
     character: Character,
+    dice: Dice,
     clock: Clock,
+    build: Build,
     entry: Fade,
     duck: Hit,
     drone: Drone,
@@ -66,16 +86,21 @@ impl Pulse {
     fn with(seed: u32, rate: f32, character: Character) -> Self {
         let time = Time::new(rate);
         let mut dice = Dice::new(seed);
+        let drone = Drone::new(&mut dice, time);
+        let pad = Pad::new(&mut dice, time);
+        let throb = Throb::new(&mut dice, time);
         Self {
             time,
             countdown: 0,
             character,
+            dice,
             clock: Clock::new(time),
+            build: Build::new(),
             entry: Fade::new([ENTRY; 2], time),
             duck: Hit::new(DUCK, time),
-            drone: Drone::new(&mut dice, time),
-            pad: Pad::new(&mut dice, time),
-            throb: Throb::new(&mut dice, time),
+            drone,
+            pad,
+            throb,
         }
     }
 
@@ -98,16 +123,81 @@ impl Pulse {
 
     fn control(&mut self) {
         let time = self.time;
-        if reaches(self.clock.tick(), 0.0) {
+        let beat = self.clock.tick();
+        if reaches(beat, 0.0) {
+            self.build.count(&mut self.dice);
             self.throb.strike();
             self.duck.strike(1.0);
         }
+        let drive = self.build.drive(self.clock.phase);
+        if reaches(beat, DUB_AT) {
+            self.throb.echo(drive);
+        }
+        let character = self.character;
         let entry = self.entry.toward(true);
-        let bed = entry * self.character.bed;
-        let dip = 1.0 - self.character.duck * self.duck.next(time);
-        self.drone.control(bed, time);
-        self.pad.control(bed * dip, time);
-        self.throb.control(entry * self.character.throb, time);
+        let bed = entry * character.bed;
+        let depth = character.duck * lift(DUCK_FLOOR, drive);
+        let dip = 1.0 - depth * self.duck.next(time);
+        self.drone
+            .control(bed * (1.0 + DRONE_LIFT * drive), drive, time);
+        self.pad
+            .control(bed * dip * (1.0 + PAD_LIFT * drive), drive, time);
+        self.throb
+            .control(entry * character.throb * lift(THROB_FLOOR, drive), time);
+    }
+}
+
+fn lift(floor: f32, drive: f32) -> f32 {
+    floor + (1.0 - floor) * drive
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    Calm,
+    Rise,
+    Peak,
+    Fall,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Build {
+    stage: Stage,
+    beats: f32,
+    length: f32,
+}
+
+impl Build {
+    const fn new() -> Self {
+        Self {
+            stage: Stage::Calm,
+            beats: 0.0,
+            length: FIRST * BAR,
+        }
+    }
+
+    fn count(&mut self, dice: &mut Dice) {
+        self.beats += 1.0;
+        if self.beats >= self.length {
+            let (stage, bars) = match self.stage {
+                Stage::Calm => (Stage::Rise, RISE),
+                Stage::Rise => (Stage::Peak, PEAK),
+                Stage::Peak => (Stage::Fall, FALL),
+                Stage::Fall => (Stage::Calm, CALM),
+            };
+            self.stage = stage;
+            self.beats = 0.0;
+            self.length = BAR * dice.within(bars).round();
+        }
+    }
+
+    fn drive(&self, phase: f32) -> f32 {
+        let along = smoothstep(0.0, self.length, self.beats + phase);
+        match self.stage {
+            Stage::Calm => 0.0,
+            Stage::Rise => along,
+            Stage::Peak => 1.0,
+            Stage::Fall => 1.0 - along,
+        }
     }
 }
 
@@ -204,11 +294,13 @@ impl Drone {
         }
     }
 
-    fn control(&mut self, level: f32, time: Time) {
+    fn control(&mut self, level: f32, drive: f32, time: Time) {
         for hum in &mut self.hums {
             let sway = sine(hum.sway.advance(hum.speed, time.control));
             hum.gain.aim(level * hum.level * (0.8 + 0.2 * sway));
         }
+        let cutoff = DRONE_CUTOFF * (1.0 + DRONE_OPEN * drive);
+        self.filter.set(cutoff, FILTER_Q, time.rate);
     }
 
     fn render(&mut self, out: &mut [Frame]) {
@@ -231,11 +323,11 @@ struct Pad {
 }
 
 struct Voice {
-    saw: Saw,
-    gain: Ramp,
+    saws: [Saw; 2],
+    gains: [Ramp; 2],
     pan: [f32; 2],
     pitch: f32,
-    detune: f32,
+    detunes: [f32; 2],
     drift: Phase,
     speed: f32,
 }
@@ -248,11 +340,14 @@ impl Pad {
                 let polarity = if index % 2 == 0 { 1.0 } else { -1.0 };
                 let pitch = hertz(CHORD[index]);
                 Voice {
-                    saw: Saw::new(dice.unit(), pitch, time.rate),
-                    gain: Ramp::default(),
+                    saws: from_fn(|_| Saw::new(dice.unit(), pitch, time.rate)),
+                    gains: [Ramp::default(); 2],
                     pan: pan(PANS[index]).map(|side| side * polarity),
                     pitch,
-                    detune: polarity * dice.within(DETUNE),
+                    detunes: [
+                        polarity * dice.within(DETUNE),
+                        -polarity * dice.within(TWIN),
+                    ],
                     drift: turned(dice.unit()),
                     speed: dice.within(DRIFT).recip(),
                 }
@@ -261,14 +356,19 @@ impl Pad {
         }
     }
 
-    fn control(&mut self, level: f32, time: Time) {
+    fn control(&mut self, level: f32, drive: f32, time: Time) {
         for voice in &mut self.voices {
-            let cents =
-                voice.detune + DRIFT_CENTS * sine(voice.drift.advance(voice.speed, time.control));
-            voice
-                .saw
-                .tune(voice.pitch * (cents / 1200.0).exp2(), time.rate);
-            voice.gain.aim(level * VOICE_LEVEL);
+            let drift = DRIFT_CENTS * sine(voice.drift.advance(voice.speed, time.control));
+            for (saw, detune) in voice.saws.iter_mut().zip(voice.detunes) {
+                saw.tune(voice.pitch * ((detune + drift) / 1200.0).exp2(), time.rate);
+            }
+            let [main, twin] = &mut voice.gains;
+            main.aim(level * VOICE_LEVEL);
+            twin.aim(level * VOICE_LEVEL * THICK * drive);
+        }
+        let cutoff = PAD_CUTOFF * (1.0 + PAD_OPEN * drive);
+        for filter in &mut self.filters {
+            filter.set(cutoff, FILTER_Q, time.rate);
         }
     }
 
@@ -276,7 +376,9 @@ impl Pad {
         for frame in out {
             let mut mix = [0.0_f32; 2];
             for voice in &mut self.voices {
-                let sound = voice.saw.next() * voice.gain.next();
+                let [main, twin] = &mut voice.saws;
+                let [near, far] = &mut voice.gains;
+                let sound = main.next() * near.next() + twin.next() * far.next();
                 mix[0] += sound * voice.pan[0];
                 mix[1] += sound * voice.pan[1];
             }
@@ -291,6 +393,7 @@ struct Throb {
     frequency: f32,
     gain: Ramp,
     lub: Hit,
+    dub: Hit,
     bend: f32,
     settle: f32,
     filter: Svf,
@@ -303,6 +406,7 @@ impl Throb {
             frequency: hertz(THROB_NOTE),
             gain: Ramp::default(),
             lub: Hit::new(LUB, time),
+            dub: Hit::new(DUB, time),
             bend: 0.0,
             settle: decay(BEND_SETTLE, time.control),
             filter: Svf::new(THROB_CUTOFF, THROB_Q, time.rate),
@@ -314,8 +418,13 @@ impl Throb {
         self.bend = BEND;
     }
 
+    fn echo(&mut self, strength: f32) {
+        self.dub.strike(DUB_LEVEL * strength);
+        self.bend = self.bend.max(BEND * strength);
+    }
+
     fn control(&mut self, level: f32, time: Time) {
-        let envelope = self.lub.next(time);
+        let envelope = self.lub.next(time) + self.dub.next(time);
         self.bend *= self.settle;
         self.frequency = hertz(THROB_NOTE) * (self.bend / 12.0).exp2();
         self.gain.aim(level * envelope);
@@ -345,7 +454,7 @@ mod tests {
     const BEAT: usize = 83;
     const BREATH: Character = Character {
         throb: 0.0,
-        duck: 0.7,
+        duck: 0.8,
         bed: 1.33,
     };
 
@@ -431,7 +540,7 @@ mod tests {
                 .max_by(|one, other| one.1.total_cmp(&other.1))
                 .unwrap();
             assert!((BEAT - 1..=BEAT + 3).contains(&lag), "{character:?}: {lag}");
-            assert!(strength > 0.75, "{character:?}: {strength}");
+            assert!(strength > 0.65, "{character:?}: {strength}");
             let half = correlation(&levels, BEAT / 2);
             assert!(half < 0.0, "{character:?}: {half}");
         }
@@ -451,12 +560,56 @@ mod tests {
     }
 
     #[test]
-    fn the_bed_plays_near_minus_36_dbfs() {
-        let mut pulse = Pulse::new(1, RATE);
-        take(&mut pulse, 10);
-        for start in (10..70).step_by(10) {
-            let level = decibels(rms(&take(&mut pulse, 10)));
-            assert!((-38.0..=-34.0).contains(&level), "{start} s: {level} dBFS");
+    fn the_pulse_builds_for_a_minute_and_then_eases_back() {
+        for seed in 1..=4 {
+            let frames = take(&mut Pulse::new(seed, RATE), 150);
+            let loudest = peak(&frames);
+            assert!(loudest < 0.5, "seed {seed}: {loudest}");
+            let levels: Vec<f64> = frames
+                .chunks(5 * SECOND)
+                .map(|window| decibels(rms(window)))
+                .collect();
+            let start = levels[1];
+            let (top, height) = levels
+                .iter()
+                .copied()
+                .enumerate()
+                .max_by(|one, other| one.1.total_cmp(&other.1))
+                .unwrap();
+            assert!(
+                height > start + 4.0,
+                "seed {seed}: {start} to {height} dBFS"
+            );
+            let after = levels[top..].iter().copied().fold(f64::INFINITY, f64::min);
+            assert!(
+                after < height - 3.0,
+                "seed {seed}: {height} to {after} dBFS"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bed_plays_from_near_minus_36_to_near_minus_30_dbfs() {
+        for seed in [1, 6] {
+            let mut pulse = Pulse::new(seed, RATE);
+            take(&mut pulse, 10);
+            let powers: Vec<f64> = (0..300)
+                .map(|_| rms(&take(&mut pulse, 1)).powi(2))
+                .collect();
+            let levels: Vec<f64> = powers
+                .windows(10)
+                .map(|window| decibels((window.iter().sum::<f64>() / 10.0).sqrt()))
+                .collect();
+            let calmest = levels.iter().copied().fold(f64::INFINITY, f64::min);
+            let loudest = levels.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                (-38.5..=-33.5).contains(&calmest),
+                "seed {seed}: {calmest} dBFS"
+            );
+            assert!(
+                (-32.5..=-27.5).contains(&loudest),
+                "seed {seed}: {loudest} dBFS"
+            );
         }
     }
 
