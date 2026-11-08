@@ -79,6 +79,7 @@ impl Cloth {
             self.started = true;
             return;
         }
+        let seconds = seconds.min(STEP * f32::from(MOST_STEPS));
         let steps = (seconds / STEP).ceil().clamp(1.0, f32::from(MOST_STEPS));
         let step = seconds / steps;
         let mut left = seconds;
@@ -241,6 +242,19 @@ mod tests {
             for point in 0..3 {
                 let rest = cloth.rest()[strip][point] + Vec3::Y;
                 assert!(cloth.points()[strip][point].distance(rest) < 0.03);
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_frame_keeps_a_still_coat_calm() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 180);
+        let settled = *cloth.points();
+        cloth.update(waist(Vec3::Y), &[], 1.0);
+        for (strip, before) in cloth.points().iter().zip(&settled) {
+            for (point, was) in strip.iter().zip(before) {
+                assert!(point.distance(*was) < 0.01, "{point} {was}");
             }
         }
     }
