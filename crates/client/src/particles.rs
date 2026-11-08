@@ -1,7 +1,9 @@
 use glam::{Vec2, Vec4};
 use voidwright_core::Rng;
 
+const SEED: u64 = 0x5350_4543_4b53;
 const STEP: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
+const QUAD: [u32; 6] = [0, 1, 3, 0, 3, 2];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Swarm {
@@ -12,6 +14,38 @@ pub const SPORES: Swarm = Swarm { count: 400 };
 pub const MOTES: Swarm = Swarm { count: 600 };
 pub const EMBERS: Swarm = Swarm { count: 6 };
 pub const SWARMS: [Swarm; 3] = [SPORES, MOTES, EMBERS];
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpeckVertex {
+    pub seed: [f32; 4],
+    pub corner: f32,
+    pub kind: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Specks {
+    pub vertices: Vec<SpeckVertex>,
+    pub indices: Vec<u32>,
+}
+
+#[must_use]
+pub fn specks() -> Specks {
+    let mut rng = Rng::new(SEED);
+    let mut specks = Specks::default();
+    for (kind, swarm) in (0_u8..).zip(SWARMS) {
+        for seed in seeds(swarm.count, &mut rng) {
+            let base = u32::try_from(specks.vertices.len()).expect("the specks fit in u32");
+            specks.indices.extend(QUAD.map(|corner| base + corner));
+            specks.vertices.extend((0_u8..4).map(|corner| SpeckVertex {
+                seed: seed.to_array(),
+                corner: f32::from(corner),
+                kind: f32::from(kind),
+            }));
+        }
+    }
+    specks
+}
 
 #[must_use]
 pub fn seeds(count: usize, rng: &mut Rng) -> Vec<Vec4> {
@@ -31,13 +65,79 @@ fn unit(rng: &mut Rng) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SWARMS, seeds};
+    use super::{SWARMS, seeds, specks};
     use glam::Vec4;
     use voidwright_core::Rng;
+
+    fn total() -> usize {
+        SWARMS.iter().map(|swarm| swarm.count).sum()
+    }
 
     #[test]
     fn spores_motes_and_embers_have_their_counts() {
         assert_eq!(SWARMS.map(|swarm| swarm.count), [400, 600, 6]);
+    }
+
+    #[test]
+    fn each_speck_is_a_quad_of_four_numbered_corners() {
+        let specks = specks();
+        assert_eq!(specks.vertices.len(), total() * 4);
+        for quad in specks.vertices.as_chunks::<4>().0 {
+            assert_eq!(quad.map(|vertex| vertex.corner), [0.0, 1.0, 2.0, 3.0]);
+            for vertex in quad {
+                assert_eq!(vertex.seed, quad[0].seed);
+                assert_eq!(vertex.kind.to_bits(), quad[0].kind.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn two_triangles_cover_each_quad() {
+        let specks = specks();
+        assert_eq!(specks.indices.len(), total() * 6);
+        for (base, triangles) in (0_u32..).step_by(4).zip(specks.indices.as_chunks::<6>().0) {
+            assert_eq!(*triangles, [0, 1, 3, 0, 3, 2].map(|corner| base + corner));
+        }
+    }
+
+    #[test]
+    fn the_specks_of_each_swarm_carry_its_kind() {
+        let specks = specks();
+        let kinds: Vec<f32> = specks
+            .vertices
+            .iter()
+            .step_by(4)
+            .map(|vertex| vertex.kind)
+            .collect();
+        let mut start = 0;
+        for (kind, swarm) in [0.0_f32, 1.0, 2.0].into_iter().zip(SWARMS) {
+            let swarm_kinds = &kinds[start..start + swarm.count];
+            assert!(
+                swarm_kinds
+                    .iter()
+                    .all(|value| value.to_bits() == kind.to_bits())
+            );
+            start += swarm.count;
+        }
+    }
+
+    #[test]
+    fn no_two_specks_share_a_seed() {
+        let specks = specks();
+        let mut seeds: Vec<[u32; 4]> = specks
+            .vertices
+            .iter()
+            .step_by(4)
+            .map(|vertex| vertex.seed.map(f32::to_bits))
+            .collect();
+        seeds.sort_unstable();
+        seeds.dedup();
+        assert_eq!(seeds.len(), total());
+    }
+
+    #[test]
+    fn the_buffer_is_the_same_on_every_start() {
+        assert_eq!(specks(), specks());
     }
 
     #[test]
