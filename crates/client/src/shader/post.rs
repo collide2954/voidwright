@@ -64,12 +64,18 @@ pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
 pub mod composite {
     use miniquad::{ShaderMeta, UniformBlockLayout};
 
+    pub const VIGNETTE: f32 = 0.2;
+
     pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform sampler2D scene;
 varying highp vec2 uv;
+const float VIGNETTE = 0.2;
 void main() {
-    gl_FragColor = vec4(texture2D(scene, uv).rgb, 1.0);
+    highp vec2 centered = uv * 2.0 - 1.0;
+    float corner = 0.5 * dot(centered, centered);
+    float shade = 1.0 - VIGNETTE * corner * corner;
+    gl_FragColor = vec4(texture2D(scene, uv).rgb * shade, 1.0);
 }
 ";
 
@@ -85,7 +91,45 @@ void main() {
 
     #[cfg(test)]
     mod tests {
-        use super::{FRAGMENT, meta};
+        use super::{FRAGMENT, VIGNETTE, meta};
+        use glam::Vec2;
+
+        fn shade(uv: Vec2) -> f32 {
+            let centered = uv * 2.0 - 1.0;
+            let corner = 0.5 * centered.dot(centered);
+            1.0 - VIGNETTE * corner * corner
+        }
+
+        #[test]
+        fn the_vignette_matches_the_rust_copy() {
+            assert!(FRAGMENT.contains(&format!("const float VIGNETTE = {VIGNETTE:?};")));
+            assert!(FRAGMENT.contains("highp vec2 centered = uv * 2.0 - 1.0;"));
+            assert!(FRAGMENT.contains("float corner = 0.5 * dot(centered, centered);"));
+            assert!(FRAGMENT.contains("1.0 - VIGNETTE * corner * corner"));
+        }
+
+        #[test]
+        fn the_vignette_leaves_the_middle_and_darkens_the_corners() {
+            assert!((shade(Vec2::splat(0.5)) - 1.0).abs() < 1e-6);
+            for corner in [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE] {
+                assert!((shade(corner) - (1.0 - VIGNETTE)).abs() < 1e-6);
+            }
+        }
+
+        #[test]
+        fn the_vignette_grows_toward_the_corners() {
+            let along: Vec<f32> = (0..=50_u8)
+                .map(|step| shade(Vec2::splat(0.5 - f32::from(step) / 100.0)))
+                .collect();
+            assert!(along.windows(2).all(|pair| pair[1] <= pair[0]));
+        }
+
+        #[test]
+        fn the_vignette_stays_subtle() {
+            assert!((0.1..=0.25).contains(&VIGNETTE));
+            assert!(shade(Vec2::new(0.5, 0.0)) > 0.94);
+            assert!(shade(Vec2::new(0.25, 0.25)) > 0.98);
+        }
 
         #[test]
         fn the_shader_uses_glsl_100() {
