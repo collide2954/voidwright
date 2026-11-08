@@ -2,6 +2,8 @@ use std::f32::consts::TAU;
 
 use glam::{Mat4, Quat, Vec3};
 
+use crate::spline::smoothstep;
+
 pub const STRIPS: usize = 8;
 pub const CLOTH_BONES: usize = STRIPS * 2;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
@@ -12,6 +14,7 @@ const SHAPE: f32 = 4.0;
 const ITERATIONS: usize = 4;
 const RING: f32 = 0.6;
 const MARGIN: f32 = 0.015;
+const BAND: f32 = 0.07;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Capsule {
@@ -139,6 +142,36 @@ impl Cloth {
         })
     }
 
+    #[must_use]
+    pub fn weights(&self, point: Vec3) -> [(usize, f32); 4] {
+        let turn = |at: Vec3| at.z.atan2(at.x).rem_euclid(TAU);
+        let angles = self.rest.map(|strip| turn(strip[0]));
+        let at = turn(point);
+        let first = (0..STRIPS)
+            .rev()
+            .find(|&strip| angles[strip] <= at)
+            .unwrap_or(STRIPS - 1);
+        let next = (first + 1) % STRIPS;
+        let span = (angles[next] - angles[first]).rem_euclid(TAU);
+        let share = ((at - angles[first]).rem_euclid(TAU) / span).clamp(0.0, 1.0);
+        let share = if joined(first) {
+            share
+        } else {
+            f32::from(share >= 0.5)
+        };
+        let pair = |strip: usize, share: f32| {
+            let knee = -self.rest[strip][1].y;
+            let low = smoothstep(knee - BAND, knee + BAND, -point.y);
+            [
+                (strip * 2, share * (1.0 - low)),
+                (strip * 2 + 1, share * low),
+            ]
+        };
+        let [upper, lower] = pair(first, 1.0 - share);
+        let [next_upper, next_lower] = pair(next, share);
+        [upper, lower, next_upper, next_lower]
+    }
+
     fn hold_lengths(&mut self, strip: usize) {
         let rest = self.rest[strip];
         let [anchor, knee, hem] = self.points[strip];
@@ -243,6 +276,64 @@ mod tests {
                 let rest = cloth.rest()[strip][point] + Vec3::Y;
                 assert!(cloth.points()[strip][point].distance(rest) < 0.03);
             }
+        }
+    }
+
+    fn weight(weights: &[(usize, f32); 4], bone: usize) -> f32 {
+        weights
+            .iter()
+            .filter(|(at, _)| *at == bone)
+            .map(|(_, weight)| weight)
+            .sum()
+    }
+
+    #[test]
+    fn a_point_high_on_a_strip_follows_its_upper_segment() {
+        let cloth = Cloth::hanging(COAT);
+        let [anchor, knee, _] = cloth.rest()[3];
+        let weights = cloth.weights(anchor.lerp(knee, 0.3));
+        assert!(weight(&weights, 6) > 0.999);
+    }
+
+    #[test]
+    fn a_point_at_the_hem_follows_the_lower_segment() {
+        let cloth = Cloth::hanging(COAT);
+        let weights = cloth.weights(cloth.rest()[3][2]);
+        assert!(weight(&weights, 7) > 0.999);
+    }
+
+    #[test]
+    fn a_point_between_joined_strips_shares_them() {
+        let cloth = Cloth::hanging(COAT);
+        let weights = cloth.weights(Vec3::new(-0.2, -0.1, 0.0));
+        assert!((weight(&weights, 6) - 0.5).abs() < 0.01);
+        assert!((weight(&weights, 8) - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_point_beside_a_slit_keeps_to_its_own_side() {
+        let cloth = Cloth::hanging(COAT);
+        for (x, z, bone) in [(-0.01, -0.13, 10), (0.01, -0.13, 12), (-0.01, 0.13, 4)] {
+            let weights = cloth.weights(Vec3::new(x, -0.1, z));
+            assert!(weight(&weights, bone) > 0.999, "{x} {z}");
+        }
+    }
+
+    #[test]
+    fn the_weights_of_every_point_add_up_to_one() {
+        let cloth = Cloth::hanging(COAT);
+        for step in 0..360_u16 {
+            let angle = f32::from(step).to_radians();
+            let depth = f32::from(step % 70) * 0.01;
+            let point = Vec3::new(0.2 * angle.cos(), -depth, 0.16 * angle.sin());
+            let weights = cloth.weights(point);
+            let total: f32 = weights.iter().map(|(_, weight)| weight).sum();
+            assert!((total - 1.0).abs() < 1e-5);
+            assert!(
+                weights
+                    .iter()
+                    .all(|(bone, weight)| *weight >= 0.0 && *bone < 16)
+            );
         }
     }
 
