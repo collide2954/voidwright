@@ -1,4 +1,5 @@
 use std::f32::consts::TAU;
+use std::ops::Range;
 
 use glam::{IVec3, Vec3};
 use voidwright_core::Rng;
@@ -12,6 +13,9 @@ pub const FRAGMENTS: usize = 8;
 const DOME_SEGMENTS: u16 = 48;
 const DOME_RINGS: u16 = 24;
 const STAR_SEED: u64 = 0x5354_4152;
+const TWINKLE_SEED: u64 = 0x5457_494e_4b4c;
+const TWINKLE_RATES: Range<f32> = 0.3..0.9;
+const STILL: [f32; 2] = [0.0; 2];
 const FRAGMENT_SEED: u64 = 0x4652_4147;
 const ZENITH: Vec3 = Vec3::new(0.03, 0.025, 0.08);
 const HORIZON: Vec3 = Vec3::new(0.08, 0.05, 0.15);
@@ -67,9 +71,11 @@ impl Backdrop {
 #[must_use]
 pub fn sky() -> Backdrop {
     let mut backdrop = Backdrop::default();
-    for part in [dome(), vael(), stars(), fragments()] {
-        backdrop.add(&part, |_| [0.0; 2]);
-    }
+    backdrop.add(&dome(), |_| STILL);
+    backdrop.add(&vael(), |_| STILL);
+    let twinkles = twinkles();
+    backdrop.add(&stars(), |vertex| twinkles[vertex / 4]);
+    backdrop.add(&fragments(), |_| STILL);
     backdrop
 }
 
@@ -132,6 +138,17 @@ pub fn stars() -> Mesh {
         mesh.face([indices[0], indices[2], indices[3]]);
     }
     mesh
+}
+
+fn twinkles() -> Vec<[f32; 2]> {
+    let mut rng = Rng::new(TWINKLE_SEED);
+    (0..STAR_COUNT)
+        .map(|_| {
+            let phase = TAU * unit(&mut rng);
+            let rate = lerp(TWINKLE_RATES.start, TWINKLE_RATES.end, unit(&mut rng));
+            [phase, rate]
+        })
+        .collect()
 }
 
 #[must_use]
@@ -285,10 +302,12 @@ fn lerp(from: f32, to: f32, weight: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FRAGMENTS, SKY_RADIUS, STAR_COUNT, dome, fragments, noise3, sky, sky_color, stars, vael,
+        FRAGMENTS, SKY_RADIUS, STAR_COUNT, TWINKLE_RATES, dome, fragments, noise3, sky, sky_color,
+        stars, vael,
     };
     use crate::{VAEL, normal};
     use glam::Vec3;
+    use std::f32::consts::TAU;
     use std::ops::Range;
 
     fn parts() -> [Range<usize>; 4] {
@@ -321,6 +340,67 @@ mod tests {
         let [dome, vael, _, fragments] = parts();
         for index in dome.chain(vael).chain(fragments) {
             assert_eq!(backdrop.vertices[index].twinkle, [0.0; 2]);
+        }
+    }
+
+    fn twinkles() -> Vec<[f32; 2]> {
+        let backdrop = sky();
+        let [.., stars, _] = parts();
+        backdrop.vertices[stars]
+            .iter()
+            .step_by(4)
+            .map(|vertex| vertex.twinkle)
+            .collect()
+    }
+
+    #[test]
+    fn every_star_has_a_phase_and_a_slow_rate() {
+        let twinkles = twinkles();
+        assert_eq!(twinkles.len(), STAR_COUNT);
+        for [phase, rate] in twinkles {
+            assert!((0.0..TAU).contains(&phase), "{phase}");
+            assert!(TWINKLE_RATES.contains(&rate), "{rate}");
+        }
+        const { assert!(TWINKLE_RATES.start > 0.1 && TWINKLE_RATES.end < 1.5) };
+    }
+
+    #[test]
+    fn the_four_corners_of_a_star_twinkle_together() {
+        let backdrop = sky();
+        let [.., stars, _] = parts();
+        for corners in backdrop.vertices[stars].as_chunks::<4>().0 {
+            for corner in corners {
+                assert_eq!(corner.twinkle, corners[0].twinkle);
+            }
+        }
+    }
+
+    #[test]
+    fn stars_twinkle_out_of_step() {
+        let twinkles = twinkles();
+        for quarter in 0..4_u8 {
+            let low = TAU * f32::from(quarter) / 4.0;
+            let count = twinkles
+                .iter()
+                .filter(|[phase, _]| (low..low + TAU / 4.0).contains(phase))
+                .count();
+            assert!((300..=450).contains(&count), "{count}");
+        }
+        let middle = TWINKLE_RATES.start.midpoint(TWINKLE_RATES.end);
+        let slow = twinkles.iter().filter(|[_, rate]| *rate < middle).count();
+        assert!((600..=900).contains(&slow), "{slow}");
+    }
+
+    #[test]
+    fn the_twinkle_leaves_the_stars_in_place() {
+        let backdrop = sky();
+        let [.., stars, _] = parts();
+        for (vertex, star) in backdrop.vertices[stars]
+            .iter()
+            .zip(&super::stars().vertices)
+        {
+            assert_eq!(vertex.position, star.position);
+            assert_eq!(vertex.color, star.color);
         }
     }
 

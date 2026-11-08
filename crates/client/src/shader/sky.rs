@@ -77,7 +77,7 @@ impl Uniforms {
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, attributes, meta};
     use crate::shader::baked;
-    use crate::sky::SkyVertex;
+    use crate::sky::{STAR_COUNT, SkyVertex, sky};
     use glam::{Mat4, Vec3};
     use miniquad::{UniformDesc, UniformType, VertexFormat};
     use std::f32::consts::TAU;
@@ -206,5 +206,47 @@ mod tests {
             }
         }
         const { assert!(TWINKLE < 0.5) };
+    }
+
+    fn stars() -> Vec<[f32; 2]> {
+        let stars: Vec<[f32; 2]> = sky()
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.twinkle[1] > 0.0)
+            .step_by(4)
+            .map(|vertex| vertex.twinkle)
+            .collect();
+        assert_eq!(stars.len(), STAR_COUNT);
+        stars
+    }
+
+    #[test]
+    fn every_star_dims_and_brightens_within_limits() {
+        for star in stars() {
+            let glints: Vec<f32> = times().map(|time| glint(star, time)).collect();
+            let [dim, bright] = glints
+                .iter()
+                .fold([f32::MAX, f32::MIN], |[low, high], &glint| {
+                    [low.min(glint), high.max(glint)]
+                });
+            assert!(
+                dim >= 1.0 - TWINKLE && bright <= 1.0 + TWINKLE,
+                "{dim} {bright}"
+            );
+            assert!(bright - dim > TWINKLE, "{dim} {bright}");
+            for pair in glints.windows(2) {
+                assert!((pair[1] - pair[0]).abs() < 0.08, "{pair:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_star_field_keeps_a_steady_brightness() {
+        let stars = stars();
+        let count = f32::from(u16::try_from(stars.len()).unwrap());
+        for time in times().step_by(10) {
+            let mean = stars.iter().map(|&star| glint(star, time)).sum::<f32>() / count;
+            assert!((mean - 1.0).abs() < 0.03, "{time} {mean}");
+        }
     }
 }
