@@ -4,6 +4,7 @@ pub mod dsp;
 pub mod footstep;
 pub mod lantern;
 pub mod mixer;
+pub mod music;
 pub mod output;
 pub mod reverb;
 pub mod ring;
