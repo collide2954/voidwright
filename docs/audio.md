@@ -47,6 +47,7 @@ This document gives the design of the sound and the music of Voidwright.
 | --- | --- |
 | Style | Dark, textural ambient music: deep drones and a low, slow, dark pad. There is no melody. Silence is part of the music. |
 | Layers | Each place has a quiet bed of drones and pads. At a discovery, for example a new island or a landmark, the pad swells and opens a little, and then settles. A low pulse layer fades in during danger. |
+| Pulse | A second piece has a slow pulse at 72 beats a minute in D phrygian. It builds for 30 to 60 s, stays at its peak for 10 to 20 s, and then eases back for 20 to 40 s. As it builds, the pad opens and becomes thicker, and its chords move to E-flat over the D drone. The piece has three characters. Heartbeat has a soft, deep throb on each beat. Breath has a deep dip of the pad on each beat. Ostinato has a low, muted figure of four notes, with one note on each beat. The game does not play the pulse piece yet. |
 | Rests | The bed plays for some minutes and then stops for some minutes. |
 | Notes | The note data is in Rust code. Code synthesizes all instruments. |
 

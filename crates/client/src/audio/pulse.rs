@@ -68,26 +68,53 @@ const FIGURE_OPEN: f32 = 2.0;
 const FIGURE_Q: f32 = 0.9;
 const FIGURE_FLOOR: f32 = 0.45;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Character {
+    Heartbeat,
+    Breath,
+    Ostinato,
+}
+
+impl Character {
+    pub const ALL: [Self; 3] = [Self::Heartbeat, Self::Breath, Self::Ostinato];
+
+    const fn mix(self) -> Mix {
+        match self {
+            Self::Heartbeat => Mix {
+                throb: 0.06,
+                duck: 0.3,
+                ostinato: 0.0,
+                bed: 1.0,
+            },
+            Self::Breath => Mix {
+                throb: 0.0,
+                duck: 0.8,
+                ostinato: 0.0,
+                bed: 1.33,
+            },
+            Self::Ostinato => Mix {
+                throb: 0.0,
+                duck: 0.25,
+                ostinato: 0.09,
+                bed: 1.0,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-struct Character {
+struct Mix {
     throb: f32,
     duck: f32,
     ostinato: f32,
     bed: f32,
 }
 
-const CHARACTER: Character = Character {
-    throb: 0.06,
-    duck: 0.3,
-    ostinato: 0.0,
-    bed: 1.0,
-};
-
 pub struct Pulse {
     time: Time,
     countdown: usize,
     slow: u16,
-    character: Character,
+    mix: Mix,
     dice: Dice,
     clock: Clock,
     build: Build,
@@ -101,11 +128,11 @@ pub struct Pulse {
 
 impl Pulse {
     #[must_use]
-    pub fn new(seed: u32, rate: f32) -> Self {
-        Self::with(seed, rate, CHARACTER)
+    pub fn new(seed: u32, rate: f32, character: Character) -> Self {
+        Self::with(seed, rate, character.mix())
     }
 
-    fn with(seed: u32, rate: f32, character: Character) -> Self {
+    fn with(seed: u32, rate: f32, mix: Mix) -> Self {
         let time = Time::new(rate);
         let mut dice = Dice::new(seed);
         let drone = Drone::new(&mut dice, time);
@@ -116,7 +143,7 @@ impl Pulse {
             time,
             countdown: 0,
             slow: 0,
-            character,
+            mix,
             dice,
             clock: Clock::new(time),
             build: Build::new(),
@@ -165,10 +192,10 @@ impl Pulse {
             self.pad.steer(drive, time);
         }
         self.slow = (self.slow + 1) % SLOW;
-        let character = self.character;
+        let mix = self.mix;
         let entry = self.entry.toward(true);
-        let bed = entry * character.bed;
-        let depth = character.duck * lift(DUCK_FLOOR, drive);
+        let bed = entry * mix.bed;
+        let depth = mix.duck * lift(DUCK_FLOOR, drive);
         let dip = 1.0 - depth * self.duck.next(time);
         self.drone.control(bed * (1.0 + DRONE_LIFT * drive));
         self.pad.control(
@@ -179,9 +206,9 @@ impl Pulse {
             time,
         );
         self.throb
-            .control(entry * character.throb * lift(THROB_FLOOR, drive), time);
+            .control(entry * mix.throb * lift(THROB_FLOOR, drive), time);
         self.ostinato
-            .control(entry * character.ostinato * lift(FIGURE_FLOOR, drive), time);
+            .control(entry * mix.ostinato * lift(FIGURE_FLOOR, drive), time);
     }
 }
 
@@ -621,24 +648,12 @@ impl Ostinato {
 mod tests {
     use std::f64::consts::TAU;
 
-    use super::{CHARACTER, Character, Pulse};
+    use super::{Character, Mix, Pulse};
     use crate::audio::dsp::{Frame, Svf};
 
     const RATE: f32 = 48_000.0;
     const SECOND: usize = 48_000;
     const BEAT: usize = 83;
-    const BREATH: Character = Character {
-        throb: 0.0,
-        duck: 0.8,
-        ostinato: 0.0,
-        bed: 1.33,
-    };
-    const OSTINATO: Character = Character {
-        throb: 0.0,
-        duck: 0.25,
-        ostinato: 0.09,
-        bed: 1.0,
-    };
 
     fn take(pulse: &mut Pulse, seconds: usize) -> Vec<Frame> {
         let mut out = vec![[0.0; 2]; seconds * SECOND];
@@ -713,9 +728,9 @@ mod tests {
 
     #[test]
     fn the_level_swells_and_falls_once_each_beat() {
-        for character in [CHARACTER, BREATH, OSTINATO] {
+        for character in Character::ALL {
             for seed in [3, 7] {
-                let mut pulse = Pulse::with(seed, RATE, character);
+                let mut pulse = Pulse::new(seed, RATE, character);
                 take(&mut pulse, 10);
                 let levels = detrended(&envelope(&take(&mut pulse, 60)), BEAT);
                 let (lag, strength) = (40..=125)
@@ -732,13 +747,13 @@ mod tests {
 
     #[test]
     fn an_ostinato_plays_a_low_two_note_figure() {
-        let mut with = Pulse::with(3, RATE, OSTINATO);
+        let mut with = Pulse::new(3, RATE, Character::Ostinato);
         let mut without = Pulse::with(
             3,
             RATE,
-            Character {
+            Mix {
                 ostinato: 0.0,
-                ..OSTINATO
+                ..Character::Ostinato.mix()
             },
         );
         let figure = |frames: &[Frame]| -> f64 {
@@ -754,23 +769,23 @@ mod tests {
 
     #[test]
     fn the_pulse_fades_in_from_silence_without_clicks() {
-        for seed in 1..=3 {
-            let frames = take(&mut Pulse::new(seed, RATE), 150);
+        for (character, seed) in Character::ALL.into_iter().zip(1..) {
+            let frames = take(&mut Pulse::new(seed, RATE, character), 150);
             let start = peak(&frames[..SECOND / 10]);
-            assert!(start < 1e-3, "seed {seed}: {start}");
+            assert!(start < 1e-3, "{character:?}: {start}");
             let loudest = peak(&frames);
-            assert!(loudest > 0.01, "seed {seed}: {loudest}");
+            assert!(loudest > 0.01, "{character:?}: {loudest}");
             let jump = largest_step(&frames);
-            assert!(jump < 0.01, "seed {seed}: {jump}");
+            assert!(jump < 0.01, "{character:?}: {jump}");
         }
     }
 
     #[test]
     fn the_pulse_builds_for_a_minute_and_then_eases_back() {
-        for seed in 1..=4 {
-            let frames = take(&mut Pulse::new(seed, RATE), 150);
+        for (character, seed) in Character::ALL.into_iter().cycle().zip(1..=4) {
+            let frames = take(&mut Pulse::new(seed, RATE, character), 150);
             let loudest = peak(&frames);
-            assert!(loudest < 0.5, "seed {seed}: {loudest}");
+            assert!(loudest < 0.5, "{character:?} {seed}: {loudest}");
             let levels: Vec<f64> = frames
                 .chunks(5 * SECOND)
                 .map(|window| decibels(rms(window)))
@@ -784,20 +799,20 @@ mod tests {
                 .unwrap();
             assert!(
                 height > start + 4.0,
-                "seed {seed}: {start} to {height} dBFS"
+                "{character:?} {seed}: {start} to {height} dBFS"
             );
             let after = levels[top..].iter().copied().fold(f64::INFINITY, f64::min);
             assert!(
                 after < height - 3.0,
-                "seed {seed}: {height} to {after} dBFS"
+                "{character:?} {seed}: {height} to {after} dBFS"
             );
         }
     }
 
     #[test]
     fn the_bed_plays_from_near_minus_36_to_near_minus_30_dbfs() {
-        for seed in [1, 6] {
-            let mut pulse = Pulse::new(seed, RATE);
+        for (character, seed) in Character::ALL.into_iter().zip([1, 6, 2]) {
+            let mut pulse = Pulse::new(seed, RATE, character);
             take(&mut pulse, 10);
             let powers: Vec<f64> = (0..300)
                 .map(|_| rms(&take(&mut pulse, 1)).powi(2))
@@ -810,29 +825,31 @@ mod tests {
             let loudest = levels.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             assert!(
                 (-38.5..=-33.5).contains(&calmest),
-                "seed {seed}: {calmest} dBFS"
+                "{character:?}: {calmest} dBFS"
             );
             assert!(
                 (-32.5..=-27.5).contains(&loudest),
-                "seed {seed}: {loudest} dBFS"
+                "{character:?}: {loudest} dBFS"
             );
         }
     }
 
     #[test]
     fn the_pulse_stays_dark() {
-        let frames = take(&mut Pulse::new(7, RATE), 120);
-        let mut filters = [[Svf::new(1_000.0, 0.707, RATE); 2]; 2];
-        let (mut total, mut high) = (0.0_f64, 0.0_f64);
-        for frame in &frames {
-            for ([first, second], &value) in filters.iter_mut().zip(frame) {
-                let edge = second.process(first.process(value).high).high;
-                total += f64::from(value * value);
-                high += f64::from(edge * edge);
+        for character in Character::ALL {
+            let frames = take(&mut Pulse::new(7, RATE, character), 120);
+            let mut filters = [[Svf::new(1_000.0, 0.707, RATE); 2]; 2];
+            let (mut total, mut high) = (0.0_f64, 0.0_f64);
+            for frame in &frames {
+                for ([first, second], &value) in filters.iter_mut().zip(frame) {
+                    let edge = second.process(first.process(value).high).high;
+                    total += f64::from(value * value);
+                    high += f64::from(edge * edge);
+                }
             }
+            assert!(total > 0.0);
+            assert!(high < total * 0.03, "{character:?}: {}", high / total);
         }
-        assert!(total > 0.0);
-        assert!(high < total * 0.03, "{}", high / total);
     }
 
     fn strength(frames: &[Frame], note: u8) -> f64 {
@@ -863,7 +880,7 @@ mod tests {
 
     #[test]
     fn the_pad_moves_through_phrygian_chords_as_it_builds() {
-        let mut pulse = Pulse::new(5, RATE);
+        let mut pulse = Pulse::new(5, RATE, Character::Heartbeat);
         take(&mut pulse, 10);
         let mut chords = Vec::new();
         for _ in 0..24 {
@@ -878,11 +895,21 @@ mod tests {
 
     #[test]
     fn the_same_seed_repeats_its_samples_and_other_seeds_differ() {
-        let first = take(&mut Pulse::new(3, RATE), 20);
-        let again = take(&mut Pulse::new(3, RATE), 20);
-        let other = take(&mut Pulse::new(4, RATE), 20);
+        let first = take(&mut Pulse::new(3, RATE, Character::Heartbeat), 20);
+        let again = take(&mut Pulse::new(3, RATE, Character::Heartbeat), 20);
+        let other = take(&mut Pulse::new(4, RATE, Character::Heartbeat), 20);
         assert!(peak(&first) > 0.0);
         assert_eq!(first_difference(&first, &again), None);
         assert!(first_difference(&first, &other).is_some());
+    }
+
+    #[test]
+    fn each_character_has_its_own_sound() {
+        let renders = Character::ALL.map(|character| take(&mut Pulse::new(3, RATE, character), 20));
+        for (index, one) in renders.iter().enumerate() {
+            for other in &renders[index + 1..] {
+                assert!(first_difference(one, other).is_some());
+            }
+        }
     }
 }
