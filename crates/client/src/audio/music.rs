@@ -6,6 +6,8 @@ use crate::spline::smoothstep;
 
 const CONTROL: u16 = 32;
 const ENTRY: f64 = 8.0;
+const SESSION: [f32; 2] = [130.0, 220.0];
+const REST: [f32; 2] = [110.0, 200.0];
 const FILTER_Q: f32 = 0.6;
 
 const DRONE: [u8; 2] = [38, 45];
@@ -110,7 +112,9 @@ impl Bed {
     fn control(&mut self, time: Time) {
         self.until -= f64::from(time.step);
         if self.until <= 0.0 {
-            self.playing = true;
+            self.playing = !self.playing;
+            let length = if self.playing { SESSION } else { REST };
+            self.until = f64::from(self.dice.within(length));
         }
         self.drone
             .control(self.playing || self.pad.fade.level > 0.5, time);
@@ -499,6 +503,29 @@ mod tests {
     }
 
     #[test]
+    fn the_bed_rests_in_silence_and_then_returns() {
+        let mut music = Music::new(2, RATE);
+        let mut last = [0.0; 2];
+        let mut jump = 0.0_f32;
+        let (mut quiet, mut longest, mut returned) = (0, 0, false);
+        for _ in 0..600 {
+            let window = take(&mut music, 1);
+            jump = jump.max(largest_step(last, &window));
+            last = window[window.len() - 1];
+            if peak(&window) < 1e-5 {
+                quiet += 1;
+            } else {
+                returned |= longest >= 60;
+                quiet = 0;
+            }
+            longest = longest.max(quiet);
+        }
+        assert!(longest >= 60, "{longest} s");
+        assert!(returned);
+        assert!(jump < 0.01, "{jump}");
+    }
+
+    #[test]
     fn the_pad_moves_through_its_chords() {
         let mut music = Music::new(5, RATE);
         take(&mut music, 30);
@@ -533,7 +560,7 @@ mod tests {
         let mut music = Music::new(1, RATE);
         let mut last = [0.0; 2];
         let mut jump = 0.0_f32;
-        for start in (0..150).step_by(10) {
+        for start in (0..140).step_by(10) {
             let window = take(&mut music, 10);
             jump = jump.max(largest_step(last, &window));
             last = window[window.len() - 1];
