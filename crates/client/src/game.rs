@@ -10,7 +10,7 @@ use crate::{
     BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, to_ground, to_world,
 };
 
-pub(crate) const ISLAND_RADIUS: u8 = 20;
+pub(crate) use voidwright_core::ISLAND_RADIUS;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 
 #[derive(Clone, Copy, Debug)]

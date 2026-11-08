@@ -1,5 +1,6 @@
 use crate::{Direction, ELEVATION_PER_TILE, Map, NOISE_RANGE, Noise, Terrain, Tile, reachable};
 
+pub const ISLAND_RADIUS: u8 = 20;
 const MARGIN: u16 = 2;
 const OUTLINE_CELL: u32 = 6;
 const OUTLINE_SALT: u64 = 0x6f75_746c_696e_6573;
@@ -69,7 +70,7 @@ fn elevation(hills: &Noise, center: Tile, tile: Tile, radius: u16) -> i16 {
 
 #[cfg(test)]
 mod tests {
-    use super::Island;
+    use super::{ISLAND_RADIUS, Island};
     use crate::{Direction, ELEVATION_PER_TILE, Terrain, Tile, reachable};
 
     const RADIUS: u8 = 16;
@@ -218,5 +219,10 @@ mod tests {
             let mut border = island.map.tiles().filter(on_border);
             assert!(!border.any(|tile| island.map.is_walkable(tile)));
         }
+    }
+
+    #[test]
+    fn the_island_of_the_first_world_has_a_radius_of_20_tiles() {
+        assert_eq!(ISLAND_RADIUS, 20);
     }
 }

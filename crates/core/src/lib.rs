@@ -13,7 +13,7 @@ mod world;
 
 pub use direction::Direction;
 pub use grid::Grid;
-pub use island::Island;
+pub use island::{ISLAND_RADIUS, Island};
 pub use map::{ELEVATION_PER_TILE, Map, Terrain};
 pub use noise::{NOISE_RANGE, Noise};
 pub use path::{find_path, reachable};
