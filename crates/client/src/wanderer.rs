@@ -90,6 +90,20 @@ impl Side {
             Self::Right => Bone::RightSkirt,
         }
     }
+
+    const fn hand(self) -> Bone {
+        match self {
+            Self::Left => Bone::LeftHand,
+            Self::Right => Bone::RightHand,
+        }
+    }
+
+    const fn fingers(self) -> Bone {
+        match self {
+            Self::Left => Bone::LeftFingers,
+            Self::Right => Bone::RightFingers,
+        }
+    }
 }
 
 struct Piece {
@@ -344,20 +358,20 @@ fn arm(clay: &mut Sculpt, side: Side) {
             .wrinkled(0.004, sleeve)
             .blended(0.015),
     );
+    let (hand, fingers) = (side.hand(), side.fingers());
     clay.add(
-        stroke(fore, block(0.019, 0.04, 0.034, 0.016), LEATHER)
-            .at(Vec3::new(0.0, -0.205, -0.002))
+        stroke(hand, block(0.019, 0.04, 0.034, 0.016), LEATHER)
+            .at(Vec3::new(0.0, -0.04, -0.002))
             .blended(0.016),
     );
     clay.add(
-        stroke(fore, egg(0.017, 0.035, 0.032), LEATHER)
-            .at(Vec3::new(0.0, -0.252, -0.012))
-            .turned(Quat::from_rotation_x(-0.45))
-            .blended(0.012),
+        stroke(fingers, egg(0.016, 0.036, 0.031), LEATHER)
+            .at(Vec3::new(0.0, -0.026, -0.003))
+            .blended(0.014),
     );
     clay.add(
-        stroke(fore, limb(0.04, 0.0125, 0.011), LEATHER)
-            .at(Vec3::new(inward * 0.012, -0.18, -0.024))
+        stroke(hand, limb(0.04, 0.0125, 0.011), LEATHER)
+            .at(Vec3::new(inward * 0.012, -0.015, -0.024))
             .turned(toward(Vec3::new(inward * 0.2, -1.0, -0.7)))
             .blended(0.01),
     );

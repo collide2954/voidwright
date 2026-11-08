@@ -13,7 +13,7 @@ attribute vec4 in_bones;
 attribute vec4 in_weights;
 uniform mat4 view_projection;
 uniform mat4 model;
-uniform mat4 bones[13];
+uniform mat4 bones[17];
 uniform vec3 eye;
 uniform vec2 fog_range;
 varying mediump vec3 toward_eye;

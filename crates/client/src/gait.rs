@@ -11,8 +11,8 @@ const SHIFT_RATE: f32 = 0.55;
 const SHIFT_SWAY: f32 = 0.03;
 const SHIFT_ROLL: f32 = 0.05;
 const COUNTER_ROLL: f32 = 1.6;
-const RELAXED_KNEE: f32 = 0.16;
-const RELAXED_THIGH: f32 = 0.06;
+const RELAXED_KNEE: f32 = 0.32;
+const RELAXED_THIGH: f32 = 0.16;
 const GLANCE: f32 = 0.36;
 const WALKING_CURL: f32 = 0.5;
 
@@ -107,8 +107,8 @@ mod tests {
     #[test]
     fn an_idle_figure_stands_relaxed() {
         for pose in idle_poses() {
-            assert!(pose.thighs.iter().all(|angle| angle.abs() < 0.1));
-            assert!(pose.knees.iter().all(|angle| (0.0..0.2).contains(angle)));
+            assert!(pose.thighs.iter().all(|angle| angle.abs() < 0.2));
+            assert!(pose.knees.iter().all(|angle| (0.0..0.35).contains(angle)));
             assert!(pose.lean.abs() < 0.03);
         }
     }

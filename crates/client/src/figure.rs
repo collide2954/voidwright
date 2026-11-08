@@ -1,6 +1,6 @@
 use std::array::from_fn;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::shape::{LitMesh, Material};
 use crate::{Pose, Stride};
@@ -24,9 +24,13 @@ pub enum Bone {
     RightForearm,
     LeftSkirt,
     RightSkirt,
+    LeftHand,
+    RightHand,
+    LeftFingers,
+    RightFingers,
 }
 
-pub const BONES: usize = 13;
+pub const BONES: usize = 17;
 
 const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
     (Bone::Pelvis, None, Vec3::new(0.0, 0.8, 0.0)),
@@ -82,11 +86,34 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Some(Bone::Pelvis),
         Vec3::new(0.0, -0.02, 0.0),
     ),
+    (
+        Bone::LeftHand,
+        Some(Bone::LeftForearm),
+        Vec3::new(0.0, -0.165, 0.0),
+    ),
+    (
+        Bone::RightHand,
+        Some(Bone::RightForearm),
+        Vec3::new(0.0, -0.165, 0.0),
+    ),
+    (
+        Bone::LeftFingers,
+        Some(Bone::LeftHand),
+        Vec3::new(0.0, -0.075, 0.0),
+    ),
+    (
+        Bone::RightFingers,
+        Some(Bone::RightHand),
+        Vec3::new(0.0, -0.075, 0.0),
+    ),
 ];
 const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
+const HEAD_LEVEL: f32 = 0.85;
 const COUNTER_TWIST: f32 = 0.8;
 const SKIRT_FOLLOW: f32 = 0.6;
+const HIP: Vec2 = Vec2::new(0.1, -0.02);
+const LEG: f32 = 0.78;
 
 impl Bone {
     #[must_use]
@@ -97,16 +124,27 @@ impl Bone {
     fn turn(self, pose: &Pose) -> Mat4 {
         match self {
             Self::Pelvis => {
-                Mat4::from_translation(Vec3::new(pose.sway, pose.bob, 0.0))
+                let settle = HIP.x * pose.roll.sin().abs();
+                Mat4::from_translation(Vec3::new(pose.sway, pose.bob - settle, 0.0))
                     * Mat4::from_rotation_y(pose.twist)
+                    * Mat4::from_rotation_z(pose.roll)
             }
             Self::Torso => {
                 Mat4::from_rotation_y(-pose.twist * COUNTER_TWIST)
+                    * Mat4::from_rotation_z(pose.counter)
                     * Mat4::from_rotation_x(-(pose.lean + pose.breath))
             }
-            Self::Head => Mat4::from_rotation_x(pose.lean * HEAD_STEADY),
-            Self::LeftThigh => Mat4::from_rotation_x(pose.thighs[0]),
-            Self::RightThigh => Mat4::from_rotation_x(pose.thighs[1]),
+            Self::Head => {
+                Mat4::from_rotation_z(-(pose.roll + pose.counter) * HEAD_LEVEL)
+                    * Mat4::from_rotation_y(pose.look)
+                    * Mat4::from_rotation_x(pose.lean * HEAD_STEADY + pose.nod)
+            }
+            Self::LeftThigh => {
+                Mat4::from_rotation_z(plant(pose, -1.0)) * Mat4::from_rotation_x(pose.thighs[0])
+            }
+            Self::RightThigh => {
+                Mat4::from_rotation_z(plant(pose, 1.0)) * Mat4::from_rotation_x(pose.thighs[1])
+            }
             Self::LeftShin => Mat4::from_rotation_x(-pose.knees[0]),
             Self::RightShin => Mat4::from_rotation_x(-pose.knees[1]),
             Self::LeftUpperArm => {
@@ -119,8 +157,18 @@ impl Bone {
             Self::RightForearm => Mat4::from_rotation_x(pose.elbows[1]),
             Self::LeftSkirt => Mat4::from_rotation_x(pose.thighs[0] * SKIRT_FOLLOW),
             Self::RightSkirt => Mat4::from_rotation_x(pose.thighs[1] * SKIRT_FOLLOW),
+            Self::LeftHand => Mat4::from_rotation_z(pose.wrists[0]),
+            Self::RightHand => Mat4::from_rotation_z(-pose.wrists[1]),
+            Self::LeftFingers => Mat4::from_rotation_z(pose.curls[0]),
+            Self::RightFingers => Mat4::from_rotation_z(-pose.curls[1]),
         }
     }
+}
+
+fn plant(pose: &Pose, side: f32) -> f32 {
+    let (sin, cos) = pose.roll.sin_cos();
+    let hip = pose.sway + side * HIP.x * cos - HIP.y * sin;
+    ((side * HIP.x - hip) / LEG).clamp(-1.0, 1.0).asin() - pose.roll
 }
 
 #[must_use]
@@ -163,7 +211,7 @@ pub fn marker_ring() -> LitMesh {
 
 #[cfg(test)]
 mod tests {
-    use super::{Bone, placement, pulse, rest, skeleton, skin};
+    use super::{BONES, Bone, placement, pulse, rest, skeleton, skin};
     use crate::{Pose, Stride, pose_at};
     use glam::{Mat4, Vec2, Vec3};
 
@@ -180,6 +228,60 @@ mod tests {
         let ankle = rest()[Bone::LeftShin.index()].transform_point3(Vec3::new(0.0, -0.35, 0.0));
         let moved = skin(&pose)[Bone::LeftShin.index()].transform_point3(ankle);
         assert!(moved.z < ankle.z - 0.1);
+    }
+
+    fn ankle(bones: &[Mat4; BONES], bone: Bone) -> Vec3 {
+        bones[bone.index()].transform_point3(Vec3::new(0.0, -0.35, 0.0))
+    }
+
+    #[test]
+    fn the_feet_stay_planted_while_the_weight_shifts() {
+        let still = skeleton(&Pose::default());
+        for step in 0..300 {
+            let time = f32::from(u16::try_from(step).unwrap()) * 0.1;
+            let bones = skeleton(&pose_at(0.0, 0.0, 0.0, time));
+            for bone in [Bone::LeftShin, Bone::RightShin] {
+                let offset = ankle(&bones, bone) - ankle(&still, bone);
+                assert!(Vec3::new(offset.x, 0.0, offset.z).length() < 0.015);
+                assert!(offset.y.abs() < 0.01);
+            }
+        }
+    }
+
+    #[test]
+    fn fingers_curl_toward_the_palm() {
+        let curled = skeleton(&Pose {
+            curls: [1.0, 1.0],
+            ..Pose::default()
+        });
+        let open = skeleton(&Pose::default());
+        let tip = Vec3::new(0.0, -0.06, 0.0);
+        for (bone, inward) in [(Bone::LeftFingers, 1.0), (Bone::RightFingers, -1.0)] {
+            let moved = curled[bone.index()].transform_point3(tip)
+                - open[bone.index()].transform_point3(tip);
+            assert!(moved.x * inward > 0.02);
+        }
+    }
+
+    #[test]
+    fn the_head_turns_with_a_glance() {
+        let glancing = skeleton(&Pose {
+            look: 0.3,
+            ..Pose::default()
+        });
+        let forward = glancing[Bone::Head.index()].transform_vector3(Vec3::NEG_Z);
+        assert!((forward.angle_between(Vec3::NEG_Z) - 0.3).abs() < 0.02);
+    }
+
+    #[test]
+    fn the_head_stays_level_while_the_hips_tilt() {
+        let tilted = skeleton(&Pose {
+            roll: 0.05,
+            counter: -0.08,
+            ..Pose::default()
+        });
+        let side = tilted[Bone::Head.index()].transform_vector3(Vec3::X);
+        assert!(side.y.abs() < 0.015);
     }
 
     #[test]
