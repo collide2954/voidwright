@@ -664,6 +664,7 @@ pub mod composite {
     pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform sampler2D scene;
+uniform sampler2D halo;
 uniform highp vec2 seed;
 varying highp vec2 uv;
 const float VIGNETTE = 0.2;
@@ -674,18 +675,21 @@ float noise(highp vec2 pixel) {
     return fract((p.x + p.y) * p.z);
 }
 void main() {
+    vec3 color = texture2D(scene, uv).rgb;
+    vec3 glow = texture2D(halo, uv).rgb;
+    vec3 lit = color + glow - color * glow;
     highp vec2 centered = uv * 2.0 - 1.0;
     float corner = 0.5 * dot(centered, centered);
     float shade = 1.0 - VIGNETTE * corner * corner;
     float grain = GRAIN * (noise(gl_FragCoord.xy + seed) - 0.5);
-    gl_FragColor = vec4(texture2D(scene, uv).rgb * shade + grain, 1.0);
+    gl_FragColor = vec4(lit * shade + grain, 1.0);
 }
 ";
 
     #[must_use]
     pub fn meta() -> ShaderMeta {
         ShaderMeta {
-            images: vec!["scene".to_owned()],
+            images: vec!["scene".to_owned(), "halo".to_owned()],
             uniforms: UniformBlockLayout {
                 uniforms: vec![UniformDesc::new("seed", UniformType::Float2)],
             },
@@ -859,10 +863,30 @@ void main() {
         }
 
         #[test]
-        fn the_scene_reaches_the_shader() {
-            assert_eq!(meta().images, ["scene"]);
-            assert!(FRAGMENT.contains("uniform sampler2D scene;"));
-            assert!(FRAGMENT.contains("texture2D(scene, uv)"));
+        fn the_scene_and_the_halo_reach_the_shader() {
+            assert_eq!(meta().images, ["scene", "halo"]);
+            for image in ["scene", "halo"] {
+                assert!(FRAGMENT.contains(&format!("uniform sampler2D {image};")));
+                assert!(FRAGMENT.contains(&format!("texture2D({image}, uv).rgb")));
+            }
+        }
+
+        fn screen(color: Vec3, glow: Vec3) -> Vec3 {
+            color + glow - color * glow
+        }
+
+        #[test]
+        fn the_halo_lightens_the_scene_like_a_screen() {
+            assert!(FRAGMENT.contains("vec3 lit = color + glow - color * glow;"));
+            assert!(FRAGMENT.contains("gl_FragColor = vec4(lit * shade + grain, 1.0);"));
+            for step in 0..=10_u8 {
+                let color = Vec3::splat(f32::from(step) / 10.0);
+                assert_eq!(screen(color, Vec3::ZERO), color);
+                for glow in [0.1, 0.5, 1.0].map(Vec3::splat) {
+                    let lit = screen(color, glow);
+                    assert!(lit.cmpge(color).all() && lit.cmple(Vec3::ONE).all());
+                }
+            }
         }
 
         #[test]

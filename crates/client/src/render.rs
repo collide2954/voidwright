@@ -8,6 +8,7 @@ use miniquad::{
 
 use crate::detail::{DETAIL_SIZE, paint};
 use crate::particles::{Anchors, lantern, specks};
+use crate::shader::post::{LEVELS, composite, down, halo, prefilter, up};
 use crate::shader::{self, baked, caster, particles, post, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
@@ -23,10 +24,29 @@ struct Model {
     count: i32,
 }
 
+struct Target {
+    size: [u16; 2],
+    texture: TextureId,
+    pass: RenderPass,
+}
+
+impl Target {
+    fn new(context: &mut dyn RenderingBackend, params: TextureParams) -> Self {
+        let texture = context.new_render_texture(params);
+        Self {
+            size: [params.width, params.height].map(|side| u16::try_from(side).unwrap_or(1)),
+            texture,
+            pass: context.new_render_pass(texture, None),
+        }
+    }
+}
+
 struct Post {
     size: [u16; 2],
     scene_pass: RenderPass,
     scene: TextureId,
+    levels: [Target; LEVELS],
+    halo: Target,
 }
 
 impl Post {
@@ -40,11 +60,53 @@ impl Post {
             size,
             scene_pass,
             scene,
+            levels: targets.levels.map(|params| Target::new(context, params)),
+            halo: Target::new(context, targets.halo),
         }
     }
 
     fn delete(&self, context: &mut dyn RenderingBackend) {
         context.delete_render_pass(self.scene_pass);
+        for target in self.levels.iter().chain([&self.halo]) {
+            context.delete_render_pass(target.pass);
+        }
+    }
+}
+
+struct Filters {
+    prefilter: Pipeline,
+    down: Pipeline,
+    up: Pipeline,
+    halo: Pipeline,
+    composite: Pipeline,
+}
+
+impl Filters {
+    fn new(context: &mut dyn RenderingBackend) -> Self {
+        let mut filter = |fragment, meta, params| {
+            pipeline(
+                context,
+                [post::VERTEX, fragment],
+                meta,
+                &post::attributes(),
+                params,
+            )
+        };
+        Self {
+            prefilter: filter(
+                prefilter::FRAGMENT,
+                prefilter::meta(),
+                PipelineParams::default(),
+            ),
+            down: filter(down::FRAGMENT, down::meta(), PipelineParams::default()),
+            up: filter(up::FRAGMENT, up::meta(), up::params()),
+            halo: filter(halo::FRAGMENT, halo::meta(), PipelineParams::default()),
+            composite: filter(
+                composite::FRAGMENT,
+                composite::meta(),
+                PipelineParams::default(),
+            ),
+        }
     }
 }
 
@@ -75,7 +137,7 @@ pub struct Renderer {
     caster: Pipeline,
     shadow: RenderPass,
     particles: Pipeline,
-    composite: Pipeline,
+    filters: Filters,
     sky: Model,
     terrain: Model,
     avatar: Model,
@@ -161,13 +223,7 @@ impl Renderer {
         );
         let swarms = specks();
         let specks = upload(context, &swarms.vertices, &swarms.indices);
-        let composite = pipeline(
-            context,
-            [post::VERTEX, post::composite::FRAGMENT],
-            post::composite::meta(),
-            &post::attributes(),
-            PipelineParams::default(),
-        );
+        let filters = Filters::new(context);
         let screen = upload(context, &post::TRIANGLE, &[0, 1, 2]);
         Self {
             backdrop,
@@ -176,7 +232,7 @@ impl Renderer {
             caster,
             shadow,
             particles,
-            composite,
+            filters,
             sky,
             terrain,
             avatar,
@@ -242,16 +298,69 @@ impl Renderer {
         context.begin_pass(Some(post.scene_pass), clear());
         self.scene(context, game, aspect, &figure);
         context.end_render_pass();
+        self.bloom(context, post);
+        let images = [post.scene, post.halo.texture];
+        let uniforms = composite::Uniforms::new(game.time());
+        self.filter(context, target, self.filters.composite, &images, &uniforms);
+    }
+
+    fn bloom(&self, context: &mut dyn RenderingBackend, post: &Post) {
+        let filters = &self.filters;
+        let first = &post.levels[0];
+        let uniforms = prefilter::Uniforms::new(post.size);
+        self.filter(
+            context,
+            Some(first.pass),
+            filters.prefilter,
+            &[post.scene],
+            &uniforms,
+        );
+        for pair in post.levels.windows(2) {
+            let uniforms = down::Uniforms::new(pair[0].size);
+            self.filter(
+                context,
+                Some(pair[1].pass),
+                filters.down,
+                &[pair[0].texture],
+                &uniforms,
+            );
+        }
+        for pair in post.levels.windows(2).rev() {
+            let uniforms = up::Uniforms::new(pair[1].size, up::SHARE);
+            self.filter(
+                context,
+                Some(pair[0].pass),
+                filters.up,
+                &[pair[1].texture],
+                &uniforms,
+            );
+        }
+        let uniforms = halo::Uniforms::new(first.size);
+        self.filter(
+            context,
+            Some(post.halo.pass),
+            filters.halo,
+            &[first.texture],
+            &uniforms,
+        );
+    }
+
+    fn filter<T>(
+        &self,
+        context: &mut dyn RenderingBackend,
+        target: Option<RenderPass>,
+        pipeline: Pipeline,
+        images: &[TextureId],
+        uniforms: &T,
+    ) {
         context.begin_pass(target, PassAction::Nothing);
-        context.apply_pipeline(&self.composite);
+        context.apply_pipeline(&pipeline);
         context.apply_bindings_from_slice(
             &self.screen.bindings.vertex_buffers,
             self.screen.bindings.index_buffer,
-            &[post.scene],
+            images,
         );
-        context.apply_uniforms(UniformsSource::table(&post::composite::Uniforms::new(
-            game.time(),
-        )));
+        context.apply_uniforms(UniformsSource::table(uniforms));
         context.draw(0, self.screen.count, 1);
         context.end_render_pass();
     }
