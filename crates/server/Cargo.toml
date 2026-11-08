@@ -1,0 +1,15 @@
+[package]
+name = "voidwright-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+voidwright-core.workspace = true
+voidwright-protocol.workspace = true
+
+[lints]
+workspace = true

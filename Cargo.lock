@@ -706,6 +706,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "voidwright-server"
+version = "0.1.0"
+dependencies = [
+ "voidwright-core",
+ "voidwright-protocol",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
