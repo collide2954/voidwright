@@ -98,7 +98,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Topic | Decision |
 | --- | --- |
 | Interface style | The panels look like projections from the suit of the voidwright: soft teal glass with thin scan lines. The panels flicker a little when the player is hit. The panels fade when the player only explores. |
-| Sound | Each place has layers of ambient sound. Sounds come from their positions in the world. Footsteps change with the ground. Music becomes stronger in danger and at discoveries. |
+| Sound | Each place has layers of ambient sound and a reverb that fits the place. Sounds come from their positions in the world. Footsteps change with the ground. Sparse ambient music becomes stronger at discoveries and in danger. audio.md gives the full design. |
 | Creatures | Small void animals live on the islands and drift between them. Some animals run away when a player comes near. |
 | Weather | Field storms move across the fragments, change the light, and make creatures hide. |
 | Day and night | The Gyre turns, so islands move into the shadow of the ring. At night, the stars are brighter, plants glow, and other creatures come out. |
@@ -121,6 +121,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Sculpts | Each sculpt is a signed distance field. At start, a surface-nets mesher in the client makes one smooth mesh from each sculpt. The mesher is part of the project. |
 | Skinning | Each vertex of a figure follows a maximum of four bones. The GPU moves the vertices. |
 | Cloth | The coat skirt is a grid of particles: two panels of 7 columns and 5 rows. The particles move in the frame of the waist with a fixed step of 240 each second. Half of the acceleration of the body gets to the cloth. Links keep the lengths, tethers prevent stretch, and capsules push the cloth out of the legs. At start, the cloth settles under gravity, and the skinning uses this shape as its rest shape. Short strands of particles use the same solver: the lantern, the scarf tail, and the point of the hood. |
+| Audio | cpal sends the audio to the device. The client synthesizes and mixes all audio in its own code. A few recorded clips are WAV files in the binary. |
 | Network | TCP with a binary protocol that the project defines. |
 | Servers | Many worlds hold the inner islands. Each world holds a maximum of 2,000 players. One war shard holds the outer ring for all players. |
 | Content | Items, NPCs, and quests are typed tables in Rust code. |

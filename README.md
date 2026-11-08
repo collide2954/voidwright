@@ -50,6 +50,7 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | --- | --- |
 | `crates/core` | Game rules. No input or output. |
 | `crates/client` | Game client. |
+| `docs/audio.md` | Design of the sound and the music. |
 | `docs/body.md` | Reference values for the body of the wanderer. |
 | `docs/design.md` | Design decisions. |
 | `docs/lore.md` | Lore of the game world. |
