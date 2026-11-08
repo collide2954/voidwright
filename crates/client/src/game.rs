@@ -126,7 +126,7 @@ impl Game {
 
     #[must_use]
     pub fn player_position(&self) -> Vec3 {
-        let below = position(self.world.player().trail(), self.ticker.alpha());
+        let below = position(None, self.world.player().trail(), None, self.ticker.alpha());
         to_world(below, self.ground.height_at(below))
     }
 }
