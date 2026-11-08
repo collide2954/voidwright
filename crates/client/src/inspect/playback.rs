@@ -1,5 +1,6 @@
 const SLOWEST: i32 = -4;
 const FASTEST: i32 = 2;
+const FRAME: f32 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Playback {
@@ -51,6 +52,11 @@ impl Playback {
 
     pub const fn toggle(&mut self) {
         self.paused = !self.paused;
+    }
+
+    pub fn step(&mut self, frames: i16) {
+        self.paused = true;
+        self.time += f32::from(frames) * FRAME * self.speed();
     }
 
     pub fn faster(&mut self) {
@@ -115,6 +121,29 @@ mod tests {
             playback.faster();
         }
         assert!(close(playback.speed(), 4.0));
+    }
+
+    #[test]
+    fn a_step_moves_one_frame_at_the_playback_speed() {
+        let mut playback = Playback::new(1.0);
+        playback.toggle();
+        playback.step(1);
+        assert!(close(playback.time(), 1.0 + 1.0 / 60.0));
+        playback.slower();
+        playback.slower();
+        playback.step(-1);
+        playback.step(-1);
+        assert!(close(playback.time(), 1.0 + 1.0 / 60.0 - 2.0 / 240.0));
+    }
+
+    #[test]
+    fn a_step_pauses_the_clock() {
+        let mut playback = Playback::new(0.0);
+        playback.step(1);
+        assert!(playback.paused());
+        let stepped = playback.time();
+        playback.advance(1.0);
+        assert!(close(playback.time(), stepped));
     }
 
     #[test]
