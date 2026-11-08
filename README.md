@@ -50,6 +50,7 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | `crates/client` | Game client. |
 | `docs/design.md` | Design decisions. |
 | `docs/lore.md` | Lore of the game world. |
+| `docs/motion.md` | Reference values for the motion of figures. |
 | `docs/performance.md` | Performance target, method, and results. |
 
 ## License
