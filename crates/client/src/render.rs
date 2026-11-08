@@ -7,11 +7,11 @@ use miniquad::{
 };
 
 use crate::detail::{DETAIL_SIZE, paint};
-use crate::particles::{Anchors, specks};
+use crate::particles::{Anchors, lantern, specks};
 use crate::shader::{self, baked, caster, particles, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
-    BONES, Game, Painter, VAEL, cliff, flip_rows, palette, png, projection, pulse, sky, top,
+    BONES, Game, Lamp, Painter, VAEL, cliff, flip_rows, palette, png, projection, pulse, sky, top,
     underside, voidwright,
 };
 
@@ -27,13 +27,17 @@ struct Figure {
     placement: Mat4,
     bones: [Mat4; BONES],
     sun_view: Mat4,
+    lamp: Lamp,
 }
 
 impl Figure {
     fn new(game: &Game) -> Self {
+        let placement = game.placement();
+        let bones = game.skins();
         Self {
-            placement: game.placement(),
-            bones: game.skins(),
+            lamp: Lamp::lantern(lantern(placement, &bones), game.time()),
+            placement,
+            bones,
             sun_view: sun_view(game.player_position(), VAEL.toward_sun),
         }
     }
@@ -220,7 +224,8 @@ impl Renderer {
         context.apply_uniforms(UniformsSource::table(
             &baked::Uniforms::new(view_projection, Mat4::IDENTITY, camera.eye())
                 .marked(marker)
-                .shadowed(to_texture(figure.sun_view)),
+                .shadowed(to_texture(figure.sun_view))
+                .lit(&figure.lamp, &VAEL),
         ));
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.skinned);

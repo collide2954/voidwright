@@ -82,8 +82,14 @@ float sunlight() {
         + hidden(vec2(-0.45, -0.86), depth);
     return 1.0 - (1.0 - SHADE) * shade / 8.0;
 }
+vec3 pool() {
+    highp vec3 toward = (lantern.xyz - world) * lantern.w;
+    highp float near = dot(toward, toward);
+    float fade = max(1.0 - near, 0.0);
+    return lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001);
+}
 void main() {
-    vec3 shaded = mix(mix(color * sunlight(), TEAL * 2.5, ring()), fog_color, fog);
+    vec3 shaded = mix(mix(color * (sunlight() + pool()), TEAL * 2.5, ring()), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
 ";
@@ -167,6 +173,7 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
+    use crate::particles::LANTERN;
     use crate::shadow::{DIGITS, MAP_SIZE};
     use crate::{Lamp, VAEL};
     use glam::{Mat4, Vec3, Vec4};
@@ -218,6 +225,89 @@ mod tests {
         let flat = VAEL.shade(Vec3::ONE, Vec3::Y);
         let light = Vec3::from(lit().lantern_light) * flat;
         assert!(light.distance(lamp().color) < 1e-6, "{light}");
+    }
+
+    fn pool(lantern: [f32; 4], world: Vec3) -> f32 {
+        let [x, y, z, inverse] = lantern;
+        let toward = (Vec3::new(x, y, z) - world) * inverse;
+        let near = toward.length_squared();
+        let fade = (1.0 - near).max(0.0);
+        fade * fade * toward.y.max(0.0) / (near + 0.0001).sqrt()
+    }
+
+    #[test]
+    fn the_pool_follows_the_rust_mirror() {
+        for line in [
+            "highp vec3 toward = (lantern.xyz - world) * lantern.w;",
+            "highp float near = dot(toward, toward);",
+            "float fade = max(1.0 - near, 0.0);",
+            "lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001);",
+        ] {
+            assert!(FRAGMENT.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_pool_adds_to_the_sunlight_of_the_baked_color() {
+        assert!(FRAGMENT.contains("color * (sunlight() + pool())"));
+    }
+
+    #[test]
+    fn the_pool_has_full_strength_near_the_lantern() {
+        let below = lamp().position - Vec3::Y * 0.25;
+        assert!(pool(lit().lantern, below) > 0.97);
+    }
+
+    #[test]
+    fn the_pool_is_dark_at_and_beyond_the_reach() {
+        let lamp = lamp();
+        let down = [
+            Vec3::NEG_Y,
+            Vec3::new(0.8, -0.6, 0.0),
+            Vec3::new(-0.36, -0.48, 0.8),
+        ];
+        for direction in down {
+            for distance in [lamp.reach, lamp.reach + 0.4, lamp.reach * 3.0] {
+                let strength = pool(lit().lantern, lamp.position + direction * distance);
+                assert!(strength.abs() < 1e-6, "{direction} {distance}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_pool_fades_softly_across_the_ground() {
+        let below = lamp().position - Vec3::Y * 1.45;
+        let strengths: Vec<f32> = (0_u8..=30)
+            .map(|step| pool(lit().lantern, below + Vec3::X * f32::from(step) * 0.1))
+            .collect();
+        for pair in strengths.windows(2) {
+            assert!(pair[1] <= pair[0] && pair[0] - pair[1] < 0.05, "{pair:?}");
+        }
+        assert!(strengths[10] > strengths[0] * 0.4);
+        assert!(strengths[25] < strengths[0] * 0.05);
+    }
+
+    #[test]
+    fn the_pool_stays_dimmer_than_the_sun_on_flat_ground() {
+        let lamp = lamp();
+        let below = lamp.position - Vec3::Y * LANTERN.y;
+        let pool = pool(lit().lantern, below) * lamp.color.element_sum();
+        assert!(pool < VAEL.sun.element_sum() * VAEL.toward_sun.y, "{pool}");
+    }
+
+    #[test]
+    fn the_pool_lights_no_ground_above_the_lantern() {
+        let above = lamp().position + Vec3::new(0.8, 0.2, 0.0);
+        assert!(pool(lit().lantern, above).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_dark_lantern_lights_nothing() {
+        let dark = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
+        for point in [Vec3::ZERO, Vec3::new(28.6, 1.5, -28.2), Vec3::splat(300.0)] {
+            let strength = pool(dark.lantern, point);
+            assert!(strength.is_finite() && strength.abs() < 1e-6, "{point}");
+        }
     }
 
     #[test]
@@ -288,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_marker_glows_like_a_light() {
-        assert!(FRAGMENT.contains("mix(color * sunlight(), TEAL * 2.5, ring())"));
+        assert!(FRAGMENT.contains("mix(color * (sunlight() + pool()), TEAL * 2.5, ring())"));
     }
 
     #[test]

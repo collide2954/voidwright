@@ -3,7 +3,7 @@ use glam::Vec3;
 use crate::palette::linear;
 
 const AMBER: Vec3 = Vec3::new(1.0, 0.6, 0.25);
-const LANTERN_POWER: f32 = 0.6;
+const LANTERN_POWER: f32 = 1.6;
 const LANTERN_REACH: f32 = 2.8;
 const FLICKER: [[f32; 3]; 3] = [[0.04, 1.9, 0.0], [0.025, 3.1, 1.3], [0.015, 5.3, 4.1]];
 
@@ -109,9 +109,9 @@ mod tests {
     }
 
     #[test]
-    fn the_lantern_light_is_weak_next_to_the_sun() {
+    fn the_lantern_light_is_dimmer_than_the_sun() {
         let lamp = Lamp::lantern(Vec3::ZERO, 0.0);
-        assert!(brightness(lamp.color) < brightness(VAEL.sun) / 3.0);
+        assert!(brightness(lamp.color) < brightness(VAEL.sun));
     }
 
     #[test]
