@@ -128,6 +128,14 @@ impl World {
         Ok(())
     }
 
+    pub fn sync(&mut self, id: PlayerId, tile: Tile, next: Option<Tile>) {
+        self.players
+            .entry(id)
+            .or_insert_with(|| Player::new(tile))
+            .walker
+            .sync(tile, next);
+    }
+
     pub fn set_running(&mut self, id: PlayerId, running: bool) {
         if let Some(player) = self.players.get_mut(&id) {
             player.running = running;
@@ -374,5 +382,30 @@ mod tests {
             .map(|tile| world.join(tile).unwrap())
             .collect();
         assert_eq!(near(&world, Tile::new(1, 1), 1), ids);
+    }
+
+    #[test]
+    fn a_sync_adds_a_player_that_the_world_does_not_know() {
+        let mut world = World::new(fixtures::map(&["...."]));
+        let id = PlayerId::new(9);
+        world.sync(id, Tile::new(2, 0), Some(Tile::new(3, 0)));
+        let walker = world.player(id).unwrap();
+        assert_eq!(walker.trail(), [Tile::new(2, 0)]);
+        assert_eq!(walker.next_step(), Some(Tile::new(3, 0)));
+    }
+
+    #[test]
+    fn a_sync_steps_a_known_player() {
+        let (mut world, id) = corridor();
+        world.sync(id, Tile::new(1, 0), None);
+        let walker = world.player(id).unwrap();
+        assert_eq!(walker.trail(), [Tile::new(0, 0), Tile::new(1, 0)]);
+    }
+
+    #[test]
+    fn a_join_skips_an_id_that_a_sync_took() {
+        let mut world = World::new(fixtures::map(&["...."]));
+        world.sync(PlayerId::new(0), Tile::new(0, 0), None);
+        assert_eq!(world.join(Tile::new(1, 0)), Some(PlayerId::new(1)));
     }
 }
