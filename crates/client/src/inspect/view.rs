@@ -56,6 +56,14 @@ impl View {
         self.target += self.orientation() * Vec3::new(-pixels.x, pixels.y, 0.0) * size;
     }
 
+    pub fn frame(&mut self, low: Vec3, high: Vec3, aspect: f32) {
+        let half = FIELD_OF_VIEW / 2.0;
+        let narrowest = half.min((half.tan() * aspect).atan());
+        let radius = low.distance(high) / 2.0;
+        self.target = (low + high) / 2.0;
+        self.distance = (radius / narrowest.sin()).clamp(MIN_DISTANCE, MAX_DISTANCE);
+    }
+
     #[must_use]
     pub fn eye(&self) -> Vec3 {
         self.target + self.orientation() * Vec3::Z * self.distance
@@ -79,7 +87,7 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::View;
-    use glam::{Vec2, Vec3};
+    use glam::{BVec3, Vec2, Vec3};
 
     const TARGET: Vec3 = Vec3::new(0.0, 0.9, 0.0);
     const ASPECT: f32 = 16.0 / 9.0;
@@ -179,6 +187,56 @@ mod tests {
         view.pan(Vec2::new(-300.0, 200.0), 720.0);
         assert!(view.target().distance(TARGET) > 0.5);
         assert!((view.eye() - view.target()).distance(before) < 1e-4);
+    }
+
+    const LOW: Vec3 = Vec3::new(-0.3, 0.0, -0.25);
+    const HIGH: Vec3 = Vec3::new(0.3, 1.75, 0.25);
+
+    fn corners() -> impl Iterator<Item = Vec3> {
+        (0..8).map(|corner| {
+            let high = BVec3::new(corner & 1 == 1, corner & 2 == 2, corner & 4 == 4);
+            Vec3::select(high, HIGH, LOW)
+        })
+    }
+
+    fn framed(pixels: Vec2, aspect: f32) -> Vec<Vec3> {
+        let mut view = View::new(Vec3::new(5.0, 0.0, 3.0), 0.0, 0.0, 9.0);
+        view.turn(pixels);
+        view.frame(LOW, HIGH, aspect);
+        corners()
+            .map(|corner| (view.projection(aspect) * view.view()).project_point3(corner))
+            .collect()
+    }
+
+    #[test]
+    fn framing_fits_the_whole_box_in_the_view() {
+        let turns = [Vec2::ZERO, Vec2::new(150.0, 60.0), Vec2::new(-400.0, -90.0)];
+        for aspect in [ASPECT, 1.0, 9.0 / 16.0] {
+            for pixels in turns {
+                for corner in framed(pixels, aspect) {
+                    assert!(corner.x.abs() <= 1.0 && corner.y.abs() <= 1.0, "{corner}");
+                    assert!(corner.z.abs() < 1.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn framing_fills_the_height_of_a_wide_view() {
+        let highest = framed(Vec2::ZERO, ASPECT)
+            .into_iter()
+            .map(|corner| corner.y.abs())
+            .fold(0.0, f32::max);
+        assert!(highest > 0.8, "{highest}");
+    }
+
+    #[test]
+    fn framing_aims_at_the_middle_of_the_box_and_keeps_the_angles() {
+        let mut view = view();
+        let direction = (view.eye() - view.target()).normalize();
+        view.frame(LOW, HIGH, ASPECT);
+        assert!(view.target().distance((LOW + HIGH) / 2.0) < 1e-6);
+        assert!((view.eye() - view.target()).normalize().distance(direction) < 1e-5);
     }
 
     #[test]
