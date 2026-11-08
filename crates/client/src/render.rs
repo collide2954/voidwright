@@ -11,8 +11,8 @@ use crate::particles::{Anchors, specks};
 use crate::shader::{baked, caster, particles, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
-    BONES, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin,
-    sky, top, underside, voidwright,
+    BONES, Game, Painter, VAEL, cliff, flip_rows, palette, png, projection, pulse, sky, top,
+    underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -31,11 +31,10 @@ struct Figure {
 
 impl Figure {
     fn new(game: &Game) -> Self {
-        let position = game.player_position();
         Self {
-            placement: placement(position, game.stride()),
-            bones: skin(&game.stride().pose(game.time())),
-            sun_view: sun_view(position, VAEL.toward_sun),
+            placement: game.placement(),
+            bones: game.skins(),
+            sun_view: sun_view(game.player_position(), VAEL.toward_sun),
         }
     }
 }

@@ -1,4 +1,4 @@
-use glam::Vec2;
+use glam::{Mat4, Vec2};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
     FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderingBackend,
@@ -11,7 +11,7 @@ use super::{Session, View};
 use crate::detail::{DETAIL_SIZE, paint};
 use crate::sculpt::SkinnedMesh;
 use crate::shader::skinned;
-use crate::{VAEL, aspect, flip_rows, png, skin};
+use crate::{BONES, VAEL, aspect, flip_rows, png};
 
 const SAMPLES: i32 = 4;
 
@@ -66,9 +66,15 @@ impl Scene {
         }
     }
 
-    pub fn draw(&self, context: &mut dyn RenderingBackend, session: &Session, size: Vec2) {
+    pub fn draw(
+        &self,
+        context: &mut dyn RenderingBackend,
+        session: &Session,
+        skins: &[Mat4; BONES],
+        size: Vec2,
+    ) {
         context.begin_default_pass(clear());
-        self.render(context, session, size);
+        self.render(context, session, skins, size);
         context.end_render_pass();
         context.commit_frame();
     }
@@ -78,6 +84,7 @@ impl Scene {
         &self,
         context: &mut dyn RenderingBackend,
         session: &Session,
+        skins: &[Mat4; BONES],
         [width, height]: [u16; 2],
     ) -> Vec<u8> {
         let samples = if context.info().features.resolve_attachments {
@@ -105,6 +112,7 @@ impl Scene {
         self.render(
             context,
             session,
+            skins,
             Vec2::new(f32::from(width), f32::from(height)),
         );
         context.end_render_pass();
@@ -114,7 +122,13 @@ impl Scene {
         png::encode(width, height, &flip_rows(&pixels, width, height))
     }
 
-    fn render(&self, context: &mut dyn RenderingBackend, session: &Session, size: Vec2) {
+    fn render(
+        &self,
+        context: &mut dyn RenderingBackend,
+        session: &Session,
+        skins: &[Mat4; BONES],
+        size: Vec2,
+    ) {
         let view = session.view();
         let view_projection = view.projection(aspect(size)) * view.view();
         context.apply_pipeline(&self.skinned);
@@ -122,7 +136,7 @@ impl Scene {
         context.apply_uniforms(UniformsSource::table(&skinned::Uniforms::new(
             view_projection,
             Session::placement(),
-            &skin(&session.pose()),
+            skins,
             view.eye(),
             &VAEL,
         )));

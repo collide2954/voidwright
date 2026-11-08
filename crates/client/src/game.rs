@@ -1,10 +1,14 @@
 use std::time::Duration;
 
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use voidwright_core::{Island, TICK, Tile, World};
 
+use crate::figure::Coat;
 use crate::ground::Ground;
-use crate::{OrbitCamera, Stride, Ticker, center, pick, position, to_ground, to_world};
+use crate::{
+    BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, position, to_ground,
+    to_world,
+};
 
 pub(crate) const ISLAND_RADIUS: u8 = 20;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
@@ -16,6 +20,7 @@ pub struct Game {
     camera: OrbitCamera,
     ticker: Ticker,
     stride: Stride,
+    coat: Coat,
     time: f32,
 }
 
@@ -30,10 +35,32 @@ impl Game {
             camera: OrbitCamera::new(Vec3::ZERO),
             ticker: Ticker::new(TICK),
             stride: Stride::default(),
+            coat: Coat::new(&Pose::default(), Mat4::IDENTITY),
             time: 0.0,
         };
         game.camera.target = game.player_position() + FOCUS;
+        game.coat = Coat::new(&game.pose(), game.placement());
         game
+    }
+
+    #[must_use]
+    pub fn pose(&self) -> Pose {
+        self.stride.pose(self.time)
+    }
+
+    #[must_use]
+    pub fn placement(&self) -> Mat4 {
+        placement(self.player_position(), &self.stride)
+    }
+
+    #[must_use]
+    pub fn skins(&self) -> [Mat4; BONES] {
+        self.coat.skins(&self.pose())
+    }
+
+    #[must_use]
+    pub const fn coat(&self) -> &Coat {
+        &self.coat
     }
 
     #[must_use]
@@ -71,9 +98,10 @@ impl Game {
             self.world.tick();
         }
         let after = self.player_position();
-        self.stride
-            .update(before, to_ground(after), delta.as_secs_f32());
-        self.time += delta.as_secs_f32();
+        let seconds = delta.as_secs_f32();
+        self.stride.update(before, to_ground(after), seconds);
+        self.time += seconds;
+        self.coat.update(&self.pose(), self.placement(), seconds);
         self.camera.target = after + FOCUS;
     }
 
@@ -106,6 +134,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::Game;
+    use crate::cloth::{COLUMNS, PANELS, ROWS, particle};
     use crate::{center, pick, to_ground};
     use glam::{Vec2, Vec3};
     use voidwright_core::{TICK, Tile};
@@ -191,6 +220,36 @@ mod tests {
         }
         assert!(game.stride().motion() > 0.3);
         assert!(game.time() > 0.9);
+    }
+
+    #[test]
+    fn the_coat_moves_when_the_player_sets_off() {
+        let mut game = Game::new(3);
+        let first = game.world().player().tile();
+        game.walk_to(Tile::new(first.x + 2, first.y));
+        for _ in 0..60 {
+            game.update(TICK / 10);
+        }
+        let hems = |game: &Game| {
+            let points = *game.coat().cloth().points();
+            (0..PANELS)
+                .flat_map(|panel| (0..COLUMNS).map(move |column| particle(panel, column, ROWS - 1)))
+                .map(move |index| points[index])
+                .collect::<Vec<_>>()
+        };
+        let standing = hems(&game);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 3, start.y));
+        game.update(TICK);
+        for _ in 0..6 {
+            game.update(TICK / 12);
+        }
+        let moved = hems(&game)
+            .iter()
+            .zip(&standing)
+            .map(|(now, then)| now.distance(*then))
+            .fold(0.0, f32::max);
+        assert!(moved > 0.03, "{moved}");
     }
 
     #[test]

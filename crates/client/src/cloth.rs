@@ -14,10 +14,12 @@ const STEP: f32 = 1.0 / 240.0;
 const MOST_STEPS: u8 = 16;
 const SETTLING: u16 = 480;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
-const DRAG: f32 = 4.0;
+const DRAG: f32 = 6.0;
 const DRIVE: f32 = 0.7;
 const INERTIA: f32 = 0.5;
 const SPIN: f32 = 0.5;
+const GIVE: f32 = 0.25;
+const CONTACT: f32 = 0.35;
 const FRICTION: f32 = 0.3;
 const MARGIN: f32 = 0.025;
 const LEVER: f32 = 0.25;
@@ -295,8 +297,9 @@ impl Cloth {
                 *point = anchor + reach.normalize() * tether;
             }
             let away = *point - rest;
-            if away.length() > SLACK[row] {
-                *point = rest + away.normalize() * SLACK[row];
+            let beyond = away.length() - SLACK[row];
+            if beyond > 0.0 {
+                *point -= away.normalize() * beyond * GIVE;
             }
         }
     }
@@ -308,7 +311,7 @@ impl Cloth {
                     continue;
                 }
                 let point = self.points[index];
-                let push = clear(point, leg) - point;
+                let push = (clear(point, leg) - point) * CONTACT;
                 if push.length_squared() > 0.0 {
                     self.points[index] += push;
                     self.rub(index, push);
@@ -334,7 +337,7 @@ impl Cloth {
         let (from, to) = (self.points[upper], self.points[lower]);
         let along = nearest(from, to, leg.from, leg.to);
         let touching = from.lerp(to, along);
-        let push = clear(touching, leg) - touching;
+        let push = (clear(touching, leg) - touching) * CONTACT;
         if push.length_squared() < 1e-12 {
             return;
         }

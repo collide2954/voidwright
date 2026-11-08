@@ -40,7 +40,7 @@ mod wanderer;
 pub use app::App;
 pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
-pub use figure::{BONES, Bone, placement, pulse, rest, skeleton, skin};
+pub use figure::{BONES, Bone, Coat, JOINTS, placement, pulse, rest, skeleton, skin};
 pub use gait::{Pose, pose_at};
 pub use game::Game;
 pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};

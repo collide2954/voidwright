@@ -102,6 +102,23 @@ impl Session {
     }
 
     #[must_use]
+    pub const fn gait(&self) -> Gait {
+        self.gait
+    }
+
+    #[must_use]
+    pub fn time(&self) -> f32 {
+        self.playback.time()
+    }
+
+    #[must_use]
+    pub fn walked(&self, time: f32) -> (Pose, Mat4) {
+        let forward = Self::placement().transform_vector3(Vec3::NEG_Z);
+        let travel = Mat4::from_translation(forward * self.gait.travel(time));
+        (self.gait.pose(time), travel * Self::placement())
+    }
+
+    #[must_use]
     pub fn scroll(&self) -> f32 {
         self.gait.scroll(self.playback.time())
     }
@@ -213,6 +230,23 @@ mod tests {
             let shown = view_projection.project_point3(point);
             assert!(shown.x.abs() < 1.0 && shown.y.abs() < 1.0, "{point}");
         }
+    }
+
+    #[test]
+    fn a_walk_carries_the_figure_forward_by_its_travel() {
+        let session = Session::new(
+            BOUNDS,
+            ASPECT,
+            &Options {
+                gait: Gait::Walk,
+                ..Options::default()
+            },
+        );
+        let (_, placement) = session.walked(1.5);
+        let forward = Session::placement().transform_vector3(Vec3::NEG_Z);
+        let moved = placement.transform_point3(Vec3::ZERO);
+        assert!(moved.distance(forward * Gait::Walk.travel(1.5)) < 1e-5);
+        assert!(Gait::Walk.travel(1.5) > 2.0);
     }
 
     #[test]

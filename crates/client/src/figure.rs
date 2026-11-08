@@ -2,6 +2,7 @@ use std::array::from_fn;
 
 use glam::{Mat4, Vec2, Vec3};
 
+use crate::cloth::{CLOTH_BONES, Capsule, Cloth, Drape};
 use crate::{Pose, Stride};
 
 const PULSE: f32 = 0.12;
@@ -20,8 +21,6 @@ pub enum Bone {
     LeftForearm,
     RightUpperArm,
     RightForearm,
-    LeftSkirt,
-    RightSkirt,
     LeftHand,
     RightHand,
     LeftFingers,
@@ -30,9 +29,21 @@ pub enum Bone {
     RightFoot,
 }
 
-pub const BONES: usize = 19;
+pub const JOINTS: usize = 17;
+pub const BONES: usize = JOINTS + CLOTH_BONES;
+pub const COAT_CUT: Drape = Drape {
+    top: 0.16,
+    bottom: 0.28,
+    length: 0.64,
+    squash: 0.82,
+};
+pub const COAT_TOP: f32 = 0.08;
+pub const COAT_TILT: f32 = 0.06;
+const THIGH_RADIUS: f32 = 0.075;
+const THIGH_START: f32 = 0.35;
+const SHIN_RADIUS: f32 = 0.06;
 
-const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
+const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (Bone::Pelvis, None, Vec3::new(0.0, PELVIS, 0.0)),
     (Bone::Torso, Some(Bone::Pelvis), Vec3::new(0.0, 0.06, 0.0)),
     (Bone::Head, Some(Bone::Torso), Vec3::new(0.0, 0.5, 0.0)),
@@ -77,16 +88,6 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Vec3::new(0.0, -0.27, 0.0),
     ),
     (
-        Bone::LeftSkirt,
-        Some(Bone::Pelvis),
-        Vec3::new(0.0, -0.02, 0.0),
-    ),
-    (
-        Bone::RightSkirt,
-        Some(Bone::Pelvis),
-        Vec3::new(0.0, -0.02, 0.0),
-    ),
-    (
         Bone::LeftHand,
         Some(Bone::LeftForearm),
         Vec3::new(0.0, -0.165, 0.0),
@@ -127,7 +128,6 @@ const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
 const HEAD_LEVEL: f32 = 0.85;
 const COUNTER_TWIST: f32 = 0.8;
-const SKIRT_FOLLOW: f32 = 0.85;
 
 impl Bone {
     #[must_use]
@@ -169,8 +169,6 @@ impl Bone {
             }
             Self::LeftForearm => Mat4::from_rotation_x(pose.elbows[0]),
             Self::RightForearm => Mat4::from_rotation_x(pose.elbows[1]),
-            Self::LeftSkirt => Mat4::from_rotation_x(pose.thighs[0] * SKIRT_FOLLOW),
-            Self::RightSkirt => Mat4::from_rotation_x(pose.thighs[1] * SKIRT_FOLLOW),
             Self::LeftHand => Mat4::from_rotation_z(pose.wrists[0]),
             Self::RightHand => Mat4::from_rotation_z(-pose.wrists[1]),
             Self::LeftFingers => Mat4::from_rotation_z(pose.curls[0]),
@@ -188,8 +186,8 @@ fn plant(pose: &Pose, side: f32) -> f32 {
 }
 
 #[must_use]
-pub fn skeleton(pose: &Pose) -> [Mat4; BONES] {
-    let mut matrices = [Mat4::IDENTITY; BONES];
+pub fn skeleton(pose: &Pose) -> [Mat4; JOINTS] {
+    let mut matrices = [Mat4::IDENTITY; JOINTS];
     for (bone, parent, offset) in SKELETON {
         let base = parent.map_or(Mat4::IDENTITY, |parent| matrices[parent.index()]);
         matrices[bone.index()] = base * Mat4::from_translation(offset) * bone.turn(pose);
@@ -198,14 +196,77 @@ pub fn skeleton(pose: &Pose) -> [Mat4; BONES] {
 }
 
 #[must_use]
-pub fn rest() -> [Mat4; BONES] {
+pub fn waist(pelvis: Mat4) -> Mat4 {
+    pelvis * Mat4::from_translation(Vec3::Y * COAT_TOP) * Mat4::from_rotation_x(COAT_TILT)
+}
+
+#[must_use]
+pub fn rest() -> [Mat4; JOINTS] {
     skeleton(&Pose::default())
 }
 
 #[must_use]
 pub fn skin(pose: &Pose) -> [Mat4; BONES] {
     let (rest, posed) = (rest(), skeleton(pose));
-    from_fn(|bone| posed[bone] * rest[bone].inverse())
+    let pelvis = Bone::Pelvis.index();
+    let hips = posed[pelvis] * rest[pelvis].inverse();
+    from_fn(|bone| {
+        if bone < JOINTS {
+            posed[bone] * rest[bone].inverse()
+        } else {
+            hips
+        }
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Coat {
+    cloth: Cloth,
+}
+
+impl Coat {
+    #[must_use]
+    pub fn new(pose: &Pose, placement: Mat4) -> Self {
+        let mut coat = Self {
+            cloth: Cloth::hanging(COAT_CUT),
+        };
+        coat.update(pose, placement, 0.0);
+        coat
+    }
+
+    pub fn update(&mut self, pose: &Pose, placement: Mat4, seconds: f32) {
+        let bones = skeleton(pose);
+        let at = |bone: Bone| {
+            placement.transform_point3(bones[bone.index()].transform_point3(Vec3::ZERO))
+        };
+        let leg = |from: Bone, to: Bone, start: f32, radius: f32| Capsule {
+            from: at(from).lerp(at(to), start),
+            to: at(to),
+            radius,
+        };
+        let legs = [
+            leg(Bone::LeftThigh, Bone::LeftShin, THIGH_START, THIGH_RADIUS),
+            leg(Bone::LeftShin, Bone::LeftFoot, 0.0, SHIN_RADIUS),
+            leg(Bone::RightThigh, Bone::RightShin, THIGH_START, THIGH_RADIUS),
+            leg(Bone::RightShin, Bone::RightFoot, 0.0, SHIN_RADIUS),
+        ];
+        let waist = placement * waist(bones[Bone::Pelvis.index()]);
+        self.cloth.update(waist, &legs, seconds);
+    }
+
+    #[must_use]
+    pub fn skins(&self, pose: &Pose) -> [Mat4; BONES] {
+        let mut skins = skin(pose);
+        let pelvis = Bone::Pelvis.index();
+        let (rest, posed) = (waist(rest()[pelvis]), waist(skeleton(pose)[pelvis]));
+        skins[JOINTS..].copy_from_slice(&self.cloth.skins(rest, posed));
+        skins
+    }
+
+    #[must_use]
+    pub const fn cloth(&self) -> &Cloth {
+        &self.cloth
+    }
 }
 
 #[must_use]
@@ -220,7 +281,7 @@ pub fn pulse(time: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BONES, Bone, placement, pulse, rest, skeleton, skin};
+    use super::{BONES, Bone, Coat, JOINTS, placement, pulse, rest, skeleton, skin};
     use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
     use glam::{Mat4, Vec2, Vec3};
@@ -241,7 +302,7 @@ mod tests {
         assert!(moved.z < ankle.z - 0.1);
     }
 
-    fn ankle(bones: &[Mat4; BONES], bone: Bone) -> Vec3 {
+    fn ankle(bones: &[Mat4; JOINTS], bone: Bone) -> Vec3 {
         bones[bone.index()].transform_point3(Vec3::new(0.0, -0.35, 0.0))
     }
 
@@ -276,7 +337,7 @@ mod tests {
 
     const SAMPLES: u16 = 240;
 
-    fn walked(sample: u16) -> (f32, [Mat4; BONES]) {
+    fn walked(sample: u16) -> (f32, [Mat4; JOINTS]) {
         let phase = TAU * f32::from(sample) / f32::from(SAMPLES);
         let travelled = cycle(0.0) * f32::from(sample) / f32::from(SAMPLES);
         (travelled, skeleton(&pose_at(phase, 1.0, 0.0, 0.0)))
@@ -377,14 +438,83 @@ mod tests {
         assert!(side.y.abs() < 0.015);
     }
 
+    fn jolts(frames: &[f32]) -> f32 {
+        let pose = |phase: f32| pose_at(phase, 1.0, 0.0, 0.0);
+        let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
+        let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
+        let mut coat = Coat::new(&pose(phase), placement(travelled));
+        let mut path = Vec::new();
+        for (index, &seconds) in frames.iter().cycle().take(480).enumerate() {
+            travelled += seconds / 0.6;
+            phase += seconds / 0.6 * TAU / cycle(0.0);
+            coat.update(&pose(phase), placement(travelled), seconds);
+            if index >= 240 {
+                path.push((seconds, *coat.cloth().points()));
+            }
+        }
+        let mut worst = 0.0_f32;
+        for window in path.windows(3) {
+            let [(_, a), (first, b), (second, c)] = [window[0], window[1], window[2]];
+            for index in 0..a.len() {
+                let change = (c[index] - b[index]) / second - (b[index] - a[index]) / first;
+                worst = worst.max((change * 2.0 / (first + second)).length());
+            }
+        }
+        worst
+    }
+
+    fn swing() -> f32 {
+        let pose = |phase: f32| pose_at(phase, 1.0, 0.0, 0.0);
+        let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
+        let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
+        let mut coat = Coat::new(&pose(phase), placement(travelled));
+        let (mut total, mut count) = (0.0_f32, 0.0_f32);
+        for frame in 0..480_u16 {
+            travelled += 1.0 / 60.0 / 0.6;
+            phase += 1.0 / 60.0 / 0.6 * TAU / cycle(0.0);
+            coat.update(&pose(phase), placement(travelled), 1.0 / 60.0);
+            if frame >= 240 {
+                for (point, settled) in coat.cloth().points().iter().zip(coat.cloth().settled()) {
+                    total += point.distance_squared(*settled);
+                    count += 1.0;
+                }
+            }
+        }
+        (total / count).sqrt()
+    }
+
     #[test]
-    fn the_coat_follows_the_leading_leg() {
-        let pose = pose_at(0.0, 1.0, 0.0, 0.0);
-        let bones = skeleton(&pose);
-        let hem = Vec3::new(0.0, -0.5, -0.2);
-        let left = bones[Bone::LeftSkirt.index()].transform_point3(hem);
-        let right = bones[Bone::RightSkirt.index()].transform_point3(hem);
-        assert!(left.z < right.z);
+    fn a_walking_coat_swings_without_wild_jolts() {
+        for frames in [&[1.0 / 60.0][..], &[1.0 / 50.0, 1.0 / 70.0], &[1.0 / 30.0]] {
+            let jolt = jolts(frames);
+            assert!(jolt < 260.0, "{frames:?} {jolt}");
+        }
+    }
+
+    #[test]
+    fn a_walking_coat_moves_but_stays_close_to_its_shape() {
+        let swing = swing();
+        assert!((0.02..0.05).contains(&swing), "{swing}");
+    }
+
+    #[test]
+    fn a_bare_skin_carries_the_coat_with_the_hips() {
+        let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
+        for matrix in &skins[JOINTS..BONES] {
+            assert!(matrix.abs_diff_eq(skins[Bone::Pelvis.index()], 1e-6));
+        }
+    }
+
+    #[test]
+    fn a_still_coat_hangs_as_sculpted() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..120 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        for matrix in &coat.skins(&pose)[JOINTS..] {
+            assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 0.01), "{matrix}");
+        }
     }
 
     #[test]

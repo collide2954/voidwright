@@ -2,7 +2,8 @@ use std::f32::consts::FRAC_PI_2;
 
 use glam::{Quat, Vec2, Vec3};
 
-use crate::figure::{ANKLE, Bone, THIGH, rest};
+use crate::cloth::Cloth;
+use crate::figure::{ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, JOINTS, THIGH, rest, waist};
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
 use crate::shape::{Material, Surface};
@@ -89,13 +90,6 @@ impl Side {
         }
     }
 
-    const fn skirt(self) -> Bone {
-        match self {
-            Self::Left => Bone::LeftSkirt,
-            Self::Right => Bone::RightSkirt,
-        }
-    }
-
     const fn hand(self) -> Bone {
         match self {
             Self::Left => Bone::LeftHand,
@@ -122,6 +116,7 @@ struct Piece {
     sculpt: Sculpt,
     cell: f32,
     budget: usize,
+    draped: bool,
 }
 
 const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
@@ -129,6 +124,49 @@ const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
         sculpt,
         cell,
         budget,
+        draped: false,
+    }
+}
+
+const fn draped(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
+    Piece {
+        sculpt,
+        cell,
+        budget,
+        draped: true,
+    }
+}
+
+fn index(bone: usize) -> f32 {
+    f32::from(u8::try_from(bone).unwrap_or(u8::MAX))
+}
+
+fn drape(mesh: &mut SkinnedMesh) {
+    let cloth = Cloth::hanging(COAT_CUT);
+    let pelvis = Bone::Pelvis.index();
+    let frame = waist(rest()[pelvis]).inverse();
+    for vertex in &mut mesh.vertices {
+        if (vertex.bones[0] - index(pelvis)).abs() > 0.5 {
+            continue;
+        }
+        let local = frame.transform_point3(Vec3::from(vertex.position));
+        let mut grips: Vec<(usize, f32)> = Vec::new();
+        for (slot, weight) in cloth.weights(local) {
+            let bone = slot.map_or(pelvis, |slot| JOINTS + slot);
+            match grips.iter_mut().find(|grip| grip.0 == bone) {
+                Some(grip) => grip.1 += weight,
+                None => grips.push((bone, weight)),
+            }
+        }
+        grips.retain(|grip| grip.1 > 0.0);
+        grips.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let total: f32 = grips.iter().map(|grip| grip.1).sum();
+        vertex.bones = [index(pelvis); 4];
+        vertex.weights = [0.0; 4];
+        for (slot, (bone, weight)) in grips.into_iter().enumerate() {
+            vertex.bones[slot] = index(bone);
+            vertex.weights[slot] = weight / total;
+        }
     }
 }
 
@@ -136,10 +174,10 @@ const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
 pub fn voidwright() -> SkinnedMesh {
     let pieces = [
         piece(body(), 0.014, 10_000),
-        piece(garments(), 0.009, 9_000),
+        draped(garments(), 0.009, 9_000),
         piece(face(), 0.005, 3_000),
         piece(chest(), 0.007, 1_500),
-        piece(belt(), 0.007, 800),
+        draped(belt(), 0.007, 800),
         piece(pauldron(), 0.007, 2_500),
         piece(bracer(), 0.006, 1_200),
         piece(knee(), 0.007, 600),
@@ -151,6 +189,9 @@ pub fn voidwright() -> SkinnedMesh {
     for piece in &pieces {
         let mut mesh = piece.sculpt.mesh(piece.cell);
         mesh.simplify(piece.budget);
+        if piece.draped {
+            drape(&mut mesh);
+        }
         figure.append(&mesh);
     }
     weather(&mut figure);
@@ -396,13 +437,14 @@ fn arm(clay: &mut Sculpt, side: Side) {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(0.64, Vec2::new(0.16, 0.28), 0.022, Vec2::new(9.0, 0.05));
+        let radii = Vec2::new(COAT_CUT.top, COAT_CUT.bottom);
+        let panel = tube(COAT_CUT.length, radii, 0.022, Vec2::new(9.0, 0.05));
         clay.add(
-            stroke(side.skirt(), panel, COAT)
+            stroke(Bone::Pelvis, panel, COAT)
                 .lined(LINING)
-                .at(Vec3::new(0.0, 0.1, 0.0))
-                .turned(Quat::from_rotation_x(0.06))
-                .squashed(Vec3::new(1.0, 1.0, 0.82))
+                .at(Vec3::Y * COAT_TOP)
+                .turned(Quat::from_rotation_x(COAT_TILT))
+                .squashed(Vec3::new(1.0, 1.0, COAT_CUT.squash))
                 .clipped(Vec3::X * -side.sign(), -0.01)
                 .wrinkled(0.003, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
@@ -594,8 +636,8 @@ fn belt() -> Sculpt {
     for side in Side::BOTH {
         clay.part();
         clay.add(
-            stroke(side.skirt(), block(0.034, 0.04, 0.02, 0.012), LEATHER)
-                .at(Vec3::new(side.sign() * 0.11, 0.035, -0.135))
+            stroke(Bone::Pelvis, block(0.034, 0.04, 0.02, 0.012), LEATHER)
+                .at(Vec3::new(side.sign() * 0.11, 0.015, -0.135))
                 .turned(Quat::from_rotation_y(-side.sign() * 0.6)),
         );
     }
@@ -728,9 +770,10 @@ fn lantern() -> Sculpt {
 #[cfg(test)]
 mod tests {
     use super::{DUST, voidwright, weather};
-    use crate::figure::{BONES, Bone};
+    use crate::figure::{BONES, Bone, JOINTS};
     use crate::palette::linear;
     use crate::sculpt::{SkinnedMesh, SkinnedVertex};
+    use glam::{Mat4, Vec3};
     use std::sync::LazyLock;
 
     static FIGURE: LazyLock<SkinnedMesh> = LazyLock::new(voidwright);
@@ -739,13 +782,37 @@ mod tests {
         FIGURE.vertices.iter().map(|vertex| vertex.position[1])
     }
 
+    fn bone(value: f32) -> usize {
+        (0..BONES)
+            .find(|&bone| (value - f32::from(u8::try_from(bone).unwrap())).abs() < 0.5)
+            .expect("a vertex follows a bone")
+    }
+
     fn strongest(vertex: &SkinnedVertex) -> usize {
         let slot = (0..vertex.weights.len())
             .max_by(|&a, &b| vertex.weights[a].total_cmp(&vertex.weights[b]))
             .expect("a vertex has weights");
-        (0..BONES)
-            .find(|&bone| (vertex.bones[slot] - f32::from(u8::try_from(bone).unwrap())).abs() < 0.5)
-            .expect("a vertex follows a bone")
+        bone(vertex.bones[slot])
+    }
+
+    fn on_cloth(vertex: &SkinnedVertex) -> f32 {
+        vertex
+            .bones
+            .iter()
+            .zip(&vertex.weights)
+            .filter(|(at, _)| bone(**at) >= JOINTS)
+            .map(|(_, weight)| weight)
+            .sum()
+    }
+
+    fn posed(vertex: &SkinnedVertex, skins: &[Mat4; BONES]) -> Vec3 {
+        let rest = Vec3::from(vertex.position);
+        vertex
+            .bones
+            .iter()
+            .zip(&vertex.weights)
+            .map(|(at, weight)| skins[bone(*at)].transform_point3(rest) * *weight)
+            .sum()
     }
 
     fn glows(vertex: &SkinnedVertex) -> bool {
@@ -873,14 +940,24 @@ mod tests {
 
     #[test]
     fn the_coat_hem_falls_below_the_knees() {
-        let skirts = [Bone::LeftSkirt.index(), Bone::RightSkirt.index()];
         let hem = FIGURE
             .vertices
             .iter()
-            .filter(|vertex| skirts.contains(&strongest(vertex)))
+            .filter(|vertex| strongest(vertex) >= JOINTS)
             .map(|vertex| vertex.position[1])
             .fold(f32::INFINITY, f32::min);
         assert!(hem < 0.39 && hem > 0.15);
+    }
+
+    #[test]
+    fn the_belt_holds_the_top_of_the_coat() {
+        let top = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position[1] > 0.975 && on_cloth(vertex) > 0.0);
+        for vertex in top {
+            assert!(on_cloth(vertex) < 0.2, "{:?}", vertex.position);
+        }
     }
 
     #[test]
@@ -966,42 +1043,60 @@ mod tests {
         longest
     }
 
+    fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
+        let axis = to - from;
+        let along = ((point - from).dot(axis) / axis.length_squared()).clamp(0.0, 1.0);
+        point.distance(from + axis * along)
+    }
+
     #[test]
-    fn the_coat_covers_the_legs_while_walking() {
-        use crate::figure::{skeleton, skin};
-        use crate::gait::pose_at;
-        use glam::Vec3;
-        let garments = super::garments();
-        let covered = |rest: Vec3| {
-            let outward = Vec3::new(rest.x, 0.0, rest.z).normalize();
-            garments.distance(rest) > 0.005
-                && (0..300).any(|step| {
-                    let reach = f32::from(u16::try_from(step).unwrap()) * 0.001;
-                    garments.distance(rest + outward * reach) < 0.0
-                })
-        };
-        for step in 0..48 {
-            let phase = std::f32::consts::TAU * f32::from(u8::try_from(step).unwrap()) / 48.0;
-            let pose = pose_at(phase, 1.0, 0.0, 0.0);
-            let (bones, skins) = (skeleton(&pose), skin(&pose));
-            for (thigh, shin, skirt, side) in [
-                (Bone::LeftThigh, Bone::LeftShin, Bone::LeftSkirt, -1.0),
-                (Bone::RightThigh, Bone::RightShin, Bone::RightSkirt, 1.0),
-            ] {
-                let points = [
-                    bones[shin.index()].transform_point3(Vec3::new(0.0, 0.0, -0.06)),
-                    bones[shin.index()].transform_point3(Vec3::new(side * 0.06, 0.0, 0.0)),
-                    bones[thigh.index()].transform_point3(Vec3::new(side * 0.065, -0.2, 0.0)),
-                ];
-                for (index, point) in points.into_iter().enumerate() {
-                    let rest = skins[skirt.index()].inverse().transform_point3(point);
-                    assert!(
-                        covered(rest),
-                        "{skirt:?} point {index} at phase step {step}"
-                    );
+    fn the_legs_never_cut_through_the_coat_while_walking() {
+        use crate::figure::{Coat, skeleton};
+        use crate::gait::{cycle, pose_at};
+        use std::f32::consts::TAU;
+        const FRAME: f32 = 1.0 / 60.0;
+        const SPEED: f32 = 1.0 / 0.6;
+        let coat: Vec<&SkinnedVertex> = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| on_cloth(vertex) > 0.5)
+            .collect();
+        let pose = |phase: f32| pose_at(phase, 1.0, 0.0, 0.0);
+        let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
+        let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
+        let mut cloth = Coat::new(&pose(phase), placement(travelled));
+        let mut deepest = (f32::INFINITY, 0_u16);
+        for frame in 0..240_u16 {
+            travelled += SPEED * FRAME;
+            phase = (phase + SPEED * FRAME * TAU / cycle(0.0)).rem_euclid(TAU);
+            cloth.update(&pose(phase), placement(travelled), FRAME);
+            if frame < 120 || frame % 4 != 0 {
+                continue;
+            }
+            let skins = cloth.skins(&pose(phase));
+            let bones = skeleton(&pose(phase));
+            let at = |bone: Bone| bones[bone.index()].transform_point3(Vec3::ZERO);
+            let legs = [
+                (Bone::LeftThigh, Bone::LeftShin, Bone::LeftFoot),
+                (Bone::RightThigh, Bone::RightShin, Bone::RightFoot),
+            ]
+            .map(|(thigh, shin, foot)| {
+                [
+                    (at(thigh).lerp(at(shin), 0.35), at(shin), 0.055),
+                    (at(shin), at(foot), 0.05),
+                ]
+            });
+            for vertex in &coat {
+                let point = posed(vertex, &skins);
+                for &(from, to, radius) in legs.iter().flatten() {
+                    let gap = beside(point, from, to) - radius;
+                    if gap < deepest.0 {
+                        deepest = (gap, frame);
+                    }
                 }
             }
         }
+        assert!(deepest.0 > 0.0, "{deepest:?}");
     }
 
     #[test]
@@ -1016,11 +1111,10 @@ mod tests {
 
     #[test]
     fn the_coat_is_woven_and_the_plates_are_brushed() {
-        let skirts = [Bone::LeftSkirt.index(), Bone::RightSkirt.index()];
         let coat: Vec<&SkinnedVertex> = FIGURE
             .vertices
             .iter()
-            .filter(|vertex| skirts.contains(&strongest(vertex)) && vertex.position[1] < 0.7)
+            .filter(|vertex| strongest(vertex) >= JOINTS && vertex.position[1] < 0.7)
             .collect();
         let woven = coat.iter().filter(|vertex| vertex.surface[0] > 0.9).count();
         assert!(woven * 10 > coat.len() * 9);
