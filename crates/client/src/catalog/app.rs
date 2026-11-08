@@ -207,7 +207,8 @@ impl EventHandler for Catalog {
 #[cfg(test)]
 mod tests {
     use super::{FOLDER, chosen, folder, stale};
-    use crate::catalog::entries;
+    use crate::catalog::{entries, index};
+    use std::fs;
     use std::path::Path;
 
     fn words(list: &[&str]) -> Vec<String> {
@@ -249,5 +250,40 @@ mod tests {
         let root = folder.parent().and_then(Path::parent).unwrap();
         assert!(root.join("Cargo.toml").exists());
         assert!(root.join("crates").exists());
+    }
+
+    fn stored() -> Vec<String> {
+        fs::read_dir(folder())
+            .unwrap()
+            .map(|item| item.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_stored_catalog_matches_the_registry() {
+        let folder = folder();
+        let stored_index = fs::read_to_string(folder.join("README.md")).unwrap();
+        assert!(
+            stored_index == index(&entries()),
+            "docs/catalog/README.md is old: render the catalog again"
+        );
+        assert_eq!(stale(&stored(), &entries()), Vec::<String>::new());
+        for entry in entries() {
+            let png = fs::read(folder.join(entry.file()))
+                .unwrap_or_else(|_| panic!("no image for {}", entry.name));
+            assert_eq!(&png[12..16], b"IHDR");
+            let size = [&png[16..20], &png[20..24]]
+                .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()));
+            assert_eq!(size, entry.camera.size.map(u32::from), "{}", entry.name);
+        }
+    }
+
+    #[test]
+    fn the_stored_catalog_stays_below_fifteen_megabytes() {
+        let total: u64 = fs::read_dir(folder())
+            .unwrap()
+            .map(|item| item.unwrap().metadata().unwrap().len())
+            .sum();
+        assert!(total < 15 * 1024 * 1024, "{total}");
     }
 }

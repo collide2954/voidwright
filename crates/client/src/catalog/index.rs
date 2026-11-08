@@ -50,9 +50,14 @@ The angles are the same as the angles of `--orbit`.
 Each material constant (`const NAME: Material` at the top level of a module) must have an entry. \
 A test finds the constants in the source code. \
 Add a new constant to the `MATERIALS` list of its module. \
-For a new module, add a `materials(...)` line to `entries()`.
+For a new module, add a `pub const MATERIALS` list to the module and a `materials(...)` line to `entries()`.
 
-For a new kind of object, add a `Subject` kind and its draw step in `crates/client/src/catalog/app.rs`.
+The game draws its world with all its objects. \
+For an object in the world, add a `world(...)` item to `world_views()` with a camera on the object. \
+No new code is necessary. \
+For a new kind of subject, add a `Subject` kind in `crates/client/src/catalog/mod.rs` \
+and its draw step in `crates/client/src/catalog/app.rs`. \
+A mesh with a new shader also needs a `Model` kind and a draw call in `crates/client/src/catalog/studio.rs`.
 
 Keep each image to 640 × 640 pixels or fewer in total, and keep the folder below 15 MB. \
 Tests check these limits.
