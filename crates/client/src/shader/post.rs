@@ -1,5 +1,6 @@
-use miniquad::{VertexAttribute, VertexFormat};
+use miniquad::{FilterMode, TextureFormat, TextureParams, VertexAttribute, VertexFormat};
 
+pub const SAMPLES: i32 = 4;
 pub const LEVELS: usize = 3;
 pub const TRIANGLE: [[f32; 2]; 3] = [[-1.0, -1.0], [3.0, -1.0], [-1.0, 3.0]];
 
@@ -11,6 +12,39 @@ void main() {
     gl_Position = vec4(in_position, 0.0, 1.0);
 }
 ";
+
+#[derive(Clone, Copy, Debug)]
+pub struct Targets {
+    pub color: TextureParams,
+    pub depth: TextureParams,
+    pub scene: TextureParams,
+    pub levels: [TextureParams; LEVELS],
+    pub halo: TextureParams,
+}
+
+#[must_use]
+pub fn targets(screen: [u32; 2]) -> Targets {
+    let target = |[width, height]: [u32; 2], format, filter| TextureParams {
+        format,
+        min_filter: filter,
+        mag_filter: filter,
+        width,
+        height,
+        ..TextureParams::default()
+    };
+    let sampled = |format| TextureParams {
+        sample_count: SAMPLES,
+        ..target(screen, format, FilterMode::Linear)
+    };
+    let levels = levels(screen);
+    Targets {
+        color: sampled(TextureFormat::RGBA8),
+        depth: sampled(TextureFormat::Depth32),
+        scene: target(screen, TextureFormat::RGBA8, FilterMode::Nearest),
+        levels: levels.map(|size| target(size, TextureFormat::RGBA16F, FilterMode::Linear)),
+        halo: target(levels[0], TextureFormat::RGBA8, FilterMode::Linear),
+    }
+}
 
 #[must_use]
 pub fn attributes() -> [VertexAttribute; 1] {
@@ -29,8 +63,58 @@ pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
 
 #[cfg(test)]
 mod tests {
-    use super::{TRIANGLE, VERTEX, attributes, levels};
+    use super::{SAMPLES, TRIANGLE, VERTEX, attributes, levels, targets};
     use glam::Vec2;
+    use miniquad::{FilterMode, TextureFormat, TextureParams, TextureWrap};
+
+    fn size(params: &TextureParams) -> [u32; 2] {
+        [params.width, params.height]
+    }
+
+    #[test]
+    fn the_scene_renders_with_four_samples_and_resolves_to_one() {
+        let targets = targets([1920, 1080]);
+        assert_eq!(SAMPLES, 4);
+        for target in [&targets.color, &targets.depth, &targets.scene] {
+            assert_eq!(size(target), [1920, 1080]);
+        }
+        assert_eq!(targets.color.format, TextureFormat::RGBA8);
+        assert_eq!(targets.color.sample_count, SAMPLES);
+        assert_eq!(targets.depth.format, TextureFormat::Depth32);
+        assert_eq!(targets.depth.sample_count, SAMPLES);
+        assert_eq!(targets.scene.format, TextureFormat::RGBA8);
+        assert_eq!(targets.scene.sample_count, 1);
+    }
+
+    #[test]
+    fn the_resolved_scene_is_read_texel_by_texel() {
+        let scene = targets([1280, 720]).scene;
+        assert_eq!(scene.min_filter, FilterMode::Nearest);
+        assert_eq!(scene.mag_filter, FilterMode::Nearest);
+        assert_eq!(scene.wrap, TextureWrap::Clamp);
+    }
+
+    #[test]
+    fn the_bloom_levels_hold_smooth_light_beyond_one() {
+        let targets = targets([1280, 720]);
+        for (level, expected) in targets.levels.iter().zip(levels([1280, 720])) {
+            assert_eq!(size(level), expected);
+            assert_eq!(level.format, TextureFormat::RGBA16F);
+            assert_eq!(level.min_filter, FilterMode::Linear);
+            assert_eq!(level.mag_filter, FilterMode::Linear);
+            assert_eq!(level.wrap, TextureWrap::Clamp);
+        }
+    }
+
+    #[test]
+    fn the_halo_holds_display_colors_at_the_first_level() {
+        let targets = targets([1280, 720]);
+        assert_eq!(size(&targets.halo), levels([1280, 720])[0]);
+        assert_eq!(targets.halo.format, TextureFormat::RGBA8);
+        assert_eq!(targets.halo.min_filter, FilterMode::Linear);
+        assert_eq!(targets.halo.mag_filter, FilterMode::Linear);
+        assert_eq!(targets.halo.wrap, TextureWrap::Clamp);
+    }
 
     #[test]
     fn the_bloom_starts_at_a_quarter_of_the_screen_and_halves() {
