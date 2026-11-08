@@ -1,5 +1,29 @@
 use glam::Vec3;
 
+use crate::palette::linear;
+
+const AMBER: Vec3 = Vec3::new(1.0, 0.6, 0.25);
+const LANTERN_POWER: f32 = 0.6;
+const LANTERN_REACH: f32 = 2.8;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lamp {
+    pub position: Vec3,
+    pub color: Vec3,
+    pub reach: f32,
+}
+
+impl Lamp {
+    #[must_use]
+    pub fn lantern(position: Vec3) -> Self {
+        Self {
+            position,
+            color: linear(AMBER) * LANTERN_POWER,
+            reach: LANTERN_REACH,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Light {
     pub toward_sun: Vec3,
@@ -31,11 +55,48 @@ impl Light {
 
 #[cfg(test)]
 mod tests {
-    use super::{Light, VAEL};
+    use super::{Lamp, Light, VAEL};
+    use crate::voidwright;
     use glam::Vec3;
 
     fn brightness(color: Vec3) -> f32 {
         color.element_sum()
+    }
+
+    fn hue(color: Vec3) -> Vec3 {
+        color / color.max_element()
+    }
+
+    #[test]
+    fn the_lantern_light_has_the_color_of_the_amber_glass() {
+        let glass: Vec<Vec3> = voidwright()
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.params[1] > 0.99 && vertex.color[0] > 0.9)
+            .filter(|vertex| vertex.color[2] < 0.2)
+            .map(|vertex| Vec3::from(vertex.color))
+            .collect();
+        let count = f32::from(u16::try_from(glass.len()).unwrap());
+        let amber = glass.iter().sum::<Vec3>() / count;
+        let lamp = Lamp::lantern(Vec3::ZERO);
+        assert!(hue(lamp.color).distance(hue(amber)) < 0.01, "{amber}");
+    }
+
+    #[test]
+    fn the_lantern_light_reaches_two_to_three_meters() {
+        assert!((2.0..=3.0).contains(&Lamp::lantern(Vec3::ZERO).reach));
+    }
+
+    #[test]
+    fn the_lantern_light_sits_at_the_lantern() {
+        let at = Vec3::new(28.6, 2.9, -28.2);
+        assert_eq!(Lamp::lantern(at).position, at);
+    }
+
+    #[test]
+    fn the_lantern_light_is_weak_next_to_the_sun() {
+        let lamp = Lamp::lantern(Vec3::ZERO);
+        assert!(brightness(lamp.color) < brightness(VAEL.sun) / 3.0);
     }
 
     #[test]

@@ -45,7 +45,7 @@ pub use gait::{Pose, pose_at};
 pub use game::Game;
 pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};
 pub use launch::{Launch, flip_rows};
-pub use light::{Light, VAEL};
+pub use light::{Lamp, Light, VAEL};
 pub use mesh::{Mesh, Vertex, normal};
 pub use motion::{center, position};
 pub use paint::Painter;
