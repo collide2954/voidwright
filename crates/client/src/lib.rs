@@ -1,4 +1,5 @@
 mod app;
+pub mod audio;
 mod camera;
 mod clock;
 pub mod cloth;
