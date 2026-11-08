@@ -1,3 +1,5 @@
+use crate::Tile;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
     North,
@@ -37,6 +39,16 @@ impl Direction {
     }
 
     #[must_use]
+    pub fn between(from: Tile, to: Tile) -> Option<Self> {
+        let dx = i64::from(to.x) - i64::from(from.x);
+        let dy = i64::from(to.y) - i64::from(from.y);
+        Self::ALL.into_iter().find(|direction| {
+            let (x, y) = direction.delta();
+            (i64::from(x), i64::from(y)) == (dx, dy)
+        })
+    }
+
+    #[must_use]
     pub const fn opposite(self) -> Self {
         match self {
             Self::North => Self::South,
@@ -54,7 +66,30 @@ impl Direction {
 #[cfg(test)]
 mod tests {
     use super::Direction;
+    use crate::Tile;
     use std::collections::HashSet;
+
+    #[test]
+    fn between_names_the_step_to_a_neighbor() {
+        let from = Tile::new(4, 4);
+        for direction in Direction::ALL {
+            assert_eq!(
+                Direction::between(from, from.step(direction)),
+                Some(direction)
+            );
+        }
+    }
+
+    #[test]
+    fn between_rejects_tiles_that_are_not_neighbors() {
+        let from = Tile::new(4, 4);
+        assert_eq!(Direction::between(from, from), None);
+        assert_eq!(Direction::between(from, Tile::new(6, 4)), None);
+        assert_eq!(
+            Direction::between(Tile::new(i32::MAX, 0), Tile::new(i32::MIN, 0)),
+            None
+        );
+    }
 
     #[test]
     fn north_is_positive_y_and_east_is_positive_x() {
