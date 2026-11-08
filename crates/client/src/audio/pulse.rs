@@ -23,8 +23,18 @@ const DRONE_CUTOFF: f32 = 280.0;
 const DRONE_OPEN: f32 = 0.3;
 const DRONE_LIFT: f32 = 0.25;
 
-// F2 A2 C3 D3: D minor 7 over the drone.
-const CHORD: [u8; 4] = [41, 45, 48, 50];
+const CHORDS: [[u8; 4]; 4] = [
+    // F2 A2 C3 D3: D minor 7 over the drone.
+    [41, 45, 48, 50],
+    // F2 B-flat2 D3 F3: B-flat major.
+    [41, 46, 50, 53],
+    // G2 B-flat2 D3 F3: G minor 7.
+    [43, 46, 50, 53],
+    // G2 B-flat2 E-flat3 F3: E-flat with an added 9, the dark chord of the phrygian mode.
+    [43, 46, 51, 53],
+];
+const STAGGER: f32 = 2.5;
+const VOICE_FADES: [f32; 2] = [2.6, 1.8];
 const VOICE_LEVEL: f32 = 0.017;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
 const DETUNE: [f32; 2] = [2.0, 6.0];
@@ -140,8 +150,13 @@ impl Pulse {
         let dip = 1.0 - depth * self.duck.next(time);
         self.drone
             .control(bed * (1.0 + DRONE_LIFT * drive), drive, time);
-        self.pad
-            .control(bed * dip * (1.0 + PAD_LIFT * drive), drive, time);
+        self.pad.control(
+            self.build.chord(self.clock.phase),
+            bed * dip * (1.0 + PAD_LIFT * drive),
+            drive,
+            &mut self.dice,
+            time,
+        );
         self.throb
             .control(entry * character.throb * lift(THROB_FLOOR, drive), time);
     }
@@ -197,6 +212,16 @@ impl Build {
             Stage::Rise => along,
             Stage::Peak => 1.0,
             Stage::Fall => 1.0 - along,
+        }
+    }
+
+    fn chord(&self, phase: f32) -> usize {
+        let late = self.beats + phase >= self.length / 2.0;
+        match (self.stage, late) {
+            (Stage::Calm, _) | (Stage::Fall, true) => 0,
+            (Stage::Rise, false) => 1,
+            (Stage::Rise, true) => 2,
+            (Stage::Peak, _) | (Stage::Fall, false) => 3,
         }
     }
 }
@@ -320,12 +345,17 @@ impl Drone {
 struct Pad {
     voices: [Voice; 4],
     filters: [Svf; 2],
+    chord: usize,
 }
 
 struct Voice {
     saws: [Saw; 2],
     gains: [Ramp; 2],
     pan: [f32; 2],
+    note: u8,
+    want: u8,
+    wait: f32,
+    fade: Fade,
     pitch: f32,
     detunes: [f32; 2],
     drift: Phase,
@@ -338,11 +368,19 @@ impl Pad {
             voices: from_fn(|index| {
                 // Invert every second voice. Then the edges of the saw waves do not add.
                 let polarity = if index % 2 == 0 { 1.0 } else { -1.0 };
-                let pitch = hertz(CHORD[index]);
+                let note = CHORDS[0][index];
+                let pitch = hertz(note);
                 Voice {
                     saws: from_fn(|_| Saw::new(dice.unit(), pitch, time.rate)),
                     gains: [Ramp::default(); 2],
                     pan: pan(PANS[index]).map(|side| side * polarity),
+                    note,
+                    want: note,
+                    wait: 0.0,
+                    fade: Fade {
+                        level: 1.0,
+                        ..Fade::new(VOICE_FADES, time)
+                    },
                     pitch,
                     detunes: [
                         polarity * dice.within(DETUNE),
@@ -353,18 +391,20 @@ impl Pad {
                 }
             }),
             filters: [Svf::new(PAD_CUTOFF, FILTER_Q, time.rate); 2],
+            chord: 0,
         }
     }
 
-    fn control(&mut self, level: f32, drive: f32, time: Time) {
-        for voice in &mut self.voices {
-            let drift = DRIFT_CENTS * sine(voice.drift.advance(voice.speed, time.control));
-            for (saw, detune) in voice.saws.iter_mut().zip(voice.detunes) {
-                saw.tune(voice.pitch * ((detune + drift) / 1200.0).exp2(), time.rate);
+    fn control(&mut self, chord: usize, level: f32, drive: f32, dice: &mut Dice, time: Time) {
+        if chord != self.chord {
+            self.chord = chord;
+            for (voice, &note) in self.voices.iter_mut().zip(&CHORDS[chord]) {
+                voice.want = note;
+                voice.wait = dice.within([0.0, STAGGER]);
             }
-            let [main, twin] = &mut voice.gains;
-            main.aim(level * VOICE_LEVEL);
-            twin.aim(level * VOICE_LEVEL * THICK * drive);
+        }
+        for voice in &mut self.voices {
+            voice.control(level * VOICE_LEVEL, THICK * drive, time);
         }
         let cutoff = PAD_CUTOFF * (1.0 + PAD_OPEN * drive);
         for filter in &mut self.filters {
@@ -385,6 +425,28 @@ impl Pad {
             frame[0] += self.filters[0].process(mix[0]).low;
             frame[1] += self.filters[1].process(mix[1]).low;
         }
+    }
+}
+
+impl Voice {
+    fn control(&mut self, level: f32, thick: f32, time: Time) {
+        if self.note != self.want {
+            if self.wait > 0.0 {
+                self.wait -= time.step;
+            } else if self.fade.level <= 0.0 {
+                self.note = self.want;
+                self.pitch = hertz(self.note);
+            }
+        }
+        let moving = self.note != self.want && self.wait <= 0.0;
+        let shape = self.fade.toward(!moving);
+        let drift = DRIFT_CENTS * sine(self.drift.advance(self.speed, time.control));
+        for (saw, detune) in self.saws.iter_mut().zip(self.detunes) {
+            saw.tune(self.pitch * ((detune + drift) / 1200.0).exp2(), time.rate);
+        }
+        let [main, twin] = &mut self.gains;
+        main.aim(level * shape);
+        twin.aim(level * shape * thick);
     }
 }
 
@@ -446,6 +508,8 @@ impl Throb {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::TAU;
+
     use super::{CHARACTER, Character, Pulse};
     use crate::audio::dsp::{Frame, Svf};
 
@@ -534,7 +598,7 @@ mod tests {
         for (seed, character) in [(3, CHARACTER), (7, CHARACTER), (3, BREATH), (7, BREATH)] {
             let mut pulse = Pulse::with(seed, RATE, character);
             take(&mut pulse, 10);
-            let levels = detrended(&envelope(&take(&mut pulse, 30)), BEAT);
+            let levels = detrended(&envelope(&take(&mut pulse, 60)), BEAT);
             let (lag, strength) = (40..=125)
                 .map(|lag| (lag, correlation(&levels, lag)))
                 .max_by(|one, other| one.1.total_cmp(&other.1))
@@ -570,7 +634,7 @@ mod tests {
                 .map(|window| decibels(rms(window)))
                 .collect();
             let start = levels[1];
-            let (top, height) = levels
+            let (top, height) = levels[..20]
                 .iter()
                 .copied()
                 .enumerate()
@@ -627,6 +691,47 @@ mod tests {
         }
         assert!(total > 0.0);
         assert!(high < total * 0.03, "{}", high / total);
+    }
+
+    fn strength(frames: &[Frame], note: u8) -> f64 {
+        let frequency = 440.0 * ((f64::from(note) - 69.0) / 12.0).exp2();
+        let coefficient = 2.0 * (TAU * frequency / f64::from(RATE)).cos();
+        let count = f64::from(u32::try_from(frames.len()).unwrap());
+        let (mut one, mut two) = (0.0, 0.0);
+        for (index, frame) in frames.iter().enumerate() {
+            let along = f64::from(u32::try_from(index).unwrap()) / count;
+            let weight = 0.5 - 0.5 * (TAU * along).cos();
+            let next = weight * f64::from(frame[0] + frame[1]) + coefficient * one - two;
+            two = one;
+            one = next;
+        }
+        (one * one + two * two - coefficient * one * two).sqrt()
+    }
+
+    fn heard(frames: &[Frame], notes: &[u8]) -> Vec<u8> {
+        let strengths: Vec<f64> = notes.iter().map(|&note| strength(frames, note)).collect();
+        let loudest = strengths.iter().copied().fold(0.0, f64::max);
+        notes
+            .iter()
+            .zip(&strengths)
+            .filter(|&(_, &strength)| strength >= 0.3 * loudest)
+            .map(|(&note, _)| note)
+            .collect()
+    }
+
+    #[test]
+    fn the_pad_moves_through_phrygian_chords_as_it_builds() {
+        let mut pulse = Pulse::new(5, RATE);
+        take(&mut pulse, 10);
+        let mut chords = Vec::new();
+        for _ in 0..24 {
+            let window = take(&mut pulse, 10);
+            chords.push(heard(&window[..SECOND / 2], &[43, 46, 48, 51, 53]));
+        }
+        assert!(chords.iter().any(|chord| chord.contains(&51)), "{chords:?}");
+        chords.sort();
+        chords.dedup();
+        assert!(chords.len() >= 3, "{chords:?}");
     }
 
     #[test]
