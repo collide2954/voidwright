@@ -1,3 +1,4 @@
+pub mod binaural;
 pub mod command;
 pub mod dsp;
 pub mod footstep;
