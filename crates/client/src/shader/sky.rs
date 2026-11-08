@@ -295,6 +295,23 @@ mod tests {
     }
 
     #[test]
+    fn the_dome_turns_its_nebula_past_a_fixed_gradient_and_glow() {
+        let drifting: Vec<SkyVertex> = sky()
+            .vertices
+            .into_iter()
+            .filter(|vertex| vertex.drift > 0.0)
+            .collect();
+        assert!(drifting.len() > 1000);
+        for vertex in &drifting {
+            let rest = Vec3::from(vertex.position).normalize();
+            let toward = turned(rest, vertex.drift * 600.0).normalize();
+            let expected = gradient(toward) + nebula(rest) + AMBER * halo(toward);
+            let error = shaded(vertex, 600.0).distance(linear(expected) * SKY_GAIN);
+            assert!(error < 1e-4, "{rest} {error}");
+        }
+    }
+
+    #[test]
     fn a_drifting_point_carries_its_nebula_while_the_glow_stays_with_vael() {
         for direction in directions() {
             let vertex = SkyVertex {

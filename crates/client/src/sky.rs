@@ -16,6 +16,7 @@ const STAR_SEED: u64 = 0x5354_4152;
 const TWINKLE_SEED: u64 = 0x5457_494e_4b4c;
 const TWINKLE_RATES: Range<f32> = 0.2..0.6;
 const STILL: [f32; 2] = [0.0; 2];
+const DRIFT: f32 = 0.002;
 const FRAGMENT_SEED: u64 = 0x4652_4147;
 const ZENITH: Vec3 = Vec3::new(0.03, 0.025, 0.08);
 const HORIZON: Vec3 = Vec3::new(0.08, 0.05, 0.15);
@@ -73,7 +74,7 @@ impl Backdrop {
 #[must_use]
 pub fn sky() -> Backdrop {
     let mut backdrop = Backdrop::default();
-    backdrop.add(&dome(), 0.0, |_| STILL);
+    backdrop.add(&dome(), DRIFT, |_| STILL);
     backdrop.add(&vael(), 0.0, |_| STILL);
     let twinkles = twinkles();
     backdrop.add(&stars(), 0.0, |vertex| twinkles[vertex / 4]);
@@ -317,8 +318,8 @@ fn lerp(from: f32, to: f32, weight: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AMBER, FRAGMENTS, HORIZON, NADIR, SKY_RADIUS, STAR_COUNT, TWINKLE_RATES, ZENITH, dome,
-        fragments, gradient, halo, nebula, noise3, sky, sky_color, stars, vael,
+        AMBER, DRIFT, FRAGMENTS, HORIZON, NADIR, SKY_RADIUS, STAR_COUNT, TWINKLE_RATES, ZENITH,
+        dome, fragments, gradient, halo, nebula, noise3, sky, sky_color, stars, vael,
     };
     use crate::{VAEL, normal};
     use glam::Vec3;
@@ -361,6 +362,17 @@ mod tests {
         assert!(gradient(Vec3::NEG_Y).distance(NADIR) < 1e-6);
         assert!((halo(VAEL.toward_sun) - 1.02).abs() < 1e-5);
         assert!(halo(-VAEL.toward_sun).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_nebula_drifts_a_few_degrees_in_twenty_seconds() {
+        let backdrop = sky();
+        let [dome, ..] = parts();
+        for index in dome {
+            assert_eq!(backdrop.vertices[index].drift, DRIFT);
+        }
+        let degrees = (DRIFT * 20.0).to_degrees();
+        assert!((1.5..4.0).contains(&degrees), "{degrees}");
     }
 
     #[test]
