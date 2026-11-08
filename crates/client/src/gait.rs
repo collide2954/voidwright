@@ -12,7 +12,11 @@ const RUN_DUTY: f32 = 0.35;
 const STANCE_FRONT: f32 = 0.38;
 const WALK_LIFT: f32 = 0.09;
 const RUN_LIFT: f32 = 0.2;
+const WALK_ARC: f32 = 0.5;
+const RUN_ARC: f32 = 0.85;
 const CLEARANCE: f32 = 0.015;
+const RISE: f32 = 0.05;
+const PLACE: f32 = 0.08;
 const HEEL_STRIKE: f32 = 0.45;
 const TOE_OFF: f32 = 1.2;
 const HEEL_OFF: f32 = 0.5;
@@ -172,9 +176,14 @@ fn stride(phase: f32, pace: f32, twist: f32, roll: f32, surge: f32) -> Walk {
     }
 }
 
+fn duty(pace: f32) -> f32 {
+    WALK_DUTY + (RUN_DUTY - WALK_DUTY) * pace
+}
+
 fn footing(phase: f32, pace: f32) -> Footing {
-    let duty = WALK_DUTY + (RUN_DUTY - WALK_DUTY) * pace;
-    let lift = WALK_LIFT + (RUN_LIFT - WALK_LIFT) * pace;
+    let blend = |walk: f32, run: f32| walk + (run - walk) * pace;
+    let duty = duty(pace);
+    let lift = blend(WALK_LIFT, RUN_LIFT);
     let travel = cycle(pace) * duty;
     let front = travel * STANCE_FRONT;
     let flat = |ahead: f32| Vec2::new(ahead, ANKLE_HEIGHT);
@@ -197,29 +206,29 @@ fn footing(phase: f32, pace: f32) -> Footing {
         let swing = (moment - duty) / (1.0 - duty);
         let start = rock(flat(front - travel), TOE, -TOE_OFF);
         let end = rock(flat(front), HEEL, HEEL_STRIKE);
-        let low = ANKLE_HEIGHT + CLEARANCE;
-        let height = if swing < 0.5 {
-            start.y + (low - start.y) * smoothstep(0.0, 0.5, swing) + lift * (TAU * swing).sin()
-        } else {
-            low + (end.y - low) * smoothstep(0.5, 1.0, swing)
-        };
         let ahead = start.x + (end.x - start.x) * smoothstep(0.0, 1.0, swing);
         let pitch = if swing < 0.6 {
             -TOE_OFF * (1.0 - smoothstep(0.0, 0.6, swing))
         } else {
             HEEL_STRIKE * smoothstep(0.6, 1.0, swing)
         };
+        let rise = smoothstep(0.0, RISE, swing) * (1.0 - smoothstep(1.0 - PLACE, 1.0, swing));
+        let arc = (PI * (swing / blend(WALK_ARC, RUN_ARC)).min(1.0)).sin();
+        let clearance = CLEARANCE * rise + lift * arc * arc;
+        let low = pitched(TOE, pitch).y.min(pitched(HEEL, pitch).y);
         Footing {
-            ankle: Vec2::new(ahead, height),
+            ankle: Vec2::new(ahead, clearance - low),
             pitch,
         }
     }
 }
 
+fn pitched(point: Vec2, pitch: f32) -> Vec2 {
+    Vec2::from_angle(pitch).rotate(point)
+}
+
 fn rock(flat: Vec2, pivot: Vec2, pitch: f32) -> Vec2 {
-    let (sin, cos) = pitch.sin_cos();
-    let turned = Vec2::new(pivot.x * cos - pivot.y * sin, pivot.x * sin + pivot.y * cos);
-    flat + pivot - turned
+    flat + pivot - pitched(pivot, pitch)
 }
 
 fn reach(ahead: f32, drop: f32) -> (f32, f32) {
@@ -242,7 +251,7 @@ fn snap(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HEEL, Pose, TOE, cycle, footing, pose_at};
+    use super::{HEEL, Pose, TOE, cycle, duty, footing, pose_at};
     use crate::{Bone, skeleton};
     use glam::Vec3;
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -283,6 +292,22 @@ mod tests {
                 for (moment, soles) in strides(pace, bone, lag) {
                     let low = lowest(soles).y;
                     assert!(low > -0.002, "pace {pace} {bone:?} at {moment}: {low}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_swinging_foot_passes_a_centimetre_above_the_ground() {
+        for pace in [0.0, 1.0] {
+            let duty = duty(pace);
+            for (bone, lag) in FEET {
+                for (moment, soles) in strides(pace, bone, lag) {
+                    let swing = (moment - duty) / (1.0 - duty);
+                    let low = lowest(soles).y;
+                    if (0.1..0.9).contains(&swing) {
+                        assert!(low > 0.01, "pace {pace} {bone:?} at {moment}: {low}");
+                    }
                 }
             }
         }
