@@ -55,19 +55,31 @@ impl Binaural {
         self.ears.to_array()
     }
 
-    fn aim(&mut self, azimuth: f32) {
+    pub fn start(&mut self, azimuth: f32) {
+        self.history.fill(0.0);
+        self.ears = Vec2::ZERO;
         self.azimuth = azimuth.to_bits();
-        let (side, ahead) = azimuth.sin_cos();
-        let behind = (-ahead).max(0.0);
-        for ((delay, filter), far) in self
+        for ((delay, filter), (lag, shade)) in self
             .delays
             .iter_mut()
             .zip(&mut self.shades)
-            .zip([side, -side])
+            .zip(targets(azimuth, self.rate))
         {
-            let far = far.max(0.0);
-            delay.set(lag(far) * self.rate);
-            filter.set(shade(far, behind, self.rate));
+            *delay = Smooth::new(lag, GLIDE, self.rate);
+            *filter = Smooth::new(shade, GLIDE, self.rate);
+        }
+    }
+
+    fn aim(&mut self, azimuth: f32) {
+        self.azimuth = azimuth.to_bits();
+        for ((delay, filter), (lag, shade)) in self
+            .delays
+            .iter_mut()
+            .zip(&mut self.shades)
+            .zip(targets(azimuth, self.rate))
+        {
+            delay.set(lag);
+            filter.set(shade);
         }
     }
 
@@ -75,6 +87,15 @@ impl Binaural {
         let back = usize::try_from(back).unwrap_or(0);
         self.history[self.written.wrapping_sub(back) & (self.history.len() - 1)]
     }
+}
+
+fn targets(azimuth: f32, rate: f32) -> [(f32, f32); 2] {
+    let (side, ahead) = azimuth.sin_cos();
+    let behind = (-ahead).max(0.0);
+    [side, -side].map(|far| {
+        let far = far.max(0.0);
+        (lag(far) * rate, shade(far, behind, rate))
+    })
 }
 
 fn lag(far: f32) -> f32 {
@@ -160,6 +181,30 @@ mod tests {
         assert!(right < left, "right {right}, left {left}");
         let lag = f32::from(u16::try_from(left - right).unwrap()) / RATE * 1_000.0;
         assert!((0.6..0.7).contains(&lag), "{lag} ms");
+    }
+
+    #[test]
+    fn a_fresh_start_forgets_the_last_sound_and_aims_at_once() {
+        let mut binaural = Binaural::new(RATE);
+        let mut noise = Noise::new(4);
+        for _ in 0..SETTLE {
+            binaural.process(noise.sample(), -FRAC_PI_2);
+        }
+        binaural.start(FRAC_PI_2);
+        let mut click = vec![0.0; LENGTH];
+        click[0] = 1.0;
+        let heard: Vec<Frame> = click
+            .iter()
+            .map(|&value| binaural.process(value, FRAC_PI_2))
+            .collect();
+        let (left, right) = (onset(&heard, 0), onset(&heard, 1));
+        let lag = f32::from(u16::try_from(left - right).unwrap()) / RATE * 1_000.0;
+        assert!((0.6..0.7).contains(&lag), "{lag} ms");
+        assert!(
+            heard[64..]
+                .iter()
+                .all(|[l, r]| l.abs() < 0.05 && r.abs() < 0.05)
+        );
     }
 
     #[test]
