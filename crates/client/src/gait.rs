@@ -20,7 +20,8 @@ const HOLD: f32 = 0.03;
 const PLACE: f32 = 0.08;
 const HEEL_STRIKE: f32 = 0.45;
 const TOE_OFF: f32 = 1.2;
-const HEEL_OFF: f32 = 0.5;
+const WALK_HEEL_OFF: f32 = 0.42;
+const RUN_HEEL_OFF: f32 = 0.5;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.997;
@@ -194,7 +195,7 @@ fn footing(phase: f32, pace: f32) -> Footing {
         let stance = moment / duty;
         let ahead = front - travel * stance;
         let strike = HEEL_STRIKE * (1.0 - smoothstep(0.0, 0.2, stance));
-        let roll = TOE_OFF * smoothstep(HEEL_OFF, 1.0, stance);
+        let roll = TOE_OFF * smoothstep(blend(WALK_HEEL_OFF, RUN_HEEL_OFF), 1.0, stance);
         let ankle = if roll > 0.0 {
             rock(flat(ahead), TOE, -roll)
         } else {
@@ -295,6 +296,18 @@ mod tests {
                 for (moment, [soles, _]) in strides(pace, bone, lag) {
                     let low = soles[lowest(soles)].y;
                     assert!(low > -0.002, "pace {pace} {bone:?} at {moment}: {low}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn planted_feet_stay_on_the_ground() {
+        for (bone, lag) in FEET {
+            for (moment, [soles, _]) in strides(0.0, bone, lag) {
+                let low = soles[lowest(soles)].y;
+                if moment < duty(0.0) {
+                    assert!(low < 0.002, "{bone:?} at {moment}: {low}");
                 }
             }
         }
