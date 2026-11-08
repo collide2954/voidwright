@@ -114,7 +114,7 @@ void main() {
     vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
     vec3 lit = tinted * (sun * diffuse + ambient + lantern_light * lamp) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
     vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), params.y);
 }
 ";
 
@@ -353,6 +353,11 @@ mod tests {
             assert!(VERTEX.contains(&format!(" {varying};")));
             assert!(FRAGMENT.contains(&format!(" {varying};")));
         }
+    }
+
+    #[test]
+    fn the_glow_marks_the_alpha_for_the_bloom() {
+        assert!(FRAGMENT.contains("vec4(pow(filmic(shaded), vec3(0.4545)), params.y);"));
     }
 
     #[test]
