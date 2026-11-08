@@ -1031,10 +1031,10 @@ fn bracer() -> Sculpt {
 fn knee() -> Sculpt {
     let mut clay = clay();
     let shin = Bone::RightShin;
-    clay.add(stroke(shin, egg(0.058, 0.07, 0.034), PLATE).at(Vec3::new(0.0, 0.0, -0.045)));
+    clay.add(stroke(shin, egg(0.056, 0.066, 0.03), PLATE).at(Vec3::new(0.0, 0.0, -0.04)));
     clay.add(
-        stroke(shin, egg(0.05, 0.062, 0.03), METAL)
-            .at(Vec3::new(0.0, -0.005, -0.03))
+        stroke(shin, egg(0.048, 0.058, 0.026), METAL)
+            .at(Vec3::new(0.0, -0.005, -0.027))
             .carved()
             .blended(0.004),
     );
@@ -2055,60 +2055,85 @@ mod tests {
         }
     }
 
-    fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
-        let axis = to - from;
-        let along = ((point - from).dot(axis) / axis.length_squared()).clamp(0.0, 1.0);
-        point.distance(from + axis * along)
+    fn hips_and_legs() -> Vec<(Bone, crate::sculpt::Sculpt)> {
+        let (mut legs, mut trunk) = (super::clay(), super::clay());
+        for side in super::Side::BOTH {
+            super::leg(&mut legs, side);
+        }
+        super::trunk(&mut trunk);
+        let mut solids: Vec<(Bone, crate::sculpt::Sculpt)> = [
+            Bone::LeftThigh,
+            Bone::LeftShin,
+            Bone::LeftFoot,
+            Bone::RightThigh,
+            Bone::RightShin,
+            Bone::RightFoot,
+        ]
+        .into_iter()
+        .map(|bone| (bone, legs.only(bone.index())))
+        .collect();
+        solids.push((Bone::Pelvis, trunk.only(Bone::Pelvis.index())));
+        solids.push((Bone::RightShin, super::knee()));
+        solids.push((Bone::LeftShin, super::wraps(super::Side::Left)));
+        solids.push((Bone::RightShin, super::wraps(super::Side::Right)));
+        solids
     }
 
     #[test]
-    fn the_legs_never_cut_through_the_coat_while_walking() {
-        use crate::figure::{Coat, skeleton};
+    fn the_hips_and_legs_never_show_through_the_coat() {
+        use crate::figure::Coat;
         use crate::gait::{cycle, pose_at};
         use std::f32::consts::TAU;
         const FRAME: f32 = 1.0 / 60.0;
-        const SPEED: f32 = 1.0 / 0.6;
-        let coat: Vec<&SkinnedVertex> = FIGURE
+        let coat: Vec<(&SkinnedVertex, bool)> = FIGURE
             .vertices
             .iter()
             .filter(|vertex| on_cloth(vertex) > 0.5)
+            .map(|vertex| {
+                let rest = Vec3::from(vertex.position);
+                let around = Vec3::new(rest.x, 0.0, rest.z).normalize_or_zero();
+                (vertex, Vec3::from(vertex.normal).dot(around) < -0.3)
+            })
             .collect();
-        let pose = |phase: f32| pose_at(phase, 1.0, 0.0, 0.0);
-        let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
-        let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
-        let mut cloth = Coat::new(&pose(phase), placement(travelled));
-        let mut deepest = (f32::INFINITY, 0_u16);
-        for frame in 0..240_u16 {
-            travelled += SPEED * FRAME;
-            phase = (phase + SPEED * FRAME * TAU / cycle(0.0)).rem_euclid(TAU);
-            cloth.update(&pose(phase), placement(travelled), FRAME);
-            if frame < 120 || frame % 4 != 0 {
-                continue;
-            }
-            let skins = cloth.skins(&pose(phase));
-            let bones = skeleton(&pose(phase));
-            let at = |bone: Bone| bones[bone.index()].transform_point3(Vec3::ZERO);
-            let legs = [
-                (Bone::LeftThigh, Bone::LeftShin, Bone::LeftFoot),
-                (Bone::RightThigh, Bone::RightShin, Bone::RightFoot),
-            ]
-            .map(|(thigh, shin, foot)| {
-                [
-                    (at(thigh).lerp(at(shin), 0.35), at(shin), 0.055),
-                    (at(shin), at(foot), 0.05),
-                ]
-            });
-            for vertex in &coat {
-                let point = posed(vertex, &skins);
-                for &(from, to, radius) in legs.iter().flatten() {
-                    let gap = beside(point, from, to) - radius;
-                    if gap < deepest.0 {
-                        deepest = (gap, frame);
+        let solids = hips_and_legs();
+        for (motion, pace, speed) in [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 1.0 / 0.6),
+            (1.0, 1.0, 2.0 / 0.6),
+        ] {
+            let pose = |phase: f32, time: f32| pose_at(phase, motion, pace, time);
+            let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
+            let (mut phase, mut travelled, mut time) = (0.0_f32, 0.0_f32, 0.0_f32);
+            let mut cloth = Coat::new(&pose(phase, time), placement(travelled));
+            let mut deepest = [(f32::INFINITY, 0_u16, Bone::Pelvis); 2];
+            for frame in 0..480_u16 {
+                time += FRAME;
+                travelled += speed * FRAME;
+                phase = (phase + speed * FRAME * TAU / cycle(pace)).rem_euclid(TAU);
+                cloth.update(&pose(phase, time), placement(travelled), FRAME);
+                if frame < 240 || frame % 6 != 0 {
+                    continue;
+                }
+                let skins = cloth.skins(&pose(phase, time));
+                let backs: Vec<Mat4> = solids
+                    .iter()
+                    .map(|(bone, _)| skins[bone.index()].inverse())
+                    .collect();
+                for &(vertex, lining) in &coat {
+                    let point = posed(vertex, &skins);
+                    for ((bone, solid), back) in solids.iter().zip(&backs) {
+                        let gap = solid.distance(back.transform_point3(point));
+                        let side = usize::from(lining);
+                        if gap < deepest[side].0 {
+                            deepest[side] = (gap, frame, *bone);
+                        }
                     }
                 }
             }
+            let [outer, lining] = deepest;
+            assert!(outer.0 > -0.003, "{motion} {pace} outer {outer:?}");
+            assert!(lining.0 > -0.015, "{motion} {pace} lining {lining:?}");
         }
-        assert!(deepest.0 > 0.0, "{deepest:?}");
     }
 
     #[test]

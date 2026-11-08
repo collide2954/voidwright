@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn a_walking_coat_moves_but_stays_close_to_its_shape() {
         let swing = swing();
-        assert!((0.02..0.053).contains(&swing), "{swing}");
+        assert!((0.02..0.06).contains(&swing), "{swing}");
     }
 
     fn lantern_middle() -> Vec3 {

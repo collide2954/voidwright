@@ -1,8 +1,8 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-use glam::{Mat3, Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec2, Vec3};
 
-use crate::field::squash;
+use crate::field::{section, squash};
 
 pub const COLUMNS: usize = 7;
 pub const ROWS: usize = 5;
@@ -111,6 +111,7 @@ struct Link {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Layout<const N: usize> {
     pinned: [bool; N],
+    held: [bool; N],
     tether: [usize; N],
     slack: [f32; N],
     down: [(usize, usize); N],
@@ -129,6 +130,7 @@ pub struct Fabric<const N: usize> {
     previous: [Vec3; N],
     links: Vec<Link>,
     edges: Vec<(usize, usize)>,
+    spans: Vec<(usize, usize)>,
     then: Frame,
     history: [Frame; 2],
     legs: Vec<Capsule>,
@@ -173,6 +175,7 @@ impl Cloth {
         let mut rest = [Vec3::ZERO; PARTICLES];
         let mut layout = Layout {
             pinned: [false; PARTICLES],
+            held: [false; PARTICLES],
             tether: [0; PARTICLES],
             slack: [0.0; PARTICLES],
             down: [(0, 0); PARTICLES],
@@ -185,6 +188,7 @@ impl Cloth {
             let at = |column: usize, row: usize| particle(panel, column, row);
             rest[index] = drape[row] * Vec3::new(cos, 1.0, sin);
             layout.pinned[index] = row == 0;
+            layout.held[index] = row == 1;
             layout.tether[index] = at(column, 0);
             layout.slack[index] = SLACK[row];
             layout.down[index] = (
@@ -206,14 +210,24 @@ impl Cloth {
                 )
             })
             .collect();
-        Self::new(
+        let mut cloth = Self::new(
             COAT_FEEL,
             drape.to_vec(),
             layout,
             rest,
             grid_links(&rest),
             edges,
-        )
+        );
+        cloth.spans = cells()
+            .filter(|&(_, column, row)| row > 0 && column + 1 < COLUMNS)
+            .map(|(panel, column, row)| {
+                (
+                    particle(panel, column, row),
+                    particle(panel, column + 1, row),
+                )
+            })
+            .collect();
+        cloth
     }
 
     #[must_use]
@@ -254,6 +268,7 @@ impl<const N: usize> Fabric<N> {
         let last = N.saturating_sub(1);
         let layout = Layout {
             pinned: std::array::from_fn(|index| index == 0),
+            held: [false; N],
             tether: [0; N],
             slack: std::array::from_fn(|index| slack * count(index) / count(last.max(1))),
             down: std::array::from_fn(|index| (index.saturating_sub(1), (index + 1).min(last))),
@@ -310,6 +325,7 @@ impl<const N: usize> Fabric<N> {
             previous: rest,
             links,
             edges,
+            spans: Vec::new(),
             then: Frame::ORIGIN,
             history: [Frame::ORIGIN; 2],
             legs: Vec::new(),
@@ -417,6 +433,24 @@ impl<const N: usize> Fabric<N> {
         }
         self.hold();
         self.collide(legs);
+        self.keep_out();
+    }
+
+    fn keep_out(&mut self) {
+        for index in 0..N {
+            if !self.layout.held[index] {
+                continue;
+            }
+            let point = self.points[index];
+            let radii = section(&self.profile, self.rest[index].y);
+            let spread = Vec2::new(point.x / radii.x, point.z / radii.y).length();
+            if spread < 1.0 && spread > f32::EPSILON {
+                let push = Vec3::new(point.x, 0.0, point.z) * (spread.recip() - 1.0);
+                self.points[index] += push;
+                self.rub(index, push);
+                self.calm(index);
+            }
+        }
     }
 
     fn free(&self, index: usize) -> f32 {
@@ -472,7 +506,34 @@ impl<const N: usize> Fabric<N> {
             for edge in 0..self.edges.len() {
                 self.clear_segment(self.edges[edge], leg);
             }
+            for span in 0..self.spans.len() {
+                self.clear_span(self.spans[span], leg);
+            }
         }
+    }
+
+    fn clear_span(&mut self, (left, right): (usize, usize), leg: &Capsule) {
+        let (from, to) = (self.points[left], self.points[right]);
+        let along = nearest(from, to, leg.from, leg.to);
+        let touching = from.lerp(to, along);
+        let axis = leg.to - leg.from;
+        let middle = leg.from
+            + axis
+                * ((touching - leg.from).dot(axis) / axis.length_squared().max(1e-9))
+                    .clamp(0.0, 1.0);
+        let flat = |point: Vec3| Vec2::new(point.x, point.z).length();
+        if flat(middle) >= flat(touching) {
+            return;
+        }
+        let push = (clear(touching, leg) - touching) * CONTACT;
+        if push.length_squared() < 1e-12 {
+            return;
+        }
+        let share = (1.0 - along).powi(2) + along.powi(2);
+        self.points[left] += push * (1.0 - along) / share;
+        self.points[right] += push * along / share;
+        self.calm(left);
+        self.calm(right);
     }
 
     fn calm(&mut self, index: usize) {
@@ -935,6 +996,23 @@ mod tests {
     }
 
     #[test]
+    fn the_hips_hold_the_top_rows_out_of_the_cut() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let mut deepest = f32::INFINITY;
+        for frame in 1..=40_u8 {
+            let ahead = 0.004 * f32::from(frame).powi(2);
+            cloth.update(waist(Vec3::new(ahead, 1.0, 0.0)), &[], FRAME);
+            for (panel, column, row) in cells().filter(|&(_, _, row)| row == 1) {
+                let point = cloth.points()[particle(panel, column, row)];
+                let spread = Vec2::new(point.x / COAT[row].x, point.z / COAT[row].z).length();
+                deepest = deepest.min(spread);
+            }
+        }
+        assert!(deepest > 0.999, "{deepest}");
+    }
+
+    #[test]
     fn a_leg_flicking_past_a_strand_leaves_it_slow() {
         let mut strand = Fabric::strand([Vec3::ZERO, Vec3::new(0.0, -0.3, 0.1)], 0.5, TAIL);
         run(&mut strand, Vec3::Y, &[], 60);
@@ -971,6 +1049,29 @@ mod tests {
         let (from, to) = (cloth.points()[upper], cloth.points()[lower]);
         let along = ((tip - from).dot(to - from) / (to - from).length_squared()).clamp(0.0, 1.0);
         assert!(from.lerp(to, along).distance(tip) > 0.07);
+    }
+
+    #[test]
+    fn a_shin_between_two_columns_pushes_the_span_out() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let (left, right) = (particle(0, 2, ROWS - 1), particle(0, 3, ROWS - 1));
+        let middle = cloth.points()[left].lerp(cloth.points()[right], 0.5);
+        let outward = Vec3::new(middle.x, 0.0, middle.z).normalize();
+        let axis = middle - outward * 0.077 - Vec3::Y * 0.02;
+        assert!(cloth.points()[left].distance(axis) > 0.09);
+        let shin = Capsule {
+            from: axis + Vec3::Y,
+            to: axis + Vec3::Y * 0.9,
+            radius: 0.06,
+        };
+        run(&mut cloth, Vec3::Y, &[shin], 4);
+        let (from, to) = (cloth.points()[left], cloth.points()[right]);
+        let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z);
+        let span = flat(to) - flat(from);
+        let along = ((flat(axis) - flat(from)).dot(span) / span.length_squared()).clamp(0.0, 1.0);
+        let gap = flat(from.lerp(to, along)).distance(flat(axis));
+        assert!(gap > 0.08, "{gap}");
     }
 
     #[test]

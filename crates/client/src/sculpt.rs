@@ -438,6 +438,29 @@ impl Sculpt {
     }
 
     #[must_use]
+    pub fn only(&self, bone: usize) -> Self {
+        let parts = self
+            .parts
+            .iter()
+            .map(|part| {
+                let mut kept = Part::default();
+                for placed in part
+                    .strokes
+                    .iter()
+                    .filter(|placed| placed.stroke.bone == bone)
+                {
+                    kept.hold(placed);
+                }
+                kept
+            })
+            .collect();
+        Self {
+            rest: self.rest.clone(),
+            parts,
+        }
+    }
+
+    #[must_use]
     pub fn distance(&self, point: Vec3) -> f32 {
         self.parts.iter().fold(FAR, |nearest, part| {
             if part.gap(point) >= nearest {
