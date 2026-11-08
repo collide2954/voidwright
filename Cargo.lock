@@ -692,6 +692,7 @@ dependencies = [
  "glam",
  "miniquad",
  "voidwright-core",
+ "voidwright-protocol",
 ]
 
 [[package]]

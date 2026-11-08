@@ -13,6 +13,7 @@ cpal = "0.18"
 glam.workspace = true
 miniquad.workspace = true
 voidwright-core.workspace = true
+voidwright-protocol.workspace = true
 
 [lints]
 workspace = true
