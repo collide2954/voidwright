@@ -4,6 +4,7 @@ use std::f32::consts::FRAC_1_SQRT_2;
 const LINES: usize = 8;
 const SPREAD: [f32; LINES] = [0.030, 0.0351, 0.0411, 0.048, 0.0562, 0.0658, 0.0769, 0.090];
 const SCALE: f32 = FRAC_1_SQRT_2 * 0.5;
+const FLOOR: f32 = 1.0e-10;
 const TAPS: [[f32; LINES]; 2] = [
     [1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0],
     [1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0],
@@ -31,12 +32,14 @@ struct Line {
 
 pub struct Reverb {
     lines: [Line; LINES],
+    quiet: OnePole,
 }
 
 impl Reverb {
     #[must_use]
     pub fn new(room: Room, rate: f32) -> Self {
         let step = decay(room.decay, rate);
+        let quiet = OnePole::low(room.damping, rate);
         let mut length = 1;
         let lines = SPREAD.map(|seconds| {
             length = prime_from(length + 1, seconds * room.size * rate);
@@ -44,16 +47,22 @@ impl Reverb {
                 samples: vec![0.0; usize::try_from(length).unwrap_or(1)].into_boxed_slice(),
                 index: 0,
                 gain: step.powi(i32::try_from(length).unwrap_or(i32::MAX)),
-                damping: OnePole::low(room.damping, rate),
+                damping: quiet,
             }
         });
-        Self { lines }
+        Self { lines, quiet }
     }
 
     pub fn process(&mut self, input: Frame) -> Frame {
         let mut values = [0.0; LINES];
         for (value, line) in values.iter_mut().zip(&mut self.lines) {
-            *value = line.damping.process(line.samples[line.index]) * line.gain;
+            let damped = line.damping.process(line.samples[line.index]);
+            if damped.abs() < FLOOR {
+                // Stop the tail at zero. This prevents slow subnormal arithmetic.
+                line.damping = self.quiet;
+            } else {
+                *value = damped * line.gain;
+            }
         }
         let wet = TAPS.map(|taps| {
             taps.iter()
@@ -106,7 +115,7 @@ fn is_prime(value: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{OPEN_ISLAND, Reverb, Room};
-    use crate::audio::dsp::{Frame, Svf};
+    use crate::audio::dsp::{Frame, Noise, Svf};
 
     const RATE: f32 = 48_000.0;
     const SECOND: usize = 48_000;
@@ -199,5 +208,25 @@ mod tests {
         };
         let (high, low) = (fall(8_000.0), fall(300.0));
         assert!(high < 0.01 * low, "{high} against {low}");
+    }
+
+    #[test]
+    fn a_minute_of_noise_stays_bounded_and_then_falls_silent() {
+        let mut reverb = Reverb::new(OPEN_ISLAND, RATE);
+        let mut noise = Noise::new(5);
+        let mut bounded = true;
+        for _ in 0..60 * SECOND {
+            let wet = reverb.process([noise.sample(), noise.sample()]);
+            bounded &= wet.iter().all(|value| value.abs() < 4.0);
+        }
+        assert!(bounded);
+        for _ in 0..5 * SECOND {
+            reverb.process([0.0; 2]);
+        }
+        assert!(
+            (0..SECOND)
+                .flat_map(|_| reverb.process([0.0; 2]))
+                .all(|value| value == 0.0)
+        );
     }
 }
