@@ -32,12 +32,17 @@ impl Painter {
     #[must_use]
     pub fn top(&self, at: IVec2, normal: Vec3, rim: f32) -> Vec3 {
         let moss = palette::MOSS_DARK.lerp(palette::MOSS_LIGHT, unit(&self.patches, at));
-        let soil = SOIL_COVER * smoothstep(0.6, 0.85, blend(&self.soil, at));
+        let soil = self.soil(at);
         let bloom = BLOOM_COVER * smoothstep(0.55, 0.8, blend(&self.bloom, at)) * (1.0 - soil);
         let ground = moss.lerp(palette::SOIL, soil).lerp(palette::BLOOM, bloom);
         let rock = smoothstep(0.25, 0.5, 1.0 - normal.y).max(rim);
         let speckle = 1.0 + SPECKLE * (unit(&self.speckle, at) - 0.5);
         ground.lerp(palette::ROCK * self.grain(at), rock) * speckle
+    }
+
+    #[must_use]
+    pub fn soil(&self, at: IVec2) -> f32 {
+        SOIL_COVER * smoothstep(0.6, 0.85, blend(&self.soil, at))
     }
 
     #[must_use]
@@ -114,5 +119,17 @@ mod tests {
             .fold(f32::INFINITY, f32::min);
         let brightest = colors.iter().map(|color| color.y).fold(0.0, f32::max);
         assert!(brightest - darkest > 0.1);
+    }
+
+    #[test]
+    fn soil_covers_some_patches_and_leaves_most_ground_bare_of_it() {
+        let painter = Painter::default();
+        let soils: Vec<f32> = (0..200)
+            .flat_map(|y| (0..200).map(move |x| IVec2::new(x, y)))
+            .map(|at| painter.soil(at))
+            .collect();
+        assert!(soils.iter().all(|soil| (0.0..=0.6).contains(soil)));
+        assert!(soils.iter().any(|&soil| soil > 0.3));
+        assert!(soils.iter().filter(|&&soil| soil < 1e-6).count() > soils.len() / 2);
     }
 }
