@@ -65,8 +65,13 @@ impl View {
     }
 
     pub fn pan(&mut self, pixels: Vec2, height: f32) {
-        let size = 2.0 * self.distance * (FIELD_OF_VIEW / 2.0).tan() / height.max(1.0);
+        let size = self.distance * Self::pixel(height);
         self.target += self.orientation() * Vec3::new(-pixels.x, pixels.y, 0.0) * size;
+    }
+
+    #[must_use]
+    pub fn pixel(height: f32) -> f32 {
+        2.0 * (FIELD_OF_VIEW / 2.0).tan() / height.max(1.0)
     }
 
     pub fn frame(&mut self, low: Vec3, high: Vec3, aspect: f32) {
@@ -192,6 +197,14 @@ mod tests {
         let moved = screen(&view, TARGET);
         let expected = Vec2::new(2.0 * pixels.x / (height * ASPECT), -2.0 * pixels.y / height);
         assert!(moved.truncate().distance(expected) < 1e-4, "{moved}");
+    }
+
+    #[test]
+    fn a_pixel_angle_matches_the_projection() {
+        let view = View::new(TARGET, 0.0, 0.0, 3.0);
+        let height = 720.0;
+        let raised = TARGET + Vec3::Y * 3.0 * View::pixel(height) * 10.0;
+        assert!((screen(&view, raised).y - 2.0 * 10.0 / height).abs() < 1e-4);
     }
 
     #[test]
