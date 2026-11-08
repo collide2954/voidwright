@@ -39,6 +39,8 @@ In the gait tables, 0% is the heel strike of the reference leg.
 | Body rise and fall | 8 cm | Malisoux 2023 |
 | Trunk lean | 7° forward | Teng and Powers 2014 |
 
+The game does not use the measured rise and fall of the run. If the body rises and falls 8 cm, the knee bends more than 45° in stance, or the foot is not on the ground at the start and at the end of each step. The game uses 5.2 cm.
+
 ## Leaning
 
 | Case | Lean |
