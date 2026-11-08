@@ -27,6 +27,7 @@ The game is not complete. The offline prototype is playable: one player walks on
 | Set the camera for a capture | `cargo run --release -p voidwright-client -- --capture shot.png --orbit 0.7 0.45 40` |
 | Measure the frame rate | `cargo run --release -p voidwright-client -- --benchmark 10` |
 | Start the model inspector | `cargo run --release -p voidwright-client --bin inspect` |
+| Render the catalog of objects, materials, and scenes to `docs/catalog` | `cargo run --release -p voidwright-client --bin catalog` |
 
 The three values after `--orbit` are the yaw and the pitch in radians, and the distance in tiles.
 
@@ -79,6 +80,7 @@ The server writes a line when a player joins or leaves, and every 100 ticks a li
 | `crates/client/assets/detail` | Scanned surface maps for cloth, wool, leather, and metal. `CREDITS.md` gives the author, source, and license of each scan. |
 | `docs/audio.md` | Design of the sound and the music. |
 | `docs/body.md` | Reference values for the body of the wanderer. |
+| `docs/catalog` | Rendered images of the objects, the materials, and the scenes. `README.md` in the folder lists them and tells how to add an entry. |
 | `docs/design.md` | Design decisions. |
 | `docs/lore.md` | Lore of the game world. |
 | `docs/motion.md` | Reference values for the motion of figures. |
