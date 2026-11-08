@@ -7,6 +7,7 @@ pub mod lantern;
 pub mod mixer;
 pub mod music;
 pub mod output;
+pub mod pulse;
 pub mod reverb;
 pub mod ring;
 pub mod soundscape;
