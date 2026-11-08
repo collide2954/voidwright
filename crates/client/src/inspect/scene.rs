@@ -163,13 +163,17 @@ fn pipeline(
     let program = context
         .new_shader(ShaderSource::Glsl { vertex, fragment }, meta)
         .expect("the shader compiles");
-    let solid = PipelineParams {
+    context.new_pipeline(&[BufferLayout::default()], attributes, program, solid())
+}
+
+fn solid() -> PipelineParams {
+    PipelineParams {
         cull_face: CullFace::Back,
         depth_test: Comparison::LessOrEqual,
         depth_write: true,
+        color_write: (true, true, true, false),
         ..PipelineParams::default()
-    };
-    context.new_pipeline(&[BufferLayout::default()], attributes, program, solid)
+    }
 }
 
 fn clear() -> PassAction {
@@ -213,5 +217,13 @@ fn upload<V>(context: &mut dyn RenderingBackend, vertices: &[V], indices: &[u32]
             images: Vec::new(),
         },
         count: i32::try_from(indices.len()).expect("a mesh fits in one draw call"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_scene_keeps_the_opaque_clear_alpha() {
+        assert_eq!(super::solid().color_write, (true, true, true, false));
     }
 }
