@@ -9,6 +9,7 @@ const HELLO: u8 = 0x01;
 const WALK: u8 = 0x02;
 const WELCOME: u8 = 0x81;
 const UPDATE: u8 = 0x82;
+const REFUSE: u8 = 0x83;
 
 pub trait Message: Sized {
     const LIMIT: usize;
@@ -44,10 +45,18 @@ pub struct Update {
     pub players: Vec<Sighting>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    Version,
+    Full,
+    Name,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerMessage {
     Welcome(Welcome),
     Update(Update),
+    Refuse(Reason),
 }
 
 impl Message for ClientMessage {
@@ -109,6 +118,11 @@ impl Message for ServerMessage {
                 }
                 Ok(())
             }
+            Self::Refuse(reason) => {
+                payload.push(REFUSE);
+                payload.push(reason_code(*reason));
+                Ok(())
+            }
         }
     }
 
@@ -133,6 +147,7 @@ impl Message for ServerMessage {
                 }
                 Self::Update(Update { tick, players })
             }
+            REFUSE => Self::Refuse(reason(cursor.u8()?)?),
             tag => return Err(Error::Tag(tag)),
         };
         cursor.finish()?;
@@ -158,9 +173,28 @@ fn step(code: u8) -> Result<Option<Direction>, Error> {
     }
 }
 
+const fn reason_code(reason: Reason) -> u8 {
+    match reason {
+        Reason::Version => 1,
+        Reason::Full => 2,
+        Reason::Name => 3,
+    }
+}
+
+const fn reason(code: u8) -> Result<Reason, Error> {
+    match code {
+        1 => Ok(Reason::Version),
+        2 => Ok(Reason::Full),
+        3 => Ok(Reason::Name),
+        _ => Err(Error::Reason(code)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ClientMessage, MAX_SIGHTINGS, Message, ServerMessage, Sighting, Update, Welcome};
+    use super::{
+        ClientMessage, MAX_SIGHTINGS, Message, Reason, ServerMessage, Sighting, Update, Welcome,
+    };
     use crate::{Error, Name, VERSION};
     use voidwright_core::{Direction, PlayerId, Rng, Tile};
 
@@ -336,6 +370,24 @@ mod tests {
             }
             let _ = ClientMessage::decode(&bytes);
             let _ = ServerMessage::decode(&bytes);
+        }
+    }
+
+    #[test]
+    fn a_refusal_holds_its_reason() {
+        let reasons = [(Reason::Version, 1), (Reason::Full, 2), (Reason::Name, 3)];
+        for (reason, code) in reasons {
+            let refusal = ServerMessage::Refuse(reason);
+            assert_eq!(encoded(&refusal), [0x83, code]);
+            assert_eq!(ServerMessage::decode(&[0x83, code]), Ok(refusal));
+        }
+    }
+
+    #[test]
+    fn an_unknown_reason_is_rejected() {
+        for code in [0, 4, 0xff] {
+            let result = ServerMessage::decode(&[0x83, code]);
+            assert_eq!(result, Err(Error::Reason(code)));
         }
     }
 }
