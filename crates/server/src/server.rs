@@ -3,20 +3,23 @@ use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
-use voidwright_core::{ISLAND_RADIUS, Island, PlayerId, Tile, World};
+use voidwright_core::{Direction, ISLAND_RADIUS, Island, PlayerId, Tile, World};
 use voidwright_protocol::{
-    ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Welcome,
+    ClientMessage, Error, Inbox, MAX_SIGHTINGS, Name, Outbox, Reason, ServerMessage, Sighting,
+    Update, Welcome,
 };
 
 const CAPACITY: usize = 2_000;
 const GREETERS: usize = 64;
 const GREETING: Duration = Duration::from_secs(5);
+const VIEW: u16 = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub seed: u64,
     pub capacity: usize,
     pub greeting: Duration,
+    pub view: u16,
 }
 
 impl Default for Config {
@@ -25,12 +28,14 @@ impl Default for Config {
             seed: 1,
             capacity: CAPACITY,
             greeting: GREETING,
+            view: VIEW,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
+    pub tick: u32,
     pub players: usize,
     pub messages: u64,
     pub dropped: u64,
@@ -169,6 +174,31 @@ impl Connection {
         }
     }
 
+    fn update(&mut self, world: &World, tick: u32, view: u16) {
+        let Stage::Playing { id, .. } = &self.stage else {
+            return;
+        };
+        let Some(me) = world.player(*id).filter(|_| self.close.is_none()) else {
+            return;
+        };
+        let players = world
+            .near(me.tile(), view)
+            .into_iter()
+            .take(MAX_SIGHTINGS)
+            .map(|(id, walker)| Sighting {
+                id,
+                tile: walker.tile(),
+                step: walker
+                    .next_step()
+                    .and_then(|next| Direction::between(walker.tile(), next)),
+            })
+            .collect();
+        let update = ServerMessage::Update(Update { tick, players });
+        if let Err(error) = self.outbox.push(&update) {
+            self.close = Some(Close::Malformed(error));
+        }
+    }
+
     fn flush(&mut self) {
         if self.outbox.flush(&mut self.stream).is_err() && self.close.is_none() {
             self.close = Some(Close::Left);
@@ -247,6 +277,16 @@ impl Server {
         };
         for connection in connections.iter_mut() {
             connection.receive(&mut host, now);
+            connection.flush();
+        }
+        self.sweep();
+    }
+
+    pub fn tick(&mut self) {
+        self.world.tick();
+        self.stats.tick = self.stats.tick.wrapping_add(1);
+        for connection in &mut self.connections {
+            connection.update(&self.world, self.stats.tick, self.config.view);
             connection.flush();
         }
         self.sweep();
