@@ -82,6 +82,18 @@ mod mirror {
         ((b * b + 0.56 * y * a).sqrt() - b) / (2.0 * a)
     }
 
+    pub(super) fn bilinear(point: glam::Vec2) -> [(glam::IVec2, f32); 4] {
+        let low = (point - 0.5).floor();
+        let weight = point - 0.5 - low;
+        let base = low.as_ivec2();
+        [
+            (base, (1.0 - weight.x) * (1.0 - weight.y)),
+            (base + glam::IVec2::X, weight.x * (1.0 - weight.y)),
+            (base + glam::IVec2::Y, (1.0 - weight.x) * weight.y),
+            (base + glam::IVec2::ONE, weight.x * weight.y),
+        ]
+    }
+
     pub(super) fn declared(shader: &str, meta: &miniquad::ShaderMeta) -> usize {
         for uniform in &meta.uniforms.uniforms {
             assert!(shader.contains(&uniform.name), "{}", uniform.name);
@@ -247,6 +259,132 @@ void main() {
             block[..8].fill((shown, 1.0));
             let light = prefilter(&block);
             assert!(light.distance(teal * 0.5) < 0.01, "{light}");
+        }
+    }
+}
+
+pub mod down {
+    use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
+
+    pub const FRAGMENT: &str = "#version 100
+precision mediump float;
+uniform sampler2D source;
+uniform highp vec2 texel;
+varying highp vec2 uv;
+void main() {
+    highp vec2 across = vec2(texel.x, -texel.y);
+    vec3 sum = 4.0 * texture2D(source, uv).rgb
+        + texture2D(source, uv - texel).rgb
+        + texture2D(source, uv + texel).rgb
+        + texture2D(source, uv - across).rgb
+        + texture2D(source, uv + across).rgb;
+    gl_FragColor = vec4(sum / 8.0, 1.0);
+}
+";
+
+    #[must_use]
+    pub fn meta() -> ShaderMeta {
+        ShaderMeta {
+            images: vec!["source".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: vec![UniformDesc::new("texel", UniformType::Float2)],
+            },
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Uniforms {
+        pub texel: [f32; 2],
+    }
+
+    impl Uniforms {
+        #[must_use]
+        pub fn new(source: [u16; 2]) -> Self {
+            Self {
+                texel: super::texel(source),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::mirror::{bilinear, declared};
+        use super::{FRAGMENT, Uniforms, meta};
+        use glam::{IVec2, Vec2};
+        use std::collections::HashMap;
+
+        const TAPS: [(Vec2, f32); 5] = [
+            (Vec2::ZERO, 4.0),
+            (Vec2::new(-1.0, -1.0), 1.0),
+            (Vec2::new(1.0, 1.0), 1.0),
+            (Vec2::new(-1.0, 1.0), 1.0),
+            (Vec2::new(1.0, -1.0), 1.0),
+        ];
+
+        fn footprint(output: IVec2) -> HashMap<IVec2, f32> {
+            let center = output.as_vec2() * 2.0 + 1.0;
+            let mut weights = HashMap::new();
+            for (offset, weight) in TAPS {
+                for (texel, share) in bilinear(center + offset) {
+                    *weights.entry(texel).or_insert(0.0) += share * weight / 8.0;
+                }
+            }
+            weights
+        }
+
+        #[test]
+        fn the_shader_uses_glsl_100() {
+            assert!(FRAGMENT.starts_with("#version 100"));
+        }
+
+        #[test]
+        fn uniforms_carry_one_texel_of_the_source() {
+            assert_eq!(size_of::<Uniforms>(), declared(FRAGMENT, &meta()));
+            assert!(FRAGMENT.contains("uniform highp vec2 texel;"));
+            assert_eq!(Uniforms::new([480, 270]).texel, [1.0 / 480.0, 1.0 / 270.0]);
+            assert_eq!(meta().images, ["source"]);
+            assert!(FRAGMENT.contains("uniform sampler2D source;"));
+        }
+
+        #[test]
+        fn the_taps_match_the_rust_copy() {
+            assert!(FRAGMENT.contains("highp vec2 across = vec2(texel.x, -texel.y);"));
+            assert!(FRAGMENT.contains("vec3 sum = 4.0 * texture2D(source, uv).rgb"));
+            for tap in ["uv - texel", "uv + texel", "uv - across", "uv + across"] {
+                assert!(FRAGMENT.contains(&format!("+ texture2D(source, {tap}).rgb")));
+            }
+            assert!(FRAGMENT.contains("gl_FragColor = vec4(sum / 8.0, 1.0);"));
+        }
+
+        #[test]
+        fn each_output_weighs_a_soft_four_by_four_block() {
+            let weights = footprint(IVec2::new(3, 2));
+            assert_eq!(weights.len(), 16);
+            assert!((weights.values().sum::<f32>() - 1.0).abs() < 1e-6);
+            for (texel, weight) in weights {
+                let middle = (texel - IVec2::new(6, 4)).abs().max_element() <= 1
+                    && (texel - IVec2::new(7, 5)).abs().max_element() <= 1;
+                let expected = if middle { 5.0 / 32.0 } else { 1.0 / 32.0 };
+                assert!((weight - expected).abs() < 1e-6, "{texel} {weight}");
+            }
+        }
+
+        #[test]
+        fn every_source_texel_gives_the_same_share() {
+            let mut totals: HashMap<IVec2, f32> = HashMap::new();
+            for y in 0..8 {
+                for x in 0..8 {
+                    for (texel, weight) in footprint(IVec2::new(x, y)) {
+                        *totals.entry(texel).or_insert(0.0) += weight;
+                    }
+                }
+            }
+            for y in 2..14 {
+                for x in 2..14 {
+                    assert!((totals[&IVec2::new(x, y)] - 0.25).abs() < 1e-6);
+                }
+            }
         }
     }
 }
