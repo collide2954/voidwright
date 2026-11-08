@@ -535,6 +535,122 @@ void main() {
     }
 }
 
+pub mod halo {
+    use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
+
+    pub const STRENGTH: f32 = 0.05;
+
+    pub const FRAGMENT: &str = "#version 100
+precision mediump float;
+uniform sampler2D source;
+uniform highp vec2 texel;
+uniform float strength;
+varying highp vec2 uv;
+vec3 filmic(vec3 x) {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+void main() {
+    highp vec2 reach = 0.5 * texel;
+    highp vec2 across = vec2(reach.x, -reach.y);
+    vec3 sum = texture2D(source, uv - reach).rgb
+        + texture2D(source, uv + reach).rgb
+        + texture2D(source, uv - across).rgb
+        + texture2D(source, uv + across).rgb;
+    vec3 light = sum / 4.0 * strength;
+    gl_FragColor = vec4(pow(filmic(light), vec3(0.4545)), 1.0);
+}
+";
+
+    #[must_use]
+    pub fn meta() -> ShaderMeta {
+        ShaderMeta {
+            images: vec!["source".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: vec![
+                    UniformDesc::new("texel", UniformType::Float2),
+                    UniformDesc::new("strength", UniformType::Float1),
+                ],
+            },
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Uniforms {
+        pub texel: [f32; 2],
+        pub strength: f32,
+    }
+
+    impl Uniforms {
+        #[must_use]
+        pub fn new(source: [u16; 2]) -> Self {
+            Self {
+                texel: super::texel(source),
+                strength: STRENGTH,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::mirror::{FILMIC, declared, filmic};
+        use super::super::up;
+        use super::{FRAGMENT, STRENGTH, Uniforms, meta};
+
+        fn halo(light: f32) -> f32 {
+            filmic(light * STRENGTH).powf(0.4545)
+        }
+
+        #[test]
+        fn the_shader_uses_glsl_100() {
+            assert!(FRAGMENT.starts_with("#version 100"));
+        }
+
+        #[test]
+        fn uniforms_carry_one_texel_of_the_source_and_the_strength() {
+            assert_eq!(size_of::<Uniforms>(), declared(FRAGMENT, &meta()));
+            assert!(FRAGMENT.contains("uniform highp vec2 texel;"));
+            assert!(FRAGMENT.contains("uniform float strength;"));
+            let uniforms = Uniforms::new([240, 135]);
+            assert_eq!(uniforms.texel, [1.0 / 240.0, 1.0 / 135.0]);
+            assert!((uniforms.strength - STRENGTH).abs() < 1e-6);
+            assert_eq!(meta().images, ["source"]);
+        }
+
+        #[test]
+        fn the_halo_spreads_like_the_up_step() {
+            let taps = |shader: &'static str| {
+                shader
+                    .lines()
+                    .filter(|line| line.contains("reach") || line.contains("texture2D"))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(taps(FRAGMENT), taps(up::FRAGMENT));
+            assert!(FRAGMENT.contains("vec3 light = sum / 4.0 * strength;"));
+        }
+
+        #[test]
+        fn the_halo_uses_the_film_curve_of_the_scene() {
+            assert!(FRAGMENT.contains(FILMIC));
+            assert!(
+                FRAGMENT.contains("gl_FragColor = vec4(pow(filmic(light), vec3(0.4545)), 1.0);")
+            );
+        }
+
+        #[test]
+        fn no_glow_gives_no_halo() {
+            assert!(halo(0.0).abs() < 1e-6);
+        }
+
+        #[test]
+        fn the_halo_of_the_brightest_light_stays_soft() {
+            assert!((0.01..=0.2).contains(&STRENGTH));
+            assert!(halo(2.5) < 0.55, "{}", halo(2.5));
+            assert!(halo(0.1) > 0.02);
+        }
+    }
+}
+
 pub mod composite {
     use glam::Vec2;
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
