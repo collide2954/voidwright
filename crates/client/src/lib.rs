@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod clock;
+pub mod cloth;
 pub mod contour;
 pub mod detail;
 pub mod field;
