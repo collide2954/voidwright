@@ -23,6 +23,7 @@ const HEEL_OFF: f32 = 0.5;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.997;
+const SPAN: f32 = (THIGH + ANKLE) * 0.9999;
 const WALK_SURGE: f32 = 0.0;
 const RUN_SURGE: f32 = 0.04;
 const BANK_SWAY: f32 = 0.12;
@@ -232,7 +233,8 @@ fn rock(flat: Vec2, pivot: Vec2, pitch: f32) -> Vec2 {
 }
 
 fn reach(ahead: f32, drop: f32) -> (f32, f32) {
-    let distance = ahead.hypot(drop).clamp(0.05, (THIGH + ANKLE) * 0.9999);
+    let drop = drop.min((SPAN * SPAN - ahead * ahead).max(0.0).sqrt());
+    let distance = ahead.hypot(drop).clamp(0.05, SPAN);
     let cosine = |near: f32, far: f32, across: f32| {
         ((near * near + far * far - across * across) / (2.0 * near * far)).clamp(-1.0, 1.0)
     };
@@ -251,7 +253,8 @@ fn snap(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HEEL, Pose, TOE, cycle, duty, footing, pose_at};
+    use super::{HEEL, Pose, TOE, cycle, duty, footing, pose_at, reach};
+    use crate::figure::{ANKLE, THIGH};
     use crate::{Bone, skeleton};
     use glam::Vec3;
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -295,6 +298,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_leg_too_short_for_its_foot_lifts_the_foot_in_place() {
+        let (thigh, knee) = reach(0.4, 0.8);
+        let ahead = THIGH * thigh.sin() + ANKLE * (thigh - knee).sin();
+        let drop = THIGH * thigh.cos() + ANKLE * (thigh - knee).cos();
+        assert!((ahead - 0.4).abs() < 1e-4, "{ahead}");
+        assert!(drop < 0.8, "{drop}");
     }
 
     #[test]
