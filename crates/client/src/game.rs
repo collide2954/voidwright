@@ -208,7 +208,7 @@ mod tests {
         game.walk_to(target);
         let points = walk_frames(&mut game, FRAMES * 8);
         let push = hardest_push(&points);
-        assert!(push < 8.0, "{push}");
+        assert!(push < 6.0, "{push}");
         let end = points[points.len() - 1];
         assert!(end.distance(center(target)) < 1e-5, "{end}");
     }

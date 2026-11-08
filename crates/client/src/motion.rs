@@ -92,10 +92,10 @@ fn sample(
 }
 
 fn ease_in(progress: f32) -> (f32, f32) {
-    let square = progress * progress;
+    let (square, cube) = (progress * progress, progress * progress * progress);
     (
-        square * (3.0 - 3.0 * progress + square),
-        progress * (6.0 - 9.0 * progress + 4.0 * square),
+        square * (1.5 + 1.5 * progress - 3.5 * square + 1.5 * cube),
+        progress * (3.0 + 4.5 * progress - 14.0 * square + 7.5 * cube),
     )
 }
 
