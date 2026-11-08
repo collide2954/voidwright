@@ -10,15 +10,15 @@ const FILTER_Q: f32 = 0.6;
 
 const DRONE: [u8; 2] = [38, 45];
 const DRONE_LEVELS: [f32; 2] = [0.025, 0.017];
-const DRONE_SWAYS: [f32; 2] = [41.0, 29.0];
+const DRONE_SWAYS: [[f32; 2]; 2] = [[34.0, 48.0], [23.0, 33.0]];
 const DRONE_CUTOFF: f32 = 300.0;
 const DRONE_FADES: [f32; 2] = [6.0, 14.0];
 
 const CHORD: [u8; 4] = [53, 57, 60, 64];
 const VOICE_LEVEL: f32 = 0.031;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
-const DETUNES: [f32; 4] = [-4.0, 3.0, -2.5, 5.0];
-const DRIFTS: [f32; 4] = [11.0, 7.0, 13.0, 9.0];
+const DETUNE: [f32; 2] = [2.0, 6.0];
+const DRIFT: [f32; 2] = [7.0, 14.0];
 const DRIFT_CENTS: f32 = 2.5;
 const PAD_CUTOFF: f32 = 850.0;
 const PAD_FADES: [f32; 2] = [10.0, 12.0];
@@ -31,12 +31,12 @@ pub struct Music {
 
 impl Music {
     #[must_use]
-    pub fn new(_seed: u32, rate: f32) -> Self {
+    pub fn new(seed: u32, rate: f32) -> Self {
         let time = Time::new(rate);
         Self {
             time,
             countdown: 0,
-            bed: Bed::new(time),
+            bed: Bed::new(seed, time),
         }
     }
 
@@ -81,12 +81,13 @@ struct Bed {
 }
 
 impl Bed {
-    fn new(time: Time) -> Self {
+    fn new(seed: u32, time: Time) -> Self {
+        let mut dice = Dice::new(seed);
         Self {
             playing: false,
             until: ENTRY,
-            drone: Drone::new(time),
-            pad: Pad::new(time),
+            drone: Drone::new(&mut dice, time),
+            pad: Pad::new(&mut dice, time),
         }
     }
 
@@ -122,13 +123,13 @@ struct Hum {
 }
 
 impl Drone {
-    fn new(time: Time) -> Self {
+    fn new(dice: &mut Dice, time: Time) -> Self {
         Self {
             hums: from_fn(|index| Hum {
-                saw: Saw::new(hertz(DRONE[index]), time.rate),
+                saw: Saw::new(dice.unit(), hertz(DRONE[index]), time.rate),
                 gain: Ramp::default(),
-                sway: Phase::default(),
-                speed: DRONE_SWAYS[index].recip(),
+                sway: turned(dice.unit()),
+                speed: dice.within(DRONE_SWAYS[index]).recip(),
                 level: DRONE_LEVELS[index],
             }),
             filter: Svf::new(DRONE_CUTOFF, FILTER_Q, time.rate),
@@ -178,19 +179,19 @@ struct Voice {
 }
 
 impl Pad {
-    fn new(time: Time) -> Self {
+    fn new(dice: &mut Dice, time: Time) -> Self {
         Self {
             voices: from_fn(|index| {
                 // Invert every second voice. Then the edges of the saw waves do not add.
                 let polarity = if index % 2 == 0 { 1.0 } else { -1.0 };
                 Voice {
-                    saw: Saw::new(hertz(CHORD[index]), time.rate),
+                    saw: Saw::new(dice.unit(), hertz(CHORD[index]), time.rate),
                     gain: Ramp::default(),
                     pan: pan(PANS[index]).map(|side| side * polarity),
                     pitch: hertz(CHORD[index]),
-                    detune: DETUNES[index],
-                    drift: Phase::default(),
-                    speed: DRIFTS[index].recip(),
+                    detune: polarity * dice.within(DETUNE),
+                    drift: turned(dice.unit()),
+                    speed: dice.within(DRIFT).recip(),
                 }
             }),
             filters: [Svf::new(PAD_CUTOFF, FILTER_Q, time.rate); 2],
@@ -234,10 +235,11 @@ struct Saw {
 }
 
 impl Saw {
-    fn new(frequency: f32, rate: f32) -> Self {
-        let mut saw = Self::default();
-        saw.tune(frequency, rate);
-        saw
+    fn new(phase: f32, frequency: f32, rate: f32) -> Self {
+        Self {
+            phase,
+            step: frequency / rate,
+        }
     }
 
     fn tune(&mut self, frequency: f32, rate: f32) {
@@ -313,6 +315,39 @@ impl Fade {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Dice {
+    state: u32,
+}
+
+impl Dice {
+    const fn new(seed: u32) -> Self {
+        Self { state: seed }
+    }
+
+    fn roll(&mut self) -> u32 {
+        self.state = self.state.wrapping_add(0x9E37_79B9);
+        let mut value = self.state;
+        value = (value ^ (value >> 16)).wrapping_mul(0x21F0_AAAD);
+        value = (value ^ (value >> 15)).wrapping_mul(0x735A_2D97);
+        value ^ (value >> 15)
+    }
+
+    fn unit(&mut self) -> f32 {
+        f32::from(u16::try_from(self.roll() >> 16).unwrap_or(0)) / 65_536.0
+    }
+
+    fn within(&mut self, [low, high]: [f32; 2]) -> f32 {
+        low + (high - low) * self.unit()
+    }
+}
+
+fn turned(turns: f32) -> Phase {
+    let mut phase = Phase::default();
+    phase.advance(turns, 1.0);
+    phase
+}
+
 fn hertz(note: u8) -> f32 {
     440.0 * ((f32::from(note) - 69.0) / 12.0).exp2()
 }
@@ -367,6 +402,21 @@ mod tests {
                 Some(step)
             })
             .fold(0.0, f32::max)
+    }
+
+    fn first_difference(one: &[Frame], other: &[Frame]) -> Option<usize> {
+        one.iter()
+            .zip(other)
+            .position(|(one, other)| one.map(f32::to_bits) != other.map(f32::to_bits))
+    }
+
+    #[test]
+    fn the_same_seed_repeats_its_samples_and_other_seeds_differ() {
+        let first = take(&mut Music::new(3, RATE), 20);
+        let again = take(&mut Music::new(3, RATE), 20);
+        let other = take(&mut Music::new(4, RATE), 20);
+        assert_eq!(first_difference(&first, &again), None);
+        assert!(first_difference(&first, &other).is_some());
     }
 
     #[test]
