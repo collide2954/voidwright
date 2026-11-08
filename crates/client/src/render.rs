@@ -209,6 +209,7 @@ impl Renderer {
         context.apply_uniforms(UniformsSource::table(&shader::sky::Uniforms::new(
             view_projection,
             camera.eye(),
+            game.time(),
         )));
         context.draw(0, self.sky.count, 1);
         let marker = game

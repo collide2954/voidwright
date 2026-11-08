@@ -32,13 +32,45 @@ const HAZE: f32 = 0.55;
 const SKY_GAIN: f32 = 2.0;
 const GLOW_GAIN: f32 = 3.0;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyVertex {
+    pub position: [f32; 3],
+    pub color: [f32; 3],
+    pub twinkle: [f32; 2],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Backdrop {
+    pub vertices: Vec<SkyVertex>,
+    pub indices: Vec<u32>,
+}
+
+impl Backdrop {
+    fn add(&mut self, mesh: &Mesh, twinkle: impl Fn(usize) -> [f32; 2]) {
+        let offset = u32::try_from(self.vertices.len()).expect("a sky index fits in u32");
+        self.vertices.extend(
+            mesh.vertices
+                .iter()
+                .enumerate()
+                .map(|(index, vertex)| SkyVertex {
+                    position: vertex.position,
+                    color: vertex.color,
+                    twinkle: twinkle(index),
+                }),
+        );
+        self.indices
+            .extend(mesh.indices.iter().map(|index| index + offset));
+    }
+}
+
 #[must_use]
-pub fn sky() -> Mesh {
-    let mut mesh = dome();
-    mesh.append(&vael());
-    mesh.append(&stars());
-    mesh.append(&fragments());
-    mesh
+pub fn sky() -> Backdrop {
+    let mut backdrop = Backdrop::default();
+    for part in [dome(), vael(), stars(), fragments()] {
+        backdrop.add(&part, |_| [0.0; 2]);
+    }
+    backdrop
 }
 
 #[must_use]
@@ -252,9 +284,45 @@ fn lerp(from: f32, to: f32, weight: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{FRAGMENTS, SKY_RADIUS, STAR_COUNT, fragments, noise3, sky_color, stars};
+    use super::{
+        FRAGMENTS, SKY_RADIUS, STAR_COUNT, dome, fragments, noise3, sky, sky_color, stars, vael,
+    };
     use crate::{VAEL, normal};
     use glam::Vec3;
+    use std::ops::Range;
+
+    fn parts() -> [Range<usize>; 4] {
+        let mut start = 0;
+        [dome(), vael(), stars(), fragments()].map(|part| {
+            let range = start..start + part.vertices.len();
+            start = range.end;
+            range
+        })
+    }
+
+    #[test]
+    fn the_backdrop_keeps_the_parts_of_the_sky_in_order() {
+        let backdrop = sky();
+        let mut parts = dome();
+        parts.append(&vael());
+        parts.append(&stars());
+        parts.append(&fragments());
+        assert_eq!(backdrop.indices, parts.indices);
+        assert_eq!(backdrop.vertices.len(), parts.vertices.len());
+        for (vertex, part) in backdrop.vertices.iter().zip(&parts.vertices) {
+            assert_eq!(vertex.position, part.position);
+            assert_eq!(vertex.color, part.color);
+        }
+    }
+
+    #[test]
+    fn the_dome_vael_and_the_fragments_do_not_twinkle() {
+        let backdrop = sky();
+        let [dome, vael, _, fragments] = parts();
+        for index in dome.chain(vael).chain(fragments) {
+            assert_eq!(backdrop.vertices[index].twinkle, [0.0; 2]);
+        }
+    }
 
     fn samples() -> impl Iterator<Item = Vec3> {
         (0..400).map(|index| {

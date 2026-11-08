@@ -6,11 +6,16 @@ use miniquad::{
 pub const VERTEX: &str = "#version 100
 attribute vec3 in_position;
 attribute vec3 in_color;
+attribute vec2 in_twinkle;
 uniform mat4 view_projection;
 uniform vec3 eye;
+uniform float time;
 varying mediump vec3 color;
+const float TWINKLE = 0.45;
 void main() {
-    color = in_color;
+    float beat = in_twinkle.x + in_twinkle.y * time;
+    float glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));
+    color = in_color * glint;
     gl_Position = view_projection * vec4(in_position + eye, 1.0);
 }
 ";
@@ -34,16 +39,18 @@ pub fn meta() -> ShaderMeta {
             uniforms: vec![
                 UniformDesc::new("view_projection", UniformType::Mat4),
                 UniformDesc::new("eye", UniformType::Float3),
+                UniformDesc::new("time", UniformType::Float1),
             ],
         },
     }
 }
 
 #[must_use]
-pub fn attributes() -> [VertexAttribute; 2] {
+pub fn attributes() -> [VertexAttribute; 3] {
     [
         VertexAttribute::new("in_position", VertexFormat::Float3),
         VertexAttribute::new("in_color", VertexFormat::Float3),
+        VertexAttribute::new("in_twinkle", VertexFormat::Float2),
     ]
 }
 
@@ -52,14 +59,16 @@ pub fn attributes() -> [VertexAttribute; 2] {
 pub struct Uniforms {
     pub view_projection: [f32; 16],
     pub eye: [f32; 3],
+    pub time: f32,
 }
 
 impl Uniforms {
     #[must_use]
-    pub fn new(view_projection: Mat4, eye: Vec3) -> Self {
+    pub fn new(view_projection: Mat4, eye: Vec3, time: f32) -> Self {
         Self {
             view_projection: view_projection.to_cols_array(),
             eye: eye.to_array(),
+            time,
         }
     }
 }
@@ -67,10 +76,22 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, attributes, meta};
-    use crate::Vertex;
     use crate::shader::baked;
+    use crate::sky::SkyVertex;
     use glam::{Mat4, Vec3};
     use miniquad::{UniformDesc, UniformType, VertexFormat};
+    use std::f32::consts::TAU;
+
+    const TWINKLE: f32 = 0.45;
+
+    fn glint([phase, rate]: [f32; 2], time: f32) -> f32 {
+        let beat = phase + rate * time;
+        1.0 + TWINKLE * 0.5 * (beat.sin() + (2.7 * beat + phase).sin())
+    }
+
+    fn times() -> impl Iterator<Item = f32> {
+        (0..6000_u16).map(|step| f32::from(step) * 0.1)
+    }
 
     fn declaration(uniform: &UniformDesc) -> String {
         let kind = match uniform.uniform_type {
@@ -127,7 +148,7 @@ mod tests {
             .iter()
             .map(|attribute| attribute.format.size_bytes())
             .sum();
-        assert_eq!(usize::try_from(size).unwrap(), size_of::<Vertex>());
+        assert_eq!(usize::try_from(size).unwrap(), size_of::<SkyVertex>());
         for attribute in attributes() {
             let kind = kind(attribute.format);
             assert!(VERTEX.contains(&format!("attribute {kind} {};", attribute.name)));
@@ -147,9 +168,43 @@ mod tests {
     #[test]
     fn the_sky_stays_around_the_eye() {
         let view_projection = Mat4::from_scale(Vec3::splat(2.0));
-        let uniforms = Uniforms::new(view_projection, Vec3::new(1.0, 2.0, 3.0));
+        let uniforms = Uniforms::new(view_projection, Vec3::new(1.0, 2.0, 3.0), 12.5);
         assert_eq!(uniforms.view_projection, view_projection.to_cols_array());
         assert_eq!(uniforms.eye, [1.0, 2.0, 3.0]);
         assert!(VERTEX.contains("view_projection * vec4(in_position + eye, 1.0)"));
+    }
+
+    #[test]
+    fn uniforms_carry_the_game_time() {
+        let uniforms = Uniforms::new(Mat4::IDENTITY, Vec3::ZERO, 12.5);
+        assert_eq!(uniforms.time, 12.5);
+    }
+
+    #[test]
+    fn the_shader_twinkles_like_the_reference() {
+        assert!(VERTEX.contains(&format!("const float TWINKLE = {TWINKLE:?};")));
+        assert!(VERTEX.contains("float beat = in_twinkle.x + in_twinkle.y * time;"));
+        assert!(VERTEX.contains(
+            "float glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));"
+        ));
+        assert!(VERTEX.contains("color = in_color * glint;"));
+    }
+
+    #[test]
+    fn a_point_without_twinkle_keeps_its_brightness() {
+        for time in times() {
+            assert!((glint([0.0; 2], time) - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_twinkle_never_puts_a_point_out() {
+        for twinkle in [[0.0, 0.3], [1.3, 0.9], [TAU - 0.01, 0.55], [4.0, 0.42]] {
+            for time in times() {
+                let glint = glint(twinkle, time);
+                assert!((1.0 - TWINKLE..=1.0 + TWINKLE).contains(&glint), "{glint}");
+            }
+        }
+        const { assert!(TWINKLE < 0.5) };
     }
 }
