@@ -775,11 +775,14 @@ fn pauldron() -> Sculpt {
     let mut clay = clay();
     let arm = Bone::LeftUpperArm;
     let tilt = Quat::from_rotation_z(0.3);
-    let (center, radii) = (Vec3::new(-0.012, 0.03, 0.0), Vec3::new(0.092, 0.064, 0.085));
+    let (center, radii) = (
+        Vec3::new(-0.025, -0.002, 0.0),
+        Vec3::new(0.082, 0.062, 0.08),
+    );
     clay.add(stroke(arm, Form::Egg(radii), PLATE).at(center).turned(tilt));
     clay.add(
-        stroke(arm, egg(0.08, 0.054, 0.073), METAL)
-            .at(Vec3::new(-0.006, 0.01, 0.0))
+        stroke(arm, egg(0.072, 0.056, 0.07), METAL)
+            .at(Vec3::new(-0.02, -0.012, 0.0))
             .turned(tilt)
             .carved()
             .blended(0.004),
@@ -787,13 +790,13 @@ fn pauldron() -> Sculpt {
     clay.part();
     let lower = Quat::from_rotation_z(0.45);
     clay.add(
-        stroke(arm, egg(0.088, 0.055, 0.084), METAL)
-            .at(Vec3::new(-0.03, -0.03, 0.0))
+        stroke(arm, egg(0.08, 0.05, 0.078), METAL)
+            .at(Vec3::new(-0.05, -0.05, 0.0))
             .turned(lower),
     );
     clay.add(
-        stroke(arm, egg(0.077, 0.047, 0.073), METAL)
-            .at(Vec3::new(-0.022, -0.05, 0.0))
+        stroke(arm, egg(0.07, 0.042, 0.068), METAL)
+            .at(Vec3::new(-0.043, -0.066, 0.0))
             .turned(lower)
             .carved()
             .blended(0.004),
@@ -816,15 +819,15 @@ fn bracer() -> Sculpt {
     clay.add(
         stroke(
             arm,
-            tube(0.09, Vec2::new(0.05, 0.045), 0.011, Vec2::ZERO),
+            tube(0.09, Vec2::new(0.048, 0.036), 0.011, Vec2::ZERO),
             PLATE,
         )
         .at(Vec3::new(0.0, -0.12, 0.0)),
     );
     clay.part();
-    clay.add(stroke(arm, ring(0.047, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.195, 0.0)));
+    clay.add(stroke(arm, ring(0.042, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.195, 0.0)));
     clay.part();
-    clay.add(stroke(arm, ring(0.052, 0.005), METAL).at(Vec3::new(0.0, -0.125, 0.0)));
+    clay.add(stroke(arm, ring(0.051, 0.005), METAL).at(Vec3::new(0.0, -0.125, 0.0)));
     clay
 }
 
@@ -1331,6 +1334,33 @@ mod tests {
         assert!(thigh(0.08) > thigh(THIGH - 0.06) * 1.3);
         let (knee, swell) = (calf(0.03), calf(0.11));
         assert!(swell > knee * 1.05 && swell > 0.115, "{knee} {swell}");
+    }
+
+    #[test]
+    fn the_plates_sit_close_on_the_arms() {
+        let top = super::pauldron()
+            .mesh(0.01)
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((1.455..1.485).contains(&top), "{top}");
+        let mut arm = super::clay();
+        super::arm(&mut arm, super::Side::Right);
+        let bracer = super::bracer();
+        let frame = crate::figure::rest()[Bone::RightForearm.index()];
+        let outward = frame.transform_vector3(Vec3::X);
+        for down in [0.13, 0.2] {
+            let middle = frame.transform_point3(Vec3::NEG_Y * down);
+            let first = |inside: bool, sculpt: &crate::sculpt::Sculpt| {
+                (0..200_u16)
+                    .map(|step| f32::from(step) * 0.0005)
+                    .find(|&reach| (sculpt.distance(middle + outward * reach) < 0.0) == inside)
+                    .unwrap_or(1.0)
+            };
+            let (skin, plate) = (first(false, &arm), first(true, &bracer));
+            assert!((plate - skin).abs() < 0.006, "{down} {skin} {plate}");
+        }
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
