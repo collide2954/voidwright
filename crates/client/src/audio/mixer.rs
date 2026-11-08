@@ -22,6 +22,7 @@ const MUSIC_SEED: u32 = 7;
 const STEP_SEND: f32 = 0.25;
 const LANTERN_SEND: f32 = 0.25;
 const RETURN: f32 = 0.5;
+const MUSIC_GAIN: f32 = 1.8;
 const SPACE_SEND: f32 = 0.7;
 const SPACE_RETURN: f32 = 0.6;
 
@@ -174,7 +175,7 @@ impl Mixer {
         out.fill([0.0; 2]);
         self.music.render(out);
         for frame in out.iter_mut() {
-            let music = *frame;
+            let music = frame.map(|side| side * MUSIC_GAIN);
             let wind = self.wind.sample();
             let flame = self.lantern.sample();
             let lantern = match self.mode {
@@ -258,6 +259,15 @@ mod tests {
 
     fn power(frames: &[Frame]) -> f32 {
         frames.iter().map(|[l, r]| l * l + r * r).sum()
+    }
+
+    #[test]
+    fn the_music_sits_clearly_in_the_mix() {
+        let out = render(&[listener()], 48_000 * 30);
+        let bed = window(&out, 22.0, 30.0);
+        let count = f32::from(u16::try_from(bed.len() / 100).unwrap()) * 200.0;
+        let level = 10.0 * (power(bed) / count).log10();
+        assert!((-31.0..-24.0).contains(&level), "{level}");
     }
 
     #[test]
