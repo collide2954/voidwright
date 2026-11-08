@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::{Map, Tile, Walker, find_path};
@@ -6,20 +7,50 @@ pub const TICK: Duration = Duration::from_millis(600);
 const WALK_STEPS: usize = 1;
 const RUN_STEPS: usize = 2;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PlayerId(u16);
+
+impl PlayerId {
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Player {
+    walker: Walker,
+    running: bool,
+}
+
+impl Player {
+    fn new(tile: Tile) -> Self {
+        Self {
+            walker: Walker::new(tile),
+            running: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     map: Map,
-    player: Walker,
-    running: bool,
+    players: BTreeMap<PlayerId, Player>,
+    next: u16,
 }
 
 impl World {
     #[must_use]
-    pub fn new(map: Map, spawn: Tile) -> Self {
+    pub const fn new(map: Map) -> Self {
         Self {
             map,
-            player: Walker::new(spawn),
-            running: false,
+            players: BTreeMap::new(),
+            next: 0,
         }
     }
 
@@ -28,33 +59,57 @@ impl World {
         &self.map
     }
 
+    pub fn join(&mut self, spawn: Tile) -> Option<PlayerId> {
+        let id = (0..=u16::MAX)
+            .map(|offset| PlayerId(self.next.wrapping_add(offset)))
+            .find(|id| !self.players.contains_key(id))?;
+        self.next = id.0.wrapping_add(1);
+        self.players.insert(id, Player::new(spawn));
+        Some(id)
+    }
+
     #[must_use]
-    pub const fn player(&self) -> &Walker {
-        &self.player
+    pub fn player(&self, id: PlayerId) -> Option<&Walker> {
+        self.players.get(&id).map(|player| &player.walker)
     }
 
-    pub fn walk_to(&mut self, target: Tile) {
-        let route = find_path(&self.map, self.player.tile(), target);
-        self.player.follow(route);
+    pub fn walk_to(&mut self, id: PlayerId, target: Tile) {
+        if let Some(player) = self.players.get_mut(&id) {
+            let route = find_path(&self.map, player.walker.tile(), target);
+            player.walker.follow(route);
+        }
     }
 
-    pub const fn set_running(&mut self, running: bool) {
-        self.running = running;
+    pub fn set_running(&mut self, id: PlayerId, running: bool) {
+        if let Some(player) = self.players.get_mut(&id) {
+            player.running = running;
+        }
     }
 
     pub fn tick(&mut self) {
-        let steps = if self.running { RUN_STEPS } else { WALK_STEPS };
-        self.player.advance(steps);
+        for player in self.players.values_mut() {
+            let steps = if player.running {
+                RUN_STEPS
+            } else {
+                WALK_STEPS
+            };
+            player.walker.advance(steps);
+        }
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{TICK, World};
-    use crate::{Tile, fixtures};
+    use super::{PlayerId, TICK, World};
+    use crate::{Tile, Walker, fixtures};
 
-    fn corridor() -> World {
-        World::new(fixtures::map(&["......"]), Tile::new(0, 0))
+    fn corridor() -> (World, PlayerId) {
+        let mut world = World::new(fixtures::map(&["......"]));
+        let id = world.join(Tile::new(0, 0)).unwrap();
+        (world, id)
+    }
+
+    fn tile(world: &World, id: PlayerId) -> Tile {
+        world.player(id).map(Walker::tile).unwrap()
     }
 
     #[test]
@@ -64,44 +119,77 @@ mod tests {
 
     #[test]
     fn the_world_shows_its_map() {
-        let world = corridor();
+        let (world, _) = corridor();
         assert_eq!(world.map(), &fixtures::map(&["......"]));
     }
 
     #[test]
+    fn a_new_world_has_no_players() {
+        let world = World::new(fixtures::map(&["..."]));
+        assert_eq!(world.player(PlayerId::new(0)), None);
+    }
+
+    #[test]
+    fn a_player_joins_on_the_spawn_tile() {
+        let (world, id) = corridor();
+        assert_eq!(tile(&world, id), Tile::new(0, 0));
+    }
+
+    #[test]
+    fn each_player_gets_a_different_id() {
+        let (mut world, first) = corridor();
+        let second = world.join(Tile::new(3, 0)).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(tile(&world, first), Tile::new(0, 0));
+        assert_eq!(tile(&world, second), Tile::new(3, 0));
+    }
+
+    #[test]
     fn the_player_does_not_move_before_the_tick() {
-        let mut world = corridor();
-        world.walk_to(Tile::new(5, 0));
-        assert_eq!(world.player().tile(), Tile::new(0, 0));
+        let (mut world, id) = corridor();
+        world.walk_to(id, Tile::new(5, 0));
+        assert_eq!(tile(&world, id), Tile::new(0, 0));
     }
 
     #[test]
     fn a_walking_player_moves_one_tile_each_tick() {
-        let mut world = corridor();
-        world.walk_to(Tile::new(5, 0));
+        let (mut world, id) = corridor();
+        world.walk_to(id, Tile::new(5, 0));
         world.tick();
-        assert_eq!(world.player().tile(), Tile::new(1, 0));
+        assert_eq!(tile(&world, id), Tile::new(1, 0));
         world.tick();
-        assert_eq!(world.player().tile(), Tile::new(2, 0));
+        assert_eq!(tile(&world, id), Tile::new(2, 0));
     }
 
     #[test]
     fn a_running_player_moves_two_tiles_each_tick() {
-        let mut world = corridor();
-        world.set_running(true);
-        world.walk_to(Tile::new(5, 0));
+        let (mut world, id) = corridor();
+        world.set_running(id, true);
+        world.walk_to(id, Tile::new(5, 0));
         world.tick();
-        assert_eq!(world.player().tile(), Tile::new(2, 0));
+        assert_eq!(tile(&world, id), Tile::new(2, 0));
     }
 
     #[test]
     fn the_player_walks_around_the_void() {
-        let map = fixtures::map(&["...", ".#.", "..."]);
-        let mut world = World::new(map, Tile::new(0, 1));
-        world.walk_to(Tile::new(2, 1));
+        let mut world = World::new(fixtures::map(&["...", ".#.", "..."]));
+        let id = world.join(Tile::new(0, 1)).unwrap();
+        world.walk_to(id, Tile::new(2, 1));
         for _ in 0..4 {
             world.tick();
         }
-        assert_eq!(world.player().tile(), Tile::new(2, 1));
+        assert_eq!(tile(&world, id), Tile::new(2, 1));
+    }
+
+    #[test]
+    fn every_player_moves_in_the_same_tick() {
+        let mut world = World::new(fixtures::map(&["......", "......"]));
+        let north = world.join(Tile::new(0, 1)).unwrap();
+        let south = world.join(Tile::new(0, 0)).unwrap();
+        world.walk_to(north, Tile::new(5, 1));
+        world.walk_to(south, Tile::new(5, 0));
+        world.tick();
+        assert_eq!(tile(&world, north), Tile::new(1, 1));
+        assert_eq!(tile(&world, south), Tile::new(1, 0));
     }
 }

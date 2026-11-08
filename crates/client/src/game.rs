@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3};
-use voidwright_core::{Island, TICK, Tile, World};
+use voidwright_core::{Island, Map, PlayerId, TICK, Tile, Walker, World};
 
 use crate::figure::Coat;
 use crate::ground::Ground;
@@ -13,9 +13,34 @@ use crate::{
 pub(crate) const ISLAND_RADIUS: u8 = 20;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 
+#[derive(Clone, Copy, Debug)]
+pub struct Local<'a> {
+    world: &'a World,
+    me: PlayerId,
+}
+
+impl<'a> Local<'a> {
+    const fn new(world: &'a World, me: PlayerId) -> Self {
+        Self { world, me }
+    }
+
+    #[must_use]
+    pub const fn map(self) -> &'a Map {
+        self.world.map()
+    }
+
+    #[must_use]
+    pub fn player(self) -> &'a Walker {
+        self.world
+            .player(self.me)
+            .expect("the world keeps the local player")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Game {
     world: World,
+    me: PlayerId,
     ground: Ground,
     camera: OrbitCamera,
     ticker: Ticker,
@@ -30,8 +55,11 @@ impl Game {
     pub fn new(seed: u64) -> Self {
         let island = Island::generate(seed, ISLAND_RADIUS);
         let ground = Ground::new(&island.map);
+        let mut world = World::new(island.map);
+        let me = world.join(island.center).expect("a new world has room");
         let mut game = Self {
-            world: World::new(island.map, island.center),
+            world,
+            me,
             ground,
             camera: OrbitCamera::new(Vec3::ZERO),
             ticker: Ticker::new(TICK),
@@ -76,8 +104,8 @@ impl Game {
     }
 
     #[must_use]
-    pub const fn world(&self) -> &World {
-        &self.world
+    pub const fn world(&self) -> Local<'_> {
+        Local::new(&self.world, self.me)
     }
 
     #[must_use]
@@ -97,7 +125,8 @@ impl Game {
     pub fn update(&mut self, delta: Duration) {
         let before = to_ground(self.player_position());
         for _ in 0..self.ticker.advance(delta) {
-            self.course.advance(self.world.player().trail());
+            let player = Local::new(&self.world, self.me).player();
+            self.course.advance(player.trail());
             self.world.tick();
         }
         self.course.update(delta.div_duration_f32(TICK));
@@ -117,9 +146,9 @@ impl Game {
     }
 
     pub fn walk_to(&mut self, tile: Tile) {
-        let from = self.world.player().next_step();
-        self.world.walk_to(tile);
-        let player = self.world.player();
+        let from = self.world().player().next_step();
+        self.world.walk_to(self.me, tile);
+        let player = Local::new(&self.world, self.me).player();
         self.course.reroute(
             player.trail(),
             from,
@@ -130,7 +159,7 @@ impl Game {
 
     #[must_use]
     pub fn marker(&self) -> Option<Vec3> {
-        self.world.player().destination().map(|tile| {
+        self.world().player().destination().map(|tile| {
             let below = center(tile);
             to_world(below, self.ground.height_at(below))
         })
@@ -138,7 +167,7 @@ impl Game {
 
     #[must_use]
     pub fn player_position(&self) -> Vec3 {
-        let player = self.world.player();
+        let player = self.world().player();
         let below = self
             .course
             .position(player.trail(), player.next_step(), self.ticker.alpha());

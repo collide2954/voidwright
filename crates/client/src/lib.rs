@@ -43,7 +43,7 @@ pub use camera::{OrbitCamera, Ray, projection};
 pub use clock::Ticker;
 pub use figure::{BONES, Bone, Coat, JOINTS, LANTERN_BONE, placement, pulse, rest, skeleton, skin};
 pub use gait::{Pose, pose_at};
-pub use game::Game;
+pub use game::{Game, Local};
 pub use input::{Controls, Turn, aspect, drag_rotation, to_screen, turn_for};
 pub use launch::{Launch, flip_rows};
 pub use light::{Lamp, Light, VAEL};
