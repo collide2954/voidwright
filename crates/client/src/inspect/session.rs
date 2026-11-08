@@ -1,6 +1,7 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{Mat4, Vec3};
+use miniquad::KeyCode;
 
 use super::{Gait, Options, Playback, View};
 use crate::Pose;
@@ -23,6 +24,34 @@ pub enum Command {
     Front,
     Side,
     Top,
+}
+
+impl Command {
+    #[must_use]
+    pub const fn for_key(key: KeyCode) -> Option<Self> {
+        match key {
+            KeyCode::Key1 | KeyCode::Kp1 => Some(Self::Gait(Gait::Idle)),
+            KeyCode::Key2 | KeyCode::Kp2 => Some(Self::Gait(Gait::Walk)),
+            KeyCode::Key3 | KeyCode::Kp3 => Some(Self::Gait(Gait::Run)),
+            KeyCode::Space => Some(Self::Pause),
+            KeyCode::LeftBracket => Some(Self::Slower),
+            KeyCode::RightBracket => Some(Self::Faster),
+            KeyCode::Left => Some(Self::Step(-1)),
+            KeyCode::Right => Some(Self::Step(1)),
+            KeyCode::T => Some(Self::Spin),
+            KeyCode::F => Some(Self::Frame),
+            KeyCode::R => Some(Self::Reset),
+            KeyCode::Key7 | KeyCode::Kp7 => Some(Self::Front),
+            KeyCode::Key8 | KeyCode::Kp8 => Some(Self::Side),
+            KeyCode::Key9 | KeyCode::Kp9 => Some(Self::Top),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn repeats(self) -> bool {
+        matches!(self, Self::Step(_))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,6 +177,7 @@ mod tests {
     use crate::inspect::{Gait, Options};
     use crate::{Bone, skeleton};
     use glam::{Vec2, Vec3};
+    use miniquad::KeyCode;
     use std::f32::consts::FRAC_PI_2;
 
     const BOUNDS: [Vec3; 2] = [Vec3::new(-0.3, 0.0, -0.25), Vec3::new(0.3, 1.75, 0.25)];
@@ -175,6 +205,37 @@ mod tests {
 
     fn looking(session: &Session) -> Vec3 {
         (session.view().eye() - session.view().target()).normalize()
+    }
+
+    #[test]
+    fn keys_choose_the_gait_the_playback_and_the_view() {
+        let keys = [
+            (KeyCode::Key1, Command::Gait(Gait::Idle)),
+            (KeyCode::Key2, Command::Gait(Gait::Walk)),
+            (KeyCode::Key3, Command::Gait(Gait::Run)),
+            (KeyCode::Space, Command::Pause),
+            (KeyCode::LeftBracket, Command::Slower),
+            (KeyCode::RightBracket, Command::Faster),
+            (KeyCode::Left, Command::Step(-1)),
+            (KeyCode::Right, Command::Step(1)),
+            (KeyCode::T, Command::Spin),
+            (KeyCode::F, Command::Frame),
+            (KeyCode::R, Command::Reset),
+            (KeyCode::Key7, Command::Front),
+            (KeyCode::Kp8, Command::Side),
+            (KeyCode::Key9, Command::Top),
+        ];
+        for (key, command) in keys {
+            assert_eq!(Command::for_key(key), Some(command), "{key:?}");
+        }
+        assert_eq!(Command::for_key(KeyCode::Q), None);
+    }
+
+    #[test]
+    fn only_frame_steps_repeat_while_a_key_is_held() {
+        assert!(Command::Step(1).repeats());
+        assert!(!Command::Pause.repeats());
+        assert!(!Command::Spin.repeats());
     }
 
     #[test]
