@@ -92,15 +92,20 @@ impl World {
     }
 
     #[must_use]
-    pub fn near(&self, tile: Tile, reach: u16) -> Vec<(PlayerId, &Walker)> {
-        let limit = i64::from(reach).pow(2);
+    pub fn near(&self, tile: Tile, reach: u16, limit: usize) -> Vec<(PlayerId, &Walker)> {
+        let range = i64::from(reach).pow(2);
+        let key = |&(id, walker): &(PlayerId, &Walker)| (walker.tile().distance_squared(tile), id);
         let mut near: Vec<(PlayerId, &Walker)> = self
             .players
             .iter()
             .map(|(&id, player)| (id, &player.walker))
-            .filter(|(_, walker)| walker.tile().distance_squared(tile) <= limit)
+            .filter(|(_, walker)| walker.tile().distance_squared(tile) <= range)
             .collect();
-        near.sort_by_key(|&(id, walker)| (walker.tile().distance_squared(tile), id));
+        if near.len() > limit {
+            near.select_nth_unstable_by_key(limit, key);
+            near.truncate(limit);
+        }
+        near.sort_unstable_by_key(key);
         near
     }
 
@@ -351,7 +356,7 @@ mod tests {
 
     fn near(world: &World, tile: Tile, reach: u16) -> Vec<PlayerId> {
         world
-            .near(tile, reach)
+            .near(tile, reach, usize::MAX)
             .into_iter()
             .map(|(id, _)| id)
             .collect()
@@ -407,5 +412,21 @@ mod tests {
         let mut world = World::new(fixtures::map(&["...."]));
         world.sync(PlayerId::new(0), Tile::new(0, 0), None);
         assert_eq!(world.join(Tile::new(1, 0)), Some(PlayerId::new(1)));
+    }
+
+    #[test]
+    fn near_gives_at_most_the_limit_of_players_nearest_first() {
+        let mut world = World::new(fixtures::map(&["........"]));
+        let ids: Vec<PlayerId> = (0..8)
+            .rev()
+            .map(|x| world.join(Tile::new(x, 0)).unwrap())
+            .collect();
+        let nearest: Vec<PlayerId> = world
+            .near(Tile::new(0, 0), 7, 3)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(nearest, [ids[7], ids[6], ids[5]]);
+        assert_eq!(world.near(Tile::new(0, 0), 7, 0), Vec::new());
     }
 }

@@ -225,9 +225,8 @@ impl Connection {
             return;
         };
         let players = world
-            .near(me.tile(), config.view)
+            .near(me.tile(), config.view, MAX_SIGHTINGS)
             .into_iter()
-            .take(MAX_SIGHTINGS)
             .map(|(id, walker)| Sighting {
                 id,
                 tile: walker.tile(),
