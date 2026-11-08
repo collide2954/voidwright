@@ -365,6 +365,7 @@ fn trunk(clay: &mut Sculpt) {
         );
     }
 }
+
 fn segment(bone: Bone, from: Vec3, to: Vec3, radius: f32, material: Material) -> Stroke {
     stroke(bone, limb(from.distance(to), radius, radius), material)
         .at(from)
@@ -374,26 +375,35 @@ fn segment(bone: Bone, from: Vec3, to: Vec3, radius: f32, material: Material) ->
 fn leg(clay: &mut Sculpt, side: Side) {
     let (thigh, shin) = (side.thigh(), side.shin());
     let trousers = Vec3::new(10.0, 16.0, 10.0);
-    clay.add(
-        stroke(thigh, limb(THIGH, 0.07, 0.053), CLOTH)
-            .wrinkled(0.005, trousers)
-            .blended(0.03),
-    );
-    clay.add(
-        stroke(shin, egg(0.06, 0.05, 0.06), CLOTH)
-            .at(Vec3::new(0.0, 0.01, -0.006))
-            .blended(0.025),
-    );
-    clay.add(
-        stroke(shin, limb(ANKLE - 0.04, 0.055, 0.044), CLOTH)
-            .wrinkled(0.004, trousers)
-            .blended(0.035),
-    );
-    clay.add(
-        stroke(shin, egg(0.05, 0.09, 0.052), CLOTH)
-            .at(Vec3::new(0.0, -0.12, 0.014))
-            .blended(0.03),
-    );
+    for (bone, form, at, blend) in [
+        (thigh, limb(THIGH, 0.088, 0.058), Vec3::ZERO, 0.03),
+        (
+            thigh,
+            egg(0.06, 0.13, 0.05),
+            Vec3::new(0.0, -0.18, -0.025),
+            0.04,
+        ),
+        (
+            shin,
+            egg(0.054, 0.048, 0.05),
+            Vec3::new(0.0, 0.01, -0.006),
+            0.025,
+        ),
+        (shin, limb(ANKLE - 0.04, 0.046, 0.038), Vec3::ZERO, 0.035),
+        (
+            shin,
+            egg(0.054, 0.09, 0.06),
+            Vec3::new(0.0, -0.11, 0.02),
+            0.03,
+        ),
+    ] {
+        clay.add(
+            stroke(bone, form, CLOTH)
+                .at(at)
+                .wrinkled(0.004, trousers)
+                .blended(blend),
+        );
+    }
     clay.add(
         stroke(shin, limb(0.18, 0.055, 0.059), BOOT)
             .at(Vec3::new(0.0, -(ANKLE - 0.18), 0.0))
@@ -1303,6 +1313,24 @@ mod tests {
             .map(|height| extent(&body, Vec3::new(-0.4, height, 0.0), Vec3::X * 0.002))
             .fold(0.0, f32::max);
         assert!((0.51..0.56).contains(&shoulders), "{shoulders}");
+    }
+
+    #[test]
+    fn the_thighs_and_the_calves_taper_naturally() {
+        use crate::figure::{THIGH, rest};
+        let mut leg = super::clay();
+        super::leg(&mut leg, super::Side::Right);
+        let bones = rest();
+        let across = |bone: Bone, down: f32, axis: Vec3| {
+            let middle = bones[bone.index()].transform_point3(Vec3::NEG_Y * down);
+            extent(&leg, middle - axis * 0.2, axis * 0.001)
+        };
+        let thigh = |down: f32| across(Bone::RightThigh, down, Vec3::X);
+        let calf = |down: f32| across(Bone::RightShin, down, Vec3::Z);
+        assert!((0.16..0.19).contains(&thigh(0.08)), "{}", thigh(0.08));
+        assert!(thigh(0.08) > thigh(THIGH - 0.06) * 1.3);
+        let (knee, swell) = (calf(0.03), calf(0.11));
+        assert!(swell > knee * 1.05 && swell > 0.115, "{knee} {swell}");
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
