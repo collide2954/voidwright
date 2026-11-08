@@ -1,4 +1,4 @@
-use super::dsp::{Frame, decay};
+use super::dsp::{Frame, OnePole, decay};
 use std::f32::consts::FRAC_1_SQRT_2;
 
 const LINES: usize = 8;
@@ -26,6 +26,7 @@ struct Line {
     samples: Box<[f32]>,
     index: usize,
     gain: f32,
+    damping: OnePole,
 }
 
 pub struct Reverb {
@@ -43,6 +44,7 @@ impl Reverb {
                 samples: vec![0.0; usize::try_from(length).unwrap_or(1)].into_boxed_slice(),
                 index: 0,
                 gain: step.powi(i32::try_from(length).unwrap_or(i32::MAX)),
+                damping: OnePole::low(room.damping, rate),
             }
         });
         Self { lines }
@@ -50,8 +52,8 @@ impl Reverb {
 
     pub fn process(&mut self, input: Frame) -> Frame {
         let mut values = [0.0; LINES];
-        for (value, line) in values.iter_mut().zip(&self.lines) {
-            *value = line.samples[line.index] * line.gain;
+        for (value, line) in values.iter_mut().zip(&mut self.lines) {
+            *value = line.damping.process(line.samples[line.index]) * line.gain;
         }
         let wet = TAPS.map(|taps| {
             taps.iter()
@@ -117,14 +119,16 @@ mod tests {
     }
 
     fn band_energy(response: &[Frame], center: f32) -> Vec<f64> {
-        let mut filters = [Svf::new(center, 1.4, RATE); 2];
+        let mut filters = [[Svf::new(center, 1.4, RATE); 2]; 2];
         response
             .iter()
             .map(|frame| {
                 filters
                     .iter_mut()
                     .zip(frame)
-                    .map(|(filter, &value)| f64::from(filter.process(value).band).powi(2))
+                    .map(|([first, second], &value)| {
+                        f64::from(second.process(first.process(value).band).band).powi(2)
+                    })
                     .sum()
             })
             .collect()
@@ -182,5 +186,18 @@ mod tests {
         }
         let correlation = both / (left * right).sqrt();
         assert!(correlation.abs() < 0.3, "{correlation}");
+    }
+
+    #[test]
+    fn high_frequencies_fade_faster_than_low_ones() {
+        let response = impulse(OPEN_ISLAND, SECOND);
+        let fall = |center: f32| {
+            let energy = band_energy(&response, center);
+            let early: f64 = energy[..SECOND / 5].iter().sum();
+            let tail: f64 = energy[2 * SECOND / 5..3 * SECOND / 5].iter().sum();
+            tail / early
+        };
+        let (high, low) = (fall(8_000.0), fall(300.0));
+        assert!(high < 0.01 * low, "{high} against {low}");
     }
 }
