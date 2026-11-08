@@ -31,7 +31,7 @@ This document gives the design of the sound and the music of Voidwright.
 | Positional sound | Sounds come from their positions in the world. The pan follows the direction to the source. The level decreases with distance, and a low-pass filter makes far sources duller. |
 | Speakers mode | The pan is an equal-power stereo pan. |
 | Headphones mode | Simple binaural cues: a time difference between the ears of a maximum of 0.65 ms, and a head-shadow filter on the far ear. The sources sound outside the head. |
-| Place reverb | A feedback delay network with 8 delay lines makes the reverb. The size, the decay time, and the tone of the reverb change with the place: the open void, island hollows, and halls. |
+| Place reverb | A feedback delay network with 8 delay lines makes the reverb. The size, the decay time, and the tone of the reverb change with the place: the open void, island hollows, and halls. The music goes into a separate long, dark reverb with a decay time of 6 s, so it sounds far and spacious. |
 
 ## Ambience and effects
 

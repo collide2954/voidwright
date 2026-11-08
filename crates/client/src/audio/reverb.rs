@@ -23,6 +23,12 @@ pub const OPEN_ISLAND: Room = Room {
     damping: 3_000.0,
 };
 
+pub const SPACE: Room = Room {
+    size: 2.2,
+    decay: 6.0,
+    damping: 1_800.0,
+};
+
 struct Line {
     samples: Box<[f32]>,
     index: usize,
@@ -114,7 +120,7 @@ fn is_prime(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{OPEN_ISLAND, Reverb, Room};
+    use super::{OPEN_ISLAND, Reverb, Room, SPACE};
     use crate::audio::dsp::{Frame, Noise, Svf};
 
     const RATE: f32 = 48_000.0;
@@ -174,8 +180,8 @@ mod tests {
             decay: 3.0,
             damping: 6_000.0,
         };
-        for room in [OPEN_ISLAND, hall] {
-            let measured = decay_time(&band_energy(&impulse(room, 8 * SECOND), 500.0));
+        for room in [OPEN_ISLAND, hall, SPACE] {
+            let measured = decay_time(&band_energy(&impulse(room, 12 * SECOND), 500.0));
             let expected = f64::from(room.decay);
             assert!(
                 (measured - expected).abs() < 0.25 * expected,

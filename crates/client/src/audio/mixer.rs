@@ -6,7 +6,7 @@ use super::dsp::{Frame, OnePole, Smooth};
 use super::footstep::{Bank, Footstep};
 use super::lantern::Lantern;
 use super::music::Music;
-use super::reverb::{OPEN_ISLAND, Reverb};
+use super::reverb::{OPEN_ISLAND, Reverb, SPACE};
 use super::ring::Reader;
 use super::space::{Listener, air, fade, pan};
 use super::wind::Wind;
@@ -21,8 +21,9 @@ const HEADPHONES: f32 = 1.0;
 const MUSIC_SEED: u32 = 7;
 const STEP_SEND: f32 = 0.25;
 const LANTERN_SEND: f32 = 0.25;
-const MUSIC_SEND: f32 = 0.3;
 const RETURN: f32 = 0.5;
+const SPACE_SEND: f32 = 0.7;
+const SPACE_RETURN: f32 = 0.6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -84,6 +85,7 @@ pub struct Mixer {
     lantern_ears: Binaural,
     music: Music,
     reverb: Reverb,
+    space: Reverb,
     limiter: Limiter,
 }
 
@@ -115,6 +117,7 @@ impl Mixer {
             lantern_ears: Binaural::new(rate),
             music: Music::new(MUSIC_SEED, rate),
             reverb: Reverb::new(OPEN_ISLAND, rate),
+            space: Reverb::new(SPACE, rate),
             limiter: Limiter::new(rate),
         }
     }
@@ -200,12 +203,16 @@ impl Mixer {
                 steps[0] += left;
                 steps[1] += right;
             }
-            let send = [0, 1].map(|side| {
-                steps[side] * STEP_SEND + lantern[side] * LANTERN_SEND + music[side] * MUSIC_SEND
-            });
+            let send = [0, 1].map(|side| steps[side] * STEP_SEND + lantern[side] * LANTERN_SEND);
             let wet = self.reverb.process(send);
+            let far = self.space.process(music.map(|side| side * SPACE_SEND));
             let mix = [0, 1].map(|side| {
-                music[side] + wind[side] + lantern[side] + steps[side] + wet[side] * RETURN
+                music[side]
+                    + wind[side]
+                    + lantern[side]
+                    + steps[side]
+                    + wet[side] * RETURN
+                    + far[side] * SPACE_RETURN
             });
             *frame = self.limiter.process(mix.map(|value| value * self.gain));
         }
@@ -214,9 +221,10 @@ impl Mixer {
 
 #[cfg(test)]
 mod tests {
-    use super::{CEILING, Mixer, Mode};
+    use super::{CEILING, MUSIC_SEED, Mixer, Mode};
     use crate::audio::command::{Command, Underfoot};
     use crate::audio::dsp::Frame;
+    use crate::audio::music::Music;
     use crate::audio::ring::ring;
     use glam::Vec3;
 
@@ -258,6 +266,54 @@ mod tests {
         let early = power(window(&out, 1.0, 5.0));
         let late = power(window(&out, 10.0, 14.0));
         assert!(late > early * 4.0, "{early} {late}");
+    }
+
+    #[test]
+    fn the_music_lingers_in_a_long_space() {
+        let apart = |one: &[Frame], other: &[Frame]| -> Vec<Frame> {
+            one.iter()
+                .zip(other)
+                .map(|(a, b)| [a[0] - b[0], a[1] - b[1]])
+                .collect()
+        };
+        let tail =
+            |frames: &[Frame]| power(window(frames, 20.0, 24.0)) / power(window(frames, 4.0, 8.0));
+        let session = |discover: bool| {
+            let (mut writer, reader) = ring(64);
+            let mut mixer = Mixer::new(RATE, Mode::Speakers, reader);
+            assert!(writer.push(listener().pack()));
+            let mut warm = vec![[0.0; 2]; 480];
+            for _ in 0..3_000 {
+                mixer.render(&mut warm);
+            }
+            if discover {
+                assert!(writer.push(Command::Discovery.pack()));
+            }
+            let mut out = vec![[0.0; 2]; 48_000 * 25];
+            for block in out.chunks_mut(480) {
+                mixer.render(block);
+            }
+            out
+        };
+        let mixed = tail(&apart(&session(true), &session(false)));
+        let dry = |discover: bool| {
+            let mut music = Music::new(MUSIC_SEED, RATE);
+            let mut warm = vec![[0.0; 2]; 480];
+            for _ in 0..3_000 {
+                music.render(&mut warm);
+            }
+            if discover {
+                music.discover();
+            }
+            let mut out = vec![[0.0; 2]; 48_000 * 25];
+            for block in out.chunks_mut(480) {
+                music.render(block);
+            }
+            out
+        };
+        let bare = tail(&apart(&dry(true), &dry(false)));
+        assert!(bare < 1e-9, "{bare}");
+        assert!(mixed > 1e-9, "{mixed}");
     }
 
     #[test]
