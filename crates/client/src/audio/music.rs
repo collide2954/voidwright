@@ -11,7 +11,7 @@ const REST: [f32; 2] = [110.0, 200.0];
 const FILTER_Q: f32 = 0.6;
 
 const DRONE: [u8; 2] = [38, 45];
-const DRONE_LEVELS: [f32; 2] = [0.025, 0.017];
+const DRONE_LEVELS: [f32; 2] = [0.0165, 0.011];
 const DRONE_SWAYS: [[f32; 2]; 2] = [[34.0, 48.0], [23.0, 33.0]];
 const DRONE_CUTOFF: f32 = 300.0;
 const DRONE_FADES: [f32; 2] = [6.0, 14.0];
@@ -29,7 +29,7 @@ const CHORDS: [[u8; 4]; 4] = [
 const CHORD_SECONDS: [f32; 2] = [8.0, 16.0];
 const STAGGER: f32 = 2.5;
 const VOICE_FADES: [f32; 2] = [2.6, 1.8];
-const VOICE_LEVEL: f32 = 0.033;
+const VOICE_LEVEL: f32 = 0.022;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
 const DETUNE: [f32; 2] = [2.0, 6.0];
 const DRIFT: [f32; 2] = [7.0, 14.0];
@@ -56,13 +56,13 @@ const PLUCKED: Style = Style {
     range: [4, 14],
     starts: &[4, 7, 9, 11],
     beats: &[2, 2, 3, 3, 4],
-    level: 0.17,
+    level: 0.13,
 };
 const BOWED: Style = Style {
     range: [2, 11],
     starts: &[4, 7, 9],
     beats: &[4, 5, 6, 8],
-    level: 0.08,
+    level: 0.062,
 };
 
 const PLUCK_RING: f32 = 2.6;
@@ -886,19 +886,24 @@ mod tests {
     }
 
     #[test]
-    fn a_discovery_surfaces_a_motif_that_is_gone_within_thirty_seconds() {
-        let mut with = Music::new(6, RATE);
-        let mut without = Music::new(6, RATE);
-        take(&mut with, 30);
-        take(&mut without, 30);
-        with.discover();
-        let motif = difference(&take(&mut with, 32), &take(&mut without, 32));
-        let rise = decibels(rms(&motif[..2 * SECOND]));
-        assert!(rise > -40.0, "{rise} dBFS");
-        let loudest = peak(&motif);
-        assert!(loudest < 10.0_f32.powf(-12.0 / 20.0), "{loudest}");
-        let after = peak(&motif[30 * SECOND..]);
-        assert!(after < 1e-6, "{after}");
+    fn each_motif_surfaces_stays_below_minus_14_dbfs_and_is_gone_within_thirty_seconds() {
+        for seed in 1..=6 {
+            let mut with = Music::new(seed, RATE);
+            let mut without = Music::new(seed, RATE);
+            take(&mut with, 12);
+            take(&mut without, 12);
+            with.discover();
+            let motif = difference(&take(&mut with, 32), &take(&mut without, 32));
+            let rise = decibels(rms(&motif[..2 * SECOND]));
+            assert!(rise > -40.0, "seed {seed}: {rise} dBFS");
+            let loudest = peak(&motif);
+            assert!(
+                loudest < 10.0_f32.powf(-14.0 / 20.0),
+                "seed {seed}: {loudest}"
+            );
+            let after = peak(&motif[30 * SECOND..]);
+            assert!(after < 1e-6, "seed {seed}: {after}");
+        }
     }
 
     fn until_rest(music: &mut Music) -> bool {
@@ -957,7 +962,7 @@ mod tests {
         assert!(until_rest(&mut music));
         music.discover();
         let loudest = peak(&take(&mut music, 2));
-        assert!(loudest > 0.05, "{loudest}");
+        assert!(loudest > 0.02, "{loudest}");
     }
 
     #[test]
@@ -1050,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bed_plays_near_minus_32_dbfs_without_clicks() {
+    fn the_bed_plays_near_minus_36_dbfs_without_clicks() {
         let mut music = Music::new(1, RATE);
         let mut last = [0.0; 2];
         let mut jump = 0.0_f32;
@@ -1060,7 +1065,7 @@ mod tests {
             last = window[window.len() - 1];
             if start >= 30 {
                 let level = decibels(rms(&window));
-                assert!((-35.0..=-29.0).contains(&level), "{start} s: {level} dBFS");
+                assert!((-39.0..=-33.0).contains(&level), "{start} s: {level} dBFS");
             }
         }
         assert!(jump < 0.01, "{jump}");
