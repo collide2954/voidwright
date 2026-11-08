@@ -2,7 +2,7 @@ use glam::Vec3;
 
 use super::command::Command;
 use super::dsp::{Frame, OnePole, Smooth};
-use super::footstep::Footstep;
+use super::footstep::{Bank, Footstep};
 use super::lantern::Lantern;
 use super::ring::Reader;
 use super::space::{Listener, air, fade, pan};
@@ -61,6 +61,8 @@ pub struct Mixer {
     gain: f32,
     listener: Listener,
     voices: [Option<Voice>; VOICES],
+    bank: Bank,
+    last: Option<usize>,
     seed: u32,
     wind: Wind,
     lantern: Lantern,
@@ -84,6 +86,8 @@ impl Mixer {
                 yaw: 0.0,
             },
             voices: [None; VOICES],
+            bank: Bank::new(),
+            last: None,
             seed: 1,
             wind: Wind::new(17, rate),
             lantern: Lantern::new(23, rate),
@@ -103,8 +107,12 @@ impl Mixer {
             } => {
                 let distance = at.distance(self.listener.at);
                 let level = fade(distance) * STEP_GAIN;
+                let step = Footstep::new(
+                    &self.bank, underfoot, strength, self.seed, self.rate, self.last,
+                );
+                self.last = Some(step.take());
                 let voice = Voice {
-                    step: Footstep::new(underfoot, strength, self.seed, self.rate),
+                    step,
                     gains: pan(self.listener.azimuth(at)).map(|gain| gain * level),
                     air: OnePole::low(air(distance), self.rate),
                 };
@@ -145,7 +153,7 @@ impl Mixer {
                 let Some(voice) = slot else {
                     continue;
                 };
-                match voice.step.sample() {
+                match voice.step.sample(&self.bank) {
                     Some(value) => {
                         let value = voice.air.process(value);
                         mix[0] += value * voice.gains[0];

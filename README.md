@@ -54,6 +54,7 @@ The client plays sound on the default output device. A capture without `--record
 | --- | --- |
 | `crates/core` | Game rules. No input or output. |
 | `crates/client` | Game client. |
+| `crates/client/assets/audio` | Recorded sound clips. `CREDITS.md` gives the author, source, and license of each clip. |
 | `docs/audio.md` | Design of the sound and the music. |
 | `docs/body.md` | Reference values for the body of the wanderer. |
 | `docs/design.md` | Design decisions. |

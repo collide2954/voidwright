@@ -25,6 +25,11 @@ impl Noise {
         self.state = state;
         (f32::from_bits(0x3F80_0000 | (state >> 9)) - 1.5) * 2.0
     }
+
+    pub fn index(&mut self, count: usize) -> usize {
+        self.sample();
+        (self.state >> 8) as usize % count.max(1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -173,6 +178,17 @@ mod tests {
         let mean = values.iter().sum::<f32>() / 48_000.0;
         assert!(mean.abs() < 0.02, "{mean}");
         assert!((rms(values.into_iter()) - 0.577).abs() < 0.02);
+    }
+
+    #[test]
+    fn noise_picks_every_index_below_the_count() {
+        let mut noise = Noise::new(9);
+        let mut seen = [0_u16; 6];
+        for _ in 0..600 {
+            seen[noise.index(6)] += 1;
+        }
+        assert!(seen.iter().all(|&count| count > 50), "{seen:?}");
+        assert_eq!(noise.index(0), 0);
     }
 
     #[test]
