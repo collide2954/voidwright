@@ -4,8 +4,8 @@ use glam::{Quat, Vec2, Vec3};
 
 use crate::cloth::Cloth;
 use crate::figure::{
-    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, JOINTS, LANTERN_BONE, LANTERN_HOOK, THIGH, rest,
-    waist,
+    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FOREARM, JOINTS, LANTERN_BONE, LANTERN_HOOK, THIGH,
+    UPPER_ARM, rest, waist,
 };
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
@@ -425,7 +425,7 @@ fn arm(clay: &mut Sculpt, side: Side) {
             .wrinkled(0.003, sleeve),
     );
     clay.add(
-        stroke(upper, limb(0.27, 0.055, 0.045), COAT)
+        stroke(upper, limb(UPPER_ARM, 0.055, 0.045), COAT)
             .wrinkled(0.004, sleeve)
             .blended(0.03),
     );
@@ -435,13 +435,13 @@ fn arm(clay: &mut Sculpt, side: Side) {
             .blended(0.02),
     );
     clay.add(
-        stroke(fore, limb(0.16, 0.046, 0.039), COAT)
+        stroke(fore, limb(FOREARM - 0.02, 0.046, 0.034), COAT)
             .wrinkled(0.004, sleeve)
             .blended(0.025),
     );
     clay.add(
-        stroke(fore, egg(0.05, 0.026, 0.05), COAT)
-            .at(Vec3::new(0.0, -0.14, 0.0))
+        stroke(fore, egg(0.045, 0.026, 0.045), COAT)
+            .at(Vec3::new(0.0, 0.025 - FOREARM, 0.0))
             .wrinkled(0.003, sleeve)
             .blended(0.015),
     );
@@ -718,15 +718,15 @@ fn bracer() -> Sculpt {
     clay.add(
         stroke(
             arm,
-            tube(0.085, Vec2::new(0.052, 0.049), 0.011, Vec2::ZERO),
+            tube(0.09, Vec2::new(0.05, 0.045), 0.011, Vec2::ZERO),
             PLATE,
         )
-        .at(Vec3::new(0.0, -0.03, 0.0)),
+        .at(Vec3::new(0.0, -0.12, 0.0)),
     );
     clay.part();
-    clay.add(stroke(arm, ring(0.054, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.1, 0.0)));
+    clay.add(stroke(arm, ring(0.047, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.195, 0.0)));
     clay.part();
-    clay.add(stroke(arm, ring(0.055, 0.005), METAL).at(Vec3::new(0.0, -0.035, 0.0)));
+    clay.add(stroke(arm, ring(0.052, 0.005), METAL).at(Vec3::new(0.0, -0.125, 0.0)));
     clay
 }
 

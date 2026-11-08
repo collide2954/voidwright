@@ -87,7 +87,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (
         Bone::LeftForearm,
         Some(Bone::LeftUpperArm),
-        Vec3::new(0.0, -0.27, 0.0),
+        Vec3::new(0.0, -UPPER_ARM, 0.0),
     ),
     (
         Bone::RightUpperArm,
@@ -97,17 +97,17 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (
         Bone::RightForearm,
         Some(Bone::RightUpperArm),
-        Vec3::new(0.0, -0.27, 0.0),
+        Vec3::new(0.0, -UPPER_ARM, 0.0),
     ),
     (
         Bone::LeftHand,
         Some(Bone::LeftForearm),
-        Vec3::new(0.0, -0.165, 0.0),
+        Vec3::new(0.0, -FOREARM, 0.0),
     ),
     (
         Bone::RightHand,
         Some(Bone::RightForearm),
-        Vec3::new(0.0, -0.165, 0.0),
+        Vec3::new(0.0, -FOREARM, 0.0),
     ),
     (
         Bone::LeftFingers,
@@ -135,6 +135,8 @@ pub const HIP: Vec2 = Vec2::new(0.1, -0.02);
 pub const THIGH: f32 = 0.44;
 pub const ANKLE: f32 = 0.38;
 pub const ANKLE_HEIGHT: f32 = 0.06;
+pub const UPPER_ARM: f32 = 0.29;
+pub const FOREARM: f32 = 0.26;
 const SHOULDER: Vec2 = Vec2::new(0.185, 0.44);
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;
@@ -459,6 +461,19 @@ mod tests {
         );
         for shoulder in [left, right] {
             assert!((shoulder.y - 1.4).abs() < 0.01, "{shoulder}");
+        }
+    }
+
+    #[test]
+    fn the_elbows_and_the_wrists_hang_at_measured_heights() {
+        for (bone, height) in [
+            (Bone::LeftForearm, 1.11),
+            (Bone::RightForearm, 1.11),
+            (Bone::LeftHand, 0.85),
+            (Bone::RightHand, 0.85),
+        ] {
+            let at = joint(bone);
+            assert!((at.y - height).abs() < 0.01, "{bone:?} {at}");
         }
     }
 
