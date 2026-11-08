@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec4};
+use glam::{IVec2, Mat4, Vec2, Vec4};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
     FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderPass,
@@ -8,11 +8,11 @@ use miniquad::{
 
 use crate::detail::{DETAIL_SIZE, paint};
 use crate::particles::{Anchors, lantern, specks};
-use crate::shader::{self, baked, caster, particles, skinned};
+use crate::shader::{self, baked, caster, particles, post, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
-    BONES, Game, Lamp, Painter, VAEL, cliff, flip_rows, palette, png, projection, pulse, sky, top,
-    underside, voidwright,
+    BONES, Game, Lamp, Painter, VAEL, aspect, cliff, flip_rows, palette, png, projection, pulse,
+    sky, top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -21,6 +21,31 @@ const CAPTURE_HEIGHT: u16 = 720;
 struct Model {
     bindings: Bindings,
     count: i32,
+}
+
+struct Post {
+    size: [u16; 2],
+    scene_pass: RenderPass,
+    scene: TextureId,
+}
+
+impl Post {
+    fn new(context: &mut dyn RenderingBackend, size: [u16; 2]) -> Self {
+        let targets = post::targets(size);
+        let color = context.new_render_texture(targets.color);
+        let depth = context.new_render_texture(targets.depth);
+        let scene = context.new_render_texture(targets.scene);
+        let scene_pass = context.new_render_pass_mrt(&[color], Some(&[scene]), Some(depth));
+        Self {
+            size,
+            scene_pass,
+            scene,
+        }
+    }
+
+    fn delete(&self, context: &mut dyn RenderingBackend) {
+        context.delete_render_pass(self.scene_pass);
+    }
 }
 
 struct Figure {
@@ -50,10 +75,13 @@ pub struct Renderer {
     caster: Pipeline,
     shadow: RenderPass,
     particles: Pipeline,
+    composite: Pipeline,
     sky: Model,
     terrain: Model,
     avatar: Model,
     specks: Model,
+    screen: Model,
+    post: Option<Post>,
 }
 
 impl Renderer {
@@ -133,6 +161,14 @@ impl Renderer {
         );
         let swarms = specks();
         let specks = upload(context, &swarms.vertices, &swarms.indices);
+        let composite = pipeline(
+            context,
+            [post::VERTEX, post::composite::FRAGMENT],
+            post::composite::meta(),
+            &post::attributes(),
+            PipelineParams::default(),
+        );
+        let screen = upload(context, &post::TRIANGLE, &[0, 1, 2]);
         Self {
             backdrop,
             baked,
@@ -140,53 +176,84 @@ impl Renderer {
             caster,
             shadow,
             particles,
+            composite,
             sky,
             terrain,
             avatar,
             specks,
+            screen,
+            post: None,
         }
     }
 
-    pub fn draw(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
-        let figure = Figure::new(game);
-        self.cast(context, &figure);
-        context.begin_default_pass(clear());
-        self.scene(context, game, aspect, &figure);
-        context.end_render_pass();
+    pub fn draw(&mut self, context: &mut dyn RenderingBackend, game: &Game, screen: Vec2) {
+        let size = pixel_size(screen);
+        let post = match self.post.take() {
+            Some(post) if post.size == size => post,
+            stale => {
+                if let Some(stale) = stale {
+                    stale.delete(context);
+                }
+                Post::new(context, size)
+            }
+        };
+        self.frame(context, game, aspect(screen), &post, None);
+        self.post = Some(post);
         context.commit_frame();
     }
 
     #[must_use]
     pub fn capture(&self, context: &mut dyn RenderingBackend, game: &Game) -> Vec<u8> {
-        let target = |format| TextureParams {
+        let post = Post::new(context, [CAPTURE_WIDTH, CAPTURE_HEIGHT]);
+        let color = context.new_render_texture(TextureParams {
             width: u32::from(CAPTURE_WIDTH),
             height: u32::from(CAPTURE_HEIGHT),
-            format,
             ..TextureParams::default()
-        };
-        let color = context.new_render_texture(target(TextureFormat::RGBA8));
-        let depth = context.new_render_texture(target(TextureFormat::Depth));
-        let pass = context.new_render_pass(color, Some(depth));
-        let figure = Figure::new(game);
-        self.cast(context, &figure);
-        context.begin_pass(Some(pass), clear());
-        self.scene(
+        });
+        let pass = context.new_render_pass(color, None);
+        self.frame(
             context,
             game,
             f32::from(CAPTURE_WIDTH) / f32::from(CAPTURE_HEIGHT),
-            &figure,
+            &post,
+            Some(pass),
         );
-        context.end_render_pass();
         let mut pixels = vec![0; usize::from(CAPTURE_WIDTH) * usize::from(CAPTURE_HEIGHT) * 4];
         context.texture_read_pixels(color, &mut pixels);
         context.delete_render_pass(pass);
-        context.delete_texture(color);
-        context.delete_texture(depth);
+        post.delete(context);
         png::encode(
             CAPTURE_WIDTH,
             CAPTURE_HEIGHT,
             &flip_rows(&pixels, CAPTURE_WIDTH, CAPTURE_HEIGHT),
         )
+    }
+
+    fn frame(
+        &self,
+        context: &mut dyn RenderingBackend,
+        game: &Game,
+        aspect: f32,
+        post: &Post,
+        target: Option<RenderPass>,
+    ) {
+        let figure = Figure::new(game);
+        self.cast(context, &figure);
+        context.begin_pass(Some(post.scene_pass), clear());
+        self.scene(context, game, aspect, &figure);
+        context.end_render_pass();
+        context.begin_pass(target, PassAction::Nothing);
+        context.apply_pipeline(&self.composite);
+        context.apply_bindings_from_slice(
+            &self.screen.bindings.vertex_buffers,
+            self.screen.bindings.index_buffer,
+            &[post.scene],
+        );
+        context.apply_uniforms(UniformsSource::table(&post::composite::Uniforms::new(
+            game.time(),
+        )));
+        context.draw(0, self.screen.count, 1);
+        context.end_render_pass();
     }
 
     fn cast(&self, context: &mut dyn RenderingBackend, figure: &Figure) {
@@ -288,7 +355,16 @@ fn behind() -> PipelineParams {
 
 fn clear() -> PassAction {
     let [red, green, blue] = palette::VOID.to_array();
-    PassAction::clear_color(red, green, blue, 1.0)
+    PassAction::clear_color(red, green, blue, 0.0)
+}
+
+fn pixel_size(screen: Vec2) -> [u16; 2] {
+    screen
+        .round()
+        .as_ivec2()
+        .clamp(IVec2::ONE, IVec2::splat(i32::from(u16::MAX)))
+        .to_array()
+        .map(|side| u16::try_from(side).unwrap_or(u16::MAX))
 }
 
 fn detail_texture(context: &mut dyn RenderingBackend, bytes: &[u8]) -> TextureId {
@@ -328,5 +404,33 @@ fn upload<V>(context: &mut dyn RenderingBackend, vertices: &[V], indices: &[u32]
             images: Vec::new(),
         },
         count: i32::try_from(indices.len()).expect("a mesh fits in one draw call"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clear, pixel_size};
+    use glam::Vec2;
+    use miniquad::PassAction;
+
+    #[test]
+    fn the_scene_starts_without_glow() {
+        let PassAction::Clear {
+            color: Some((_, _, _, glow)),
+            depth: Some(_),
+            ..
+        } = clear()
+        else {
+            panic!("the scene pass clears the color and the depth");
+        };
+        assert!(glow.abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_screen_size_rounds_to_whole_pixels() {
+        assert_eq!(pixel_size(Vec2::new(1920.0, 1080.0)), [1920, 1080]);
+        assert_eq!(pixel_size(Vec2::new(1279.6, 719.4)), [1280, 719]);
+        assert_eq!(pixel_size(Vec2::ZERO), [1, 1]);
+        assert_eq!(pixel_size(Vec2::splat(1.0e6)), [u16::MAX; 2]);
     }
 }

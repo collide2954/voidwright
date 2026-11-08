@@ -90,7 +90,7 @@ impl App {
             window_height: 720,
             high_dpi: true,
             fullscreen: launch.benchmark.is_some(),
-            sample_count: 4,
+            sample_count: 1,
             platform: Platform {
                 swap_interval: launch.benchmark.map(|_| 0),
                 ..Platform::default()
@@ -162,7 +162,7 @@ impl EventHandler for App {
             return;
         }
         self.renderer
-            .draw(self.context.as_mut(), &self.game, aspect(screen_size()));
+            .draw(self.context.as_mut(), &self.game, screen_size());
     }
 
     fn mouse_button_down_event(&mut self, button: MouseButton, x: f32, y: f32) {
@@ -206,5 +206,16 @@ impl EventHandler for App {
         if let Some(turn) = turn_for(key) {
             self.controls.press(turn, false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use crate::Launch;
+
+    #[test]
+    fn the_window_leaves_the_samples_to_the_scene_target() {
+        assert_eq!(App::conf(&Launch::default()).sample_count, 1);
     }
 }

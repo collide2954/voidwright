@@ -23,13 +23,13 @@ pub struct Targets {
 }
 
 #[must_use]
-pub fn targets(screen: [u32; 2]) -> Targets {
-    let target = |[width, height]: [u32; 2], format, filter| TextureParams {
+pub fn targets(screen: [u16; 2]) -> Targets {
+    let target = |[width, height]: [u16; 2], format, filter| TextureParams {
         format,
         min_filter: filter,
         mag_filter: filter,
-        width,
-        height,
+        width: u32::from(width),
+        height: u32::from(height),
         ..TextureParams::default()
     };
     let sampled = |format| TextureParams {
@@ -52,7 +52,7 @@ pub fn attributes() -> [VertexAttribute; 1] {
 }
 
 #[must_use]
-pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
+pub fn levels(screen: [u16; 2]) -> [[u16; 2]; LEVELS] {
     let mut size = screen.map(|side| side.div_ceil(4).max(1));
     std::array::from_fn(|_| {
         let level = size;
@@ -292,8 +292,8 @@ mod tests {
     use glam::Vec2;
     use miniquad::{FilterMode, TextureFormat, TextureParams, TextureWrap};
 
-    fn size(params: &TextureParams) -> [u32; 2] {
-        [params.width, params.height]
+    fn size(params: &TextureParams) -> [u16; 2] {
+        [params.width, params.height].map(|side| u16::try_from(side).unwrap())
     }
 
     #[test]
