@@ -1,5 +1,6 @@
 pub mod binaural;
 pub mod command;
+pub mod creak;
 pub mod dsp;
 pub mod footstep;
 pub mod lantern;
