@@ -59,9 +59,17 @@ fn weather(mesh: &mut SkinnedMesh) {
         }
         let at = Vec3::from(vertex.position);
         let mottle = 0.86 + 0.28 * noise3(at * 11.0, 7);
+        let warmth = 2.0 * noise3(at * 3.3, 15) - 1.0;
+        let tone = Vec3::ONE + 0.07 * warmth * Vec3::new(1.0, 0.2, -0.8);
+        let fade = 0.6 * noise3(at * 2.2, 13) + 0.4 * noise3(at * 5.0, 14);
+        let sun = 0.55 + 0.45 * vertex.normal[1].max(0.0);
+        let bleach = ((fade - 0.5) * 2.2 + 0.5).clamp(0.0, 1.0) * sun * (1.0 - vertex.surface[3]);
+        let base = Vec3::from(vertex.color) * mottle * tone;
+        let grey = Vec3::splat(base.dot(Vec3::new(0.3, 0.59, 0.11)));
+        let faded = grey.lerp(base, 0.55) * 1.3;
         let grime = 1.0 - 0.35 * smoothstep(0.6, 0.15, at.y);
         let dusting = 0.45 * smoothstep(0.22, 0.0, at.y);
-        let color = Vec3::from(vertex.color) * mottle * grime;
+        let color = base.lerp(faded, 0.45 * bleach) * grime;
         vertex.color = color.lerp(dust, dusting).to_array();
         let gain = 1.15 + 0.5 * (swell - mean);
         vertex.surface = (Vec4::from(vertex.surface) * gain).to_array();
@@ -1101,6 +1109,48 @@ mod tests {
                 .collect();
             assert!((mean_of(&gains) - 1.15).abs() < 0.01, "{kind}");
         }
+    }
+
+    const WARM: [f32; 3] = [0.2, 0.1, 0.05];
+
+    fn weathered(surface: [f32; 4], normal: [f32; 3]) -> Vec<Vec3> {
+        let mut mesh = sheet(surface, normal, -0.15);
+        for vertex in &mut mesh.vertices {
+            vertex.color = WARM;
+        }
+        weather(&mut mesh);
+        mesh.vertices
+            .iter()
+            .map(|vertex| Vec3::from(vertex.color))
+            .collect()
+    }
+
+    #[test]
+    fn weather_shifts_the_hue_slowly_by_a_little() {
+        let warmth: Vec<f32> = weathered([1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0])
+            .iter()
+            .map(|color| color.x / color.z / (WARM[0] / WARM[2]))
+            .collect();
+        let lowest = warmth.iter().copied().fold(f32::INFINITY, f32::min);
+        let highest = warmth.iter().copied().fold(0.0, f32::max);
+        assert!(lowest > 0.6 && highest < 1.2, "{lowest} {highest}");
+        assert!(highest / lowest > 1.1, "{lowest} {highest}");
+        assert!(change(&warmth, 1) < change(&warmth, 20) * 0.25);
+    }
+
+    #[test]
+    fn weather_bleaches_cloth_that_faces_up_but_not_metal() {
+        let mean = |surface: [f32; 4], normal: [f32; 3]| {
+            let colors = weathered(surface, normal);
+            colors.iter().sum::<Vec3>() / f32::from(u16::try_from(colors.len()).unwrap())
+        };
+        let cloth = [1.0, 0.0, 0.0, 0.0];
+        let [up, side] = [[0.0, 1.0, 0.0], [0.0, 0.0, -1.0]].map(|normal| mean(cloth, normal));
+        assert!(up.element_sum() > side.element_sum() * 1.02, "{up} {side}");
+        assert!(up.x / up.z < side.x / side.z * 0.97, "{up} {side}");
+        let metal = [0.0, 0.0, 0.0, 1.0];
+        let [up, side] = [[0.0, 1.0, 0.0], [0.0, 0.0, -1.0]].map(|normal| mean(metal, normal));
+        assert!(up.distance(side) < 1e-4, "{up} {side}");
     }
 
     #[test]
