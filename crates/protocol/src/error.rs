@@ -9,7 +9,9 @@ pub enum Error {
     Tag(u8),
     Version(u16),
     Name,
+    Step(u8),
     Range,
+    Crowd,
 }
 
 impl fmt::Display for Error {
@@ -26,7 +28,9 @@ impl fmt::Display for Error {
                 write!(formatter, "the protocol version {version} is not known")
             }
             Self::Name => formatter.write_str("the name breaks the rules for names"),
+            Self::Step(code) => write!(formatter, "the step code {code} is not known"),
             Self::Range => formatter.write_str("a tile is outside the range of the protocol"),
+            Self::Crowd => formatter.write_str("the update has more than 255 players"),
         }
     }
 }

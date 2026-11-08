@@ -34,6 +34,10 @@ impl<'a> Cursor<'a> {
         self.array().map(u16::from_le_bytes)
     }
 
+    pub fn u32(&mut self) -> Result<u32, Error> {
+        self.array().map(u32::from_le_bytes)
+    }
+
     pub fn u64(&mut self) -> Result<u64, Error> {
         self.array().map(u64::from_le_bytes)
     }

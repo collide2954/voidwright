@@ -1,11 +1,14 @@
-use voidwright_core::{PlayerId, Tile};
+use voidwright_core::{Direction, PlayerId, Tile};
 
 use crate::wire::{Cursor, put_tile};
 use crate::{Error, Name, VERSION};
 
+pub const MAX_SIGHTINGS: usize = 255;
+
 const HELLO: u8 = 0x01;
 const WALK: u8 = 0x02;
 const WELCOME: u8 = 0x81;
+const UPDATE: u8 = 0x82;
 
 pub trait Message: Sized {
     const LIMIT: usize;
@@ -28,9 +31,23 @@ pub struct Welcome {
     pub spawn: Tile,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sighting {
+    pub id: PlayerId,
+    pub tile: Tile,
+    pub step: Option<Direction>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Update {
+    pub tick: u32,
+    pub players: Vec<Sighting>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerMessage {
     Welcome(Welcome),
+    Update(Update),
 }
 
 impl Message for ClientMessage {
@@ -80,6 +97,18 @@ impl Message for ServerMessage {
                 payload.extend_from_slice(&welcome.seed.to_le_bytes());
                 put_tile(payload, welcome.spawn)
             }
+            Self::Update(update) => {
+                let count = u8::try_from(update.players.len()).map_err(|_| Error::Crowd)?;
+                payload.push(UPDATE);
+                payload.extend_from_slice(&update.tick.to_le_bytes());
+                payload.push(count);
+                for sighting in &update.players {
+                    payload.extend_from_slice(&sighting.id.get().to_le_bytes());
+                    put_tile(payload, sighting.tile)?;
+                    payload.push(step_code(sighting.step));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -91,6 +120,19 @@ impl Message for ServerMessage {
                 seed: cursor.u64()?,
                 spawn: cursor.tile()?,
             }),
+            UPDATE => {
+                let tick = cursor.u32()?;
+                let count = usize::from(cursor.u8()?);
+                let mut players = Vec::with_capacity(count);
+                for _ in 0..count {
+                    players.push(Sighting {
+                        id: PlayerId::new(cursor.u16()?),
+                        tile: cursor.tile()?,
+                        step: step(cursor.u8()?)?,
+                    });
+                }
+                Self::Update(Update { tick, players })
+            }
             tag => return Err(Error::Tag(tag)),
         };
         cursor.finish()?;
@@ -98,11 +140,29 @@ impl Message for ServerMessage {
     }
 }
 
+fn step_code(step: Option<Direction>) -> u8 {
+    (1..)
+        .zip(Direction::ALL)
+        .find(|&(_, direction)| Some(direction) == step)
+        .map_or(0, |(code, _)| code)
+}
+
+fn step(code: u8) -> Result<Option<Direction>, Error> {
+    match code {
+        0 => Ok(None),
+        _ => Direction::ALL
+            .get(usize::from(code) - 1)
+            .copied()
+            .map(Some)
+            .ok_or(Error::Step(code)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ClientMessage, Message, ServerMessage, Welcome};
+    use super::{ClientMessage, MAX_SIGHTINGS, Message, ServerMessage, Sighting, Update, Welcome};
     use crate::{Error, Name, VERSION};
-    use voidwright_core::{PlayerId, Tile};
+    use voidwright_core::{Direction, PlayerId, Rng, Tile};
 
     fn encoded(message: &impl Message) -> Vec<u8> {
         let mut payload = Vec::new();
@@ -206,5 +266,76 @@ mod tests {
     fn a_client_tag_is_not_a_server_message() {
         assert_eq!(ServerMessage::decode(&[0x02]), Err(Error::Tag(0x02)));
         assert_eq!(ClientMessage::decode(&[0x81]), Err(Error::Tag(0x81)));
+    }
+
+    fn sighting(id: u16, x: i32, step: Option<Direction>) -> Sighting {
+        Sighting {
+            id: PlayerId::new(id),
+            tile: Tile::new(x, 9),
+            step,
+        }
+    }
+
+    fn update(players: Vec<Sighting>) -> ServerMessage {
+        ServerMessage::Update(Update {
+            tick: 0x0403_0201,
+            players,
+        })
+    }
+
+    #[test]
+    fn an_update_holds_the_tick_and_each_sighting() {
+        let message = update(vec![
+            sighting(5, 7, Some(Direction::East)),
+            sighting(6, 8, None),
+        ]);
+        let bytes = encoded(&message);
+        assert_eq!(bytes[..6], [0x82, 1, 2, 3, 4, 2]);
+        assert_eq!(bytes[6..13], [5, 0, 7, 0, 9, 0, 3]);
+        assert_eq!(bytes.len(), 6 + 2 * 7);
+        assert_eq!(ServerMessage::decode(&bytes), Ok(message));
+    }
+
+    #[test]
+    fn each_step_has_its_own_code() {
+        let steps = std::iter::once(None).chain(Direction::ALL.map(Some));
+        let message = update(steps.map(|step| sighting(1, 1, step)).collect());
+        let bytes = encoded(&message);
+        let codes: Vec<u8> = bytes[6..].chunks(7).map(|chunk| chunk[6]).collect();
+        assert_eq!(codes, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(ServerMessage::decode(&bytes), Ok(message));
+    }
+
+    #[test]
+    fn an_unknown_step_code_is_rejected() {
+        let mut bytes = encoded(&update(vec![sighting(1, 1, None)]));
+        *bytes.last_mut().unwrap() = 9;
+        assert_eq!(ServerMessage::decode(&bytes), Err(Error::Step(9)));
+    }
+
+    #[test]
+    fn an_update_holds_at_most_255_sightings() {
+        let crowd = |count| update(vec![sighting(1, 1, None); count]);
+        let mut payload = Vec::new();
+        assert_eq!(crowd(MAX_SIGHTINGS).encode(&mut payload), Ok(()));
+        assert!(payload.len() <= ServerMessage::LIMIT);
+        let result = crowd(MAX_SIGHTINGS + 1).encode(&mut Vec::new());
+        assert_eq!(result, Err(Error::Crowd));
+    }
+
+    #[test]
+    fn random_bytes_never_panic_the_decoders() {
+        let mut rng = Rng::new(7);
+        for _ in 0..20_000 {
+            let length = usize::try_from(rng.next_u64() % 40).unwrap();
+            let mut bytes: Vec<u8> = (0..length)
+                .map(|_| rng.next_u64().to_le_bytes()[0])
+                .collect();
+            if let Some(tag) = bytes.first_mut() {
+                *tag = [0x01, 0x02, 0x81, 0x82, 0x83][usize::from(*tag) % 5];
+            }
+            let _ = ClientMessage::decode(&bytes);
+            let _ = ServerMessage::decode(&bytes);
+        }
     }
 }
