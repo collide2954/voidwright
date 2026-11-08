@@ -46,9 +46,9 @@ const HOOD_FEEL: Feel = Feel {
     spin: 0.6,
 };
 pub const SCARF_TAIL: [Vec3; 3] = [
-    Vec3::new(-0.083, 0.458, -0.115),
-    Vec3::new(-0.07, 0.33, -0.131),
-    Vec3::new(-0.057, 0.202, -0.147),
+    Vec3::new(-0.083, 0.458, -0.1355),
+    Vec3::new(-0.07, 0.33, -0.1465),
+    Vec3::new(-0.057, 0.202, -0.1575),
 ];
 const SCARF_SLACK: f32 = 0.15;
 const SCARF_FEEL: Feel = Feel {
@@ -57,8 +57,8 @@ const SCARF_FEEL: Feel = Feel {
     inertia: 0.7,
     spin: 0.7,
 };
-const CHEST: [Vec3; 2] = [Vec3::new(0.0, 0.12, 0.0), Vec3::new(0.0, 0.46, 0.0)];
-const CHEST_RADIUS: f32 = 0.085;
+const CHEST: [Vec3; 2] = [Vec3::new(0.0, 0.3, 0.0), Vec3::new(0.0, 0.4, 0.0)];
+const CHEST_RADIUS: f32 = 0.127;
 pub const LANTERN_HOOK: Vec3 = Vec3::new(0.150_3, 0.561, 0.284_5);
 pub const LANTERN_DROP: f32 = 0.065;
 const LANTERN_SLACK: f32 = 0.08;

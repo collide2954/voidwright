@@ -928,7 +928,7 @@ fn tail() -> Sculpt {
     clay.add(
         stroke(Bone::Torso, block(0.036, 0.13, 0.011, 0.009), SCARF)
             .at(SCARF_TAIL[1])
-            .turned(Quat::from_rotation_z(0.1) * Quat::from_rotation_x(0.12)),
+            .turned(toward(SCARF_TAIL[2] - SCARF_TAIL[0])),
     );
     clay
 }
@@ -1860,6 +1860,50 @@ mod tests {
         let deepest = gaps.iter().copied().fold(f32::INFINITY, f32::min);
         let farthest = gaps.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         assert!(deepest > -0.006 && farthest < 0.026, "{deepest} {farthest}");
+    }
+
+    #[test]
+    fn the_scarf_tail_lies_on_the_chest_and_never_sinks_into_it() {
+        use crate::figure::{Coat, SCARF_BONE};
+        use crate::gait::{cycle, pose_at};
+        use std::f32::consts::TAU;
+        const FRAME: f32 = 1.0 / 60.0;
+        let mut torso = super::clay();
+        super::trunk(&mut torso);
+        let tail = super::tail().mesh(0.004);
+        let resting = tail
+            .vertices
+            .iter()
+            .map(|vertex| torso.distance(Vec3::from(vertex.position)))
+            .fold(f32::INFINITY, f32::min);
+        assert!((-0.003..0.008).contains(&resting), "{resting}");
+        let wool: Vec<&SkinnedVertex> = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| (SCARF_BONE..SCARF_BONE + 2).contains(&strongest(vertex)))
+            .collect();
+        for (pace, speed) in [(0.0, 1.0 / 0.6), (1.0, 2.0 / 0.6)] {
+            let pose = |phase: f32| pose_at(phase, 1.0, pace, 0.0);
+            let placement = |travelled: f32| Mat4::from_translation(Vec3::NEG_Z * travelled);
+            let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
+            let mut coat = Coat::new(&pose(phase), placement(travelled));
+            let mut deepest = f32::INFINITY;
+            for frame in 0..360_u16 {
+                travelled += speed * FRAME;
+                phase = (phase + speed * FRAME * TAU / cycle(pace)).rem_euclid(TAU);
+                coat.update(&pose(phase), placement(travelled), FRAME);
+                if frame < 120 || frame % 3 != 0 {
+                    continue;
+                }
+                let skins = coat.skins(&pose(phase));
+                let back = skins[Bone::Torso.index()].inverse();
+                for vertex in &wool {
+                    let point = back.transform_point3(posed(vertex, &skins));
+                    deepest = deepest.min(torso.distance(point));
+                }
+            }
+            assert!(deepest > -0.005, "{pace} {deepest}");
+        }
     }
 
     #[test]
