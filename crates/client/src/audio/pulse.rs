@@ -1,8 +1,11 @@
 use std::array::from_fn;
+use std::f32::consts::TAU;
 
-use super::dsp::{Frame, Phase, Svf, sine};
+use super::dsp::{Frame, Phase, Svf, decay, sine};
 use super::voice::{CONTROL, Dice, Fade, Ramp, Saw, Time, hertz, pan, turned};
+use crate::spline::smoothstep;
 
+const TEMPO: f32 = 72.0;
 const ENTRY: f32 = 6.0;
 const FILTER_Q: f32 = 0.6;
 
@@ -20,25 +23,59 @@ const DRIFT: [f32; 2] = [7.0, 14.0];
 const DRIFT_CENTS: f32 = 2.5;
 const PAD_CUTOFF: f32 = 300.0;
 
+const THROB_NOTE: u8 = 26;
+const OCTAVE: f32 = 0.5;
+const BEND: f32 = 5.0;
+const BEND_SETTLE: f32 = 0.35;
+const LUB: [f32; 2] = [0.025, 1.5];
+const THROB_CUTOFF: f32 = 160.0;
+const THROB_Q: f32 = 0.7;
+const DUCK: [f32; 2] = [0.06, 2.0];
+
+#[derive(Clone, Copy, Debug)]
+struct Character {
+    throb: f32,
+    duck: f32,
+    bed: f32,
+}
+
+const CHARACTER: Character = Character {
+    throb: 0.028,
+    duck: 0.18,
+    bed: 1.0,
+};
+
 pub struct Pulse {
     time: Time,
     countdown: usize,
+    character: Character,
+    clock: Clock,
     entry: Fade,
+    duck: Hit,
     drone: Drone,
     pad: Pad,
+    throb: Throb,
 }
 
 impl Pulse {
     #[must_use]
     pub fn new(seed: u32, rate: f32) -> Self {
+        Self::with(seed, rate, CHARACTER)
+    }
+
+    fn with(seed: u32, rate: f32, character: Character) -> Self {
         let time = Time::new(rate);
         let mut dice = Dice::new(seed);
         Self {
             time,
             countdown: 0,
+            character,
+            clock: Clock::new(time),
             entry: Fade::new([ENTRY; 2], time),
+            duck: Hit::new(DUCK, time),
             drone: Drone::new(&mut dice, time),
             pad: Pad::new(&mut dice, time),
+            throb: Throb::new(&mut dice, time),
         }
     }
 
@@ -50,17 +87,93 @@ impl Pulse {
                 self.countdown = usize::from(CONTROL);
             }
             let end = out.len().min(start + self.countdown);
-            self.drone.render(&mut out[start..end]);
-            self.pad.render(&mut out[start..end]);
+            let block = &mut out[start..end];
+            self.drone.render(block);
+            self.pad.render(block);
+            self.throb.render(block, self.time.rate);
             self.countdown -= end - start;
             start = end;
         }
     }
 
     fn control(&mut self) {
-        let level = self.entry.toward(true);
-        self.drone.control(level, self.time);
-        self.pad.control(level, self.time);
+        let time = self.time;
+        if reaches(self.clock.tick(), 0.0) {
+            self.throb.strike();
+            self.duck.strike(1.0);
+        }
+        let entry = self.entry.toward(true);
+        let bed = entry * self.character.bed;
+        let dip = 1.0 - self.character.duck * self.duck.next(time);
+        self.drone.control(bed, time);
+        self.pad.control(bed * dip, time);
+        self.throb.control(entry * self.character.throb, time);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Clock {
+    phase: f32,
+    speed: f32,
+}
+
+impl Clock {
+    fn new(time: Time) -> Self {
+        Self {
+            phase: 0.0,
+            speed: TEMPO / 60.0 * time.step,
+        }
+    }
+
+    fn tick(&mut self) -> [f32; 2] {
+        let from = self.phase;
+        let to = from + self.speed;
+        self.phase = to.fract();
+        [from, to]
+    }
+}
+
+fn reaches([from, to]: [f32; 2], at: f32) -> bool {
+    (from < at && at <= to) || (from < at + 1.0 && at + 1.0 <= to)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Hit {
+    level: f32,
+    from: f32,
+    peak: f32,
+    age: f32,
+    attack: f32,
+    fall: f32,
+}
+
+impl Hit {
+    fn new([attack, length]: [f32; 2], time: Time) -> Self {
+        Self {
+            level: 0.0,
+            from: 0.0,
+            peak: 0.0,
+            age: attack,
+            attack,
+            fall: decay(length, time.control),
+        }
+    }
+
+    fn strike(&mut self, peak: f32) {
+        self.from = self.level;
+        self.peak = peak;
+        self.age = 0.0;
+    }
+
+    fn next(&mut self, time: Time) -> f32 {
+        if self.age < self.attack {
+            self.age += time.step;
+            self.level =
+                self.from + (self.peak - self.from) * smoothstep(0.0, self.attack, self.age);
+        } else {
+            self.level *= self.fall;
+        }
+        self.level
     }
 }
 
@@ -173,13 +286,68 @@ impl Pad {
     }
 }
 
+struct Throb {
+    phase: Phase,
+    frequency: f32,
+    gain: Ramp,
+    lub: Hit,
+    bend: f32,
+    settle: f32,
+    filter: Svf,
+}
+
+impl Throb {
+    fn new(dice: &mut Dice, time: Time) -> Self {
+        Self {
+            phase: turned(dice.unit()),
+            frequency: hertz(THROB_NOTE),
+            gain: Ramp::default(),
+            lub: Hit::new(LUB, time),
+            bend: 0.0,
+            settle: decay(BEND_SETTLE, time.control),
+            filter: Svf::new(THROB_CUTOFF, THROB_Q, time.rate),
+        }
+    }
+
+    fn strike(&mut self) {
+        self.lub.strike(1.0);
+        self.bend = BEND;
+    }
+
+    fn control(&mut self, level: f32, time: Time) {
+        let envelope = self.lub.next(time);
+        self.bend *= self.settle;
+        self.frequency = hertz(THROB_NOTE) * (self.bend / 12.0).exp2();
+        self.gain.aim(level * envelope);
+    }
+
+    fn render(&mut self, out: &mut [Frame], rate: f32) {
+        if self.gain.silent() {
+            return;
+        }
+        for frame in out {
+            let (sin, cos) = (TAU * self.phase.advance(self.frequency, rate)).sin_cos();
+            let tone = sin + OCTAVE * 2.0 * sin * cos;
+            let low = self.filter.process(tone * self.gain.next()).low;
+            frame[0] += low;
+            frame[1] += low;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Pulse;
+    use super::{CHARACTER, Character, Pulse};
     use crate::audio::dsp::{Frame, Svf};
 
     const RATE: f32 = 48_000.0;
     const SECOND: usize = 48_000;
+    const BEAT: usize = 83;
+    const BREATH: Character = Character {
+        throb: 0.0,
+        duck: 0.7,
+        bed: 1.33,
+    };
 
     fn take(pulse: &mut Pulse, seconds: usize) -> Vec<Frame> {
         let mut out = vec![[0.0; 2]; seconds * SECOND];
@@ -224,6 +392,49 @@ mod tests {
         one.iter()
             .zip(other)
             .position(|(one, other)| one.map(f32::to_bits) != other.map(f32::to_bits))
+    }
+
+    fn envelope(frames: &[Frame]) -> Vec<f64> {
+        let levels: Vec<f64> = frames.chunks(480).map(rms).collect();
+        levels
+            .windows(5)
+            .map(|window| window.iter().sum::<f64>() / 5.0)
+            .collect()
+    }
+
+    fn detrended(values: &[f64], width: usize) -> Vec<f64> {
+        let count = f64::from(u32::try_from(width).unwrap());
+        values
+            .windows(width)
+            .map(|window| window[width / 2] - window.iter().sum::<f64>() / count)
+            .collect()
+    }
+
+    fn correlation(values: &[f64], lag: usize) -> f64 {
+        let together: f64 = values
+            .iter()
+            .zip(&values[lag..])
+            .map(|(one, other)| one * other)
+            .sum();
+        let energy: f64 = values.iter().map(|value| value * value).sum();
+        together / energy
+    }
+
+    #[test]
+    fn the_level_swells_and_falls_once_each_beat() {
+        for (seed, character) in [(3, CHARACTER), (7, CHARACTER), (3, BREATH), (7, BREATH)] {
+            let mut pulse = Pulse::with(seed, RATE, character);
+            take(&mut pulse, 10);
+            let levels = detrended(&envelope(&take(&mut pulse, 30)), BEAT);
+            let (lag, strength) = (40..=125)
+                .map(|lag| (lag, correlation(&levels, lag)))
+                .max_by(|one, other| one.1.total_cmp(&other.1))
+                .unwrap();
+            assert!((BEAT - 1..=BEAT + 3).contains(&lag), "{character:?}: {lag}");
+            assert!(strength > 0.75, "{character:?}: {strength}");
+            let half = correlation(&levels, BEAT / 2);
+            assert!(half < 0.0, "{character:?}: {half}");
+        }
     }
 
     #[test]
