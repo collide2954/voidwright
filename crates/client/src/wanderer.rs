@@ -521,40 +521,40 @@ fn coat(clay: &mut Sculpt) {
 fn hood(clay: &mut Sculpt) {
     let fabric = Vec3::splat(14.0);
     clay.add(
-        stroke(Bone::Head, egg(0.132, 0.145, 0.15), COAT)
-            .at(Vec3::new(0.0, 0.15, 0.005))
+        stroke(Bone::Head, egg(0.103, 0.122, 0.125), COAT)
+            .at(Vec3::new(0.0, 0.16, 0.0))
             .wrinkled(0.003, fabric),
     );
     clay.add(
-        stroke(Bone::Head, egg(0.118, 0.12, 0.1), COAT)
-            .at(Vec3::new(0.0, 0.06, 0.07))
+        stroke(Bone::Head, egg(0.105, 0.09, 0.09), COAT)
+            .at(Vec3::new(0.0, 0.05, 0.055))
             .wrinkled(0.004, Vec3::new(20.0, 4.0, 20.0))
+            .blended(0.04),
+    );
+    clay.add(
+        stroke(Bone::Head, limb(0.1, 0.06, 0.035), COAT)
+            .at(Vec3::new(0.01, 0.19, 0.06))
+            .turned(toward(Vec3::new(0.1, -0.8, 0.8)))
+            .wrinkled(0.003, fabric)
             .blended(0.05),
     );
     clay.add(
-        stroke(Bone::Head, limb(0.11, 0.075, 0.04), COAT)
-            .at(Vec3::new(0.012, 0.2, 0.07))
-            .turned(toward(Vec3::new(0.1, -0.8, 0.8)))
-            .wrinkled(0.003, fabric)
-            .blended(0.06),
-    );
-    clay.add(
-        stroke(Bone::Head, egg(0.113, 0.128, 0.13), LINING)
-            .at(Vec3::new(0.0, 0.148, -0.003))
+        stroke(Bone::Head, egg(0.086, 0.105, 0.108), LINING)
+            .at(Vec3::new(0.0, 0.16, -0.004))
             .carved()
             .blended(0.008),
     );
     clay.add(
-        stroke(Bone::Head, egg(0.086, 0.104, 0.12), COAT)
-            .at(Vec3::new(0.0, 0.135, -0.142))
+        stroke(Bone::Head, egg(0.074, 0.098, 0.11), COAT)
+            .at(Vec3::new(0.0, 0.13, -0.13))
             .carved()
-            .blended(0.025),
+            .blended(0.02),
     );
     clay.add(
-        stroke(Bone::Head, ring(0.09, 0.006), COAT)
-            .at(Vec3::new(0.0, 0.135, -0.11))
+        stroke(Bone::Head, ring(0.082, 0.006), COAT)
+            .at(Vec3::new(0.0, 0.13, -0.095))
             .turned(Quat::from_rotation_x(FRAC_PI_2))
-            .squashed(Vec3::new(0.9, 1.0, 1.09))
+            .squashed(Vec3::new(0.9, 1.0, 1.2))
             .blended(0.02),
     );
 }
@@ -651,21 +651,21 @@ fn face() -> Sculpt {
     clay.part();
     let visor = Vec3::new(0.0, 0.146, -0.01);
     clay.add(
-        stroke(Bone::Head, ring(0.088, 0.014), METAL)
+        stroke(Bone::Head, ring(0.08, 0.014), METAL)
             .at(visor)
-            .squashed(Vec3::new(1.0, 1.2, 1.15))
+            .squashed(Vec3::new(1.0, 1.2, 1.25))
             .clipped(Vec3::Z, -0.02),
     );
     clay.add(
-        stroke(Bone::Head, ring(0.093, 0.013), METAL)
+        stroke(Bone::Head, ring(0.085, 0.013), METAL)
             .at(visor)
-            .squashed(Vec3::new(1.0, 0.6, 1.15))
+            .squashed(Vec3::new(1.0, 0.6, 1.25))
             .carved(),
     );
     clay.add(
-        stroke(Bone::Head, ring(0.094, 0.012), TEAL_LIGHT)
+        stroke(Bone::Head, ring(0.086, 0.012), TEAL_LIGHT)
             .at(visor)
-            .squashed(Vec3::new(1.0, 0.5, 1.15))
+            .squashed(Vec3::new(1.0, 0.5, 1.25))
             .clipped(Vec3::Z, -0.035),
     );
     clay
@@ -1181,6 +1181,28 @@ mod tests {
             }
         }
         longest
+    }
+
+    fn extent(sculpt: &crate::sculpt::Sculpt, from: Vec3, step: Vec3) -> f32 {
+        let inside: Vec<f32> = (0..400_u16)
+            .map(f32::from)
+            .filter(|&index| sculpt.distance(from + step * index) < 0.0)
+            .collect();
+        inside
+            .last()
+            .map_or(0.0, |last| (last - inside[0]) * step.length())
+    }
+
+    #[test]
+    fn the_hood_fits_close_around_the_head() {
+        let garments = super::garments();
+        let width = extent(&garments, Vec3::new(-0.2, 1.65, 0.0), Vec3::X * 0.001);
+        assert!((0.18..0.23).contains(&width), "{width}");
+        let top = (0..400_u16)
+            .map(|step| 1.9 - f32::from(step) * 0.001)
+            .find(|&height| garments.distance(Vec3::new(0.0, height, 0.0)) < 0.0)
+            .unwrap_or(0.0);
+        assert!((1.77..1.795).contains(&top), "{top}");
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
