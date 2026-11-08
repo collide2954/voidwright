@@ -395,7 +395,7 @@ pub mod up {
         UniformBlockLayout, UniformDesc, UniformType,
     };
 
-    pub const SHARE: f32 = 0.5;
+    pub const SHARE: f32 = 0.6;
 
     pub const FRAGMENT: &str = "#version 100
 precision mediump float;
@@ -458,6 +458,7 @@ void main() {
 
     #[cfg(test)]
     mod tests {
+        use super::super::LEVELS;
         use super::super::mirror::{bilinear, declared};
         use super::{FRAGMENT, SHARE, Uniforms, meta, params};
         use glam::{IVec2, Vec2, Vec3};
@@ -513,6 +514,25 @@ void main() {
             for center in [Vec2::new(5.25, 3.75), Vec2::new(5.75, 3.25)] {
                 assert!((footprint(center).values().sum::<f32>() - 1.0).abs() < 1e-6);
             }
+        }
+
+        fn weights() -> [f32; LEVELS] {
+            std::array::from_fn(|level| {
+                let reach = SHARE.powi(i32::try_from(level).unwrap());
+                if level + 1 == LEVELS {
+                    reach
+                } else {
+                    reach * (1.0 - SHARE)
+                }
+            })
+        }
+
+        #[test]
+        fn most_of_the_halo_comes_from_the_wider_levels() {
+            let weights = weights();
+            assert!((weights.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+            assert!(weights[0] < 0.5, "{weights:?}");
+            assert!(weights.iter().all(|weight| *weight > 0.15), "{weights:?}");
         }
 
         #[test]
