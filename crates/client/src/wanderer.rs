@@ -668,19 +668,25 @@ fn hand(side: Side) -> Sculpt {
     clay.add(segment(hand, base, knuckle, 0.012, LEATHER).blended(0.006));
     let tip = knuckle + Vec3::new(inward * 0.45, -0.85, -0.15).normalize() * 0.03;
     clay.add(segment(hand, knuckle, tip, 0.0105, LEATHER).blended(0.003));
-    let curl = Vec3::new(inward * 0.3, -0.95, 0.0).normalize();
-    for (across, reach) in [
-        (-0.029, 0.86_f32),
-        (-0.0095, 1.0),
-        (0.0095, 0.94),
-        (0.028, 0.74),
+    for (across, reach, bend) in [
+        (-0.029, 0.86_f32, 0.35_f32),
+        (-0.0095, 1.0, 0.42),
+        (0.0095, 0.94, 0.5),
+        (0.028, 0.74, 0.58),
     ] {
         let radius = 0.0095 * reach.sqrt();
-        let root = Vec3::new(0.0, 0.004, across);
-        let middle = root - Vec3::Y * FINGER * reach * 0.5;
-        let end = middle + curl * (FINGER * reach * 0.5 - radius);
-        clay.add(segment(fingers, root, middle, radius, LEATHER).blended(0.003));
-        clay.add(segment(fingers, middle, end, radius * 0.92, LEATHER).blended(0.003));
+        let length = FINGER * reach - radius;
+        let (mut at, mut heading) = (Vec3::new(0.0, 0.004, across), 0.0_f32);
+        for (share, flex, taper) in [
+            (0.45, 0.0, 1.0),
+            (0.3, bend, 0.95),
+            (0.25, bend * 0.6, 0.88),
+        ] {
+            heading += flex;
+            let next = at + Vec3::new(inward * heading.sin(), -heading.cos(), 0.0) * length * share;
+            clay.add(segment(fingers, at, next, radius * taper, LEATHER).blended(0.003));
+            at = next;
+        }
     }
     clay
 }
@@ -1679,6 +1685,32 @@ mod tests {
                 .fold(f32::INFINITY, f32::min);
             assert!((tip - 0.66).abs() < 0.03, "{hand:?} {tip}");
             assert!((wrist - tip - 0.19).abs() < 0.015, "{hand:?} {wrist} {tip}");
+        }
+    }
+
+    #[test]
+    fn the_resting_fingers_curl_toward_the_palm() {
+        for side in super::Side::BOTH {
+            let fingers = side.fingers().index();
+            let back = crate::figure::rest()[fingers].inverse();
+            let points: Vec<Vec3> = super::hand(side)
+                .mesh(0.004)
+                .vertices
+                .iter()
+                .filter(|vertex| strongest(vertex) == fingers)
+                .map(|vertex| back.transform_point3(Vec3::from(vertex.position)))
+                .collect();
+            let lowest = points
+                .iter()
+                .map(|point| point.y)
+                .fold(f32::INFINITY, f32::min);
+            let tips: Vec<f32> = points
+                .iter()
+                .filter(|point| point.y < lowest + 0.005)
+                .map(|point| -point.x * side.sign())
+                .collect();
+            let curl = tips.iter().sum::<f32>() / f32::from(u16::try_from(tips.len()).unwrap());
+            assert!(curl > 0.02, "{curl}");
         }
     }
 
