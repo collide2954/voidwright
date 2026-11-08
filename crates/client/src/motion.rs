@@ -1,6 +1,8 @@
 use glam::{IVec2, Vec2};
 use voidwright_core::Tile;
 
+const CUT: f32 = 0.25;
+
 #[must_use]
 pub fn center(tile: Tile) -> Vec2 {
     IVec2::new(tile.x, tile.y).as_vec2() + Vec2::splat(0.5)
@@ -29,12 +31,14 @@ fn knot(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, index: usize)
     let next = trail.get(index + 1).copied().or(after);
     let incoming = previous.map(|tile| at - center(tile));
     let outgoing = next.map(|tile| center(tile) - at);
-    let tangent = match (incoming, outgoing) {
-        (Some(incoming), Some(outgoing)) => (incoming + outgoing) / 2.0,
-        (Some(step), None) | (None, Some(step)) => step,
-        (None, None) => Vec2::ZERO,
-    };
-    (at, tangent)
+    match (incoming, outgoing) {
+        (Some(incoming), Some(outgoing)) => (
+            at + (outgoing - incoming).normalize_or_zero() * CUT,
+            (incoming + outgoing) / 2.0,
+        ),
+        (Some(step), None) | (None, Some(step)) => (at, step),
+        (None, None) => (at, Vec2::ZERO),
+    }
 }
 
 fn hermite([from, leave, to, arrive]: [Vec2; 4], s: f32) -> Vec2 {
@@ -147,11 +151,62 @@ mod tests {
 
     #[test]
     fn a_corner_turns_a_little_in_each_frame() {
-        let square = path(&[(1, 0), (1, 0), (0, 1), (0, 1)]);
-        let turn = sharpest_turn(&frames(&square));
-        assert!(turn < 0.15, "{turn}");
+        for square in [
+            path(&[(1, 0), (1, 0), (0, 1), (0, 1)]),
+            path(&[(1, 1), (1, 1), (-1, 1), (-1, 1)]),
+        ] {
+            let turn = sharpest_turn(&frames(&square));
+            assert!(turn < 0.08, "{turn}");
+        }
         let sharp = path(&[(1, 0), (1, 0), (-1, 1), (-1, 1)]);
         let turn = sharpest_turn(&frames(&sharp));
-        assert!(turn < 0.3, "{turn}");
+        assert!(turn < 0.2, "{turn}");
+    }
+
+    #[test]
+    fn a_zig_zag_walks_in_a_straight_line() {
+        let zig_zag = path(&[(1, 0), (1, 1), (1, 0), (1, 1), (1, 0), (1, 1), (1, 0)]);
+        let points = frames(&zig_zag);
+        let tick = usize::from(FRAMES);
+        let heading = Vec2::new(2.0, 1.0);
+        for pair in points[tick..points.len() - tick].windows(2) {
+            let angle = heading.angle_to(pair[1] - pair[0]).abs();
+            assert!(angle < 0.01, "{angle}");
+        }
+    }
+
+    #[test]
+    fn a_straight_run_meets_each_tile_center_on_the_tick() {
+        for step in [(1, 0), (0, -1), (1, 1), (-1, 1)] {
+            let run = path(&[step; 4]);
+            for tick in 1..run.len() - 1 {
+                let trail = &run[tick..=tick + 1];
+                let at = position(Some(run[tick - 1]), trail, run.get(tick + 2).copied(), 0.0);
+                assert!(close(at, center(run[tick])), "{at}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_corner_passes_near_its_tile_center() {
+        let steps = [
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+        ];
+        let corner = Tile::new(0, 0);
+        for (ix, iy) in steps {
+            for (ox, oy) in steps {
+                let before = Tile::new(-ix, -iy);
+                let at = position(Some(before), &[corner, Tile::new(ox, oy)], None, 0.0);
+                let miss = at.distance(center(corner));
+                assert!(miss < 0.3, "{miss}");
+            }
+        }
     }
 }
