@@ -3,7 +3,10 @@ use std::f32::consts::FRAC_PI_2;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::cloth::Cloth;
-use crate::figure::{ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, JOINTS, THIGH, rest, waist};
+use crate::figure::{
+    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, JOINTS, LANTERN_BONE, LANTERN_HOOK, THIGH, rest,
+    waist,
+};
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
 use crate::shape::{Material, Surface};
@@ -112,11 +115,18 @@ impl Side {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    Rigid,
+    Draped,
+    Hung,
+}
+
 struct Piece {
     sculpt: Sculpt,
     cell: f32,
     budget: usize,
-    draped: bool,
+    fit: Fit,
 }
 
 const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
@@ -124,7 +134,7 @@ const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
         sculpt,
         cell,
         budget,
-        draped: false,
+        fit: Fit::Rigid,
     }
 }
 
@@ -133,12 +143,28 @@ const fn draped(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
         sculpt,
         cell,
         budget,
-        draped: true,
+        fit: Fit::Draped,
+    }
+}
+
+const fn hung(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
+    Piece {
+        sculpt,
+        cell,
+        budget,
+        fit: Fit::Hung,
     }
 }
 
 fn index(bone: usize) -> f32 {
     f32::from(u8::try_from(bone).unwrap_or(u8::MAX))
+}
+
+fn hang(mesh: &mut SkinnedMesh) {
+    for vertex in &mut mesh.vertices {
+        vertex.bones = [index(LANTERN_BONE); 4];
+        vertex.weights = [1.0, 0.0, 0.0, 0.0];
+    }
 }
 
 fn drape(mesh: &mut SkinnedMesh) {
@@ -183,14 +209,17 @@ pub fn voidwright() -> SkinnedMesh {
         piece(knee(), 0.007, 600),
         piece(wraps(Side::Left), 0.006, 1_200),
         piece(wraps(Side::Right), 0.006, 1_200),
-        piece(lantern(), 0.005, 800),
+        piece(rod(), 0.005, 200),
+        hung(lantern(), 0.005, 700),
     ];
     let mut figure = SkinnedMesh::default();
     for piece in &pieces {
         let mut mesh = piece.sculpt.mesh(piece.cell);
         mesh.simplify(piece.budget);
-        if piece.draped {
-            drape(&mut mesh);
+        match piece.fit {
+            Fit::Draped => drape(&mut mesh),
+            Fit::Hung => hang(&mut mesh),
+            Fit::Rigid => {}
         }
         figure.append(&mesh);
     }
@@ -728,23 +757,23 @@ fn wraps(side: Side) -> Sculpt {
     clay
 }
 
-fn lantern() -> Sculpt {
+fn rod() -> Sculpt {
     let mut clay = clay();
-    let torso = Bone::Torso;
     let base = Vec3::new(0.09, 0.39, 0.2);
-    let rod = Vec3::new(0.3, 0.85, 0.42).normalize();
-    let hook = base + rod * 0.2;
-    let top = hook - Vec3::Y * 0.03;
+    let rod = LANTERN_HOOK - base;
     clay.add(
-        stroke(torso, limb(0.2, 0.006, 0.006), METAL)
+        stroke(Bone::Torso, limb(rod.length(), 0.006, 0.006), METAL)
             .at(base)
             .turned(toward(rod)),
     );
-    clay.add(
-        stroke(torso, limb(0.03, 0.004, 0.004), METAL)
-            .at(hook)
-            .blended(0.004),
-    );
+    clay
+}
+
+fn lantern() -> Sculpt {
+    let mut clay = clay();
+    let torso = Bone::Torso;
+    let top = LANTERN_HOOK - Vec3::Y * 0.03;
+    clay.add(stroke(torso, limb(0.03, 0.004, 0.004), METAL).at(LANTERN_HOOK));
     clay.part();
     for drop in [0.0, 0.07] {
         clay.add(
@@ -770,7 +799,7 @@ fn lantern() -> Sculpt {
 #[cfg(test)]
 mod tests {
     use super::{DUST, voidwright, weather};
-    use crate::figure::{BONES, Bone, JOINTS};
+    use crate::figure::{BONES, Bone, JOINTS, LANTERN_BONE};
     use crate::palette::linear;
     use crate::sculpt::{SkinnedMesh, SkinnedVertex};
     use glam::{Mat4, Vec3};
@@ -795,12 +824,16 @@ mod tests {
         bone(vertex.bones[slot])
     }
 
+    fn in_coat(bone: usize) -> bool {
+        (JOINTS..LANTERN_BONE).contains(&bone)
+    }
+
     fn on_cloth(vertex: &SkinnedVertex) -> f32 {
         vertex
             .bones
             .iter()
             .zip(&vertex.weights)
-            .filter(|(at, _)| bone(**at) >= JOINTS)
+            .filter(|(at, _)| in_coat(bone(**at)))
             .map(|(_, weight)| weight)
             .sum()
     }
@@ -939,11 +972,36 @@ mod tests {
     }
 
     #[test]
+    fn the_lantern_swings_below_its_hook_and_the_rod_stays_on_the_pack() {
+        use crate::figure::{LANTERN_HOOK, rest};
+        let torso = rest()[Bone::Torso.index()];
+        let flame: Vec<&SkinnedVertex> = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| glows(vertex) && vertex.color[0] > 0.9 && vertex.color[2] < 0.2)
+            .collect();
+        assert_ne!(flame.len(), 0);
+        for vertex in flame {
+            assert_eq!(strongest(vertex), LANTERN_BONE);
+        }
+        let rod = torso.transform_point3(LANTERN_HOOK - Vec3::new(0.03, 0.09, 0.04));
+        let near = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| Vec3::from(vertex.position).distance(rod) < 0.012)
+            .collect::<Vec<_>>();
+        assert_ne!(near.len(), 0);
+        for vertex in near {
+            assert_eq!(strongest(vertex), Bone::Torso.index());
+        }
+    }
+
+    #[test]
     fn the_coat_hem_falls_below_the_knees() {
         let hem = FIGURE
             .vertices
             .iter()
-            .filter(|vertex| strongest(vertex) >= JOINTS)
+            .filter(|vertex| in_coat(strongest(vertex)))
             .map(|vertex| vertex.position[1])
             .fold(f32::INFINITY, f32::min);
         assert!(hem < 0.39 && hem > 0.15);
@@ -1114,7 +1172,7 @@ mod tests {
         let coat: Vec<&SkinnedVertex> = FIGURE
             .vertices
             .iter()
-            .filter(|vertex| strongest(vertex) >= JOINTS && vertex.position[1] < 0.7)
+            .filter(|vertex| in_coat(strongest(vertex)) && vertex.position[1] < 0.7)
             .collect();
         let woven = coat.iter().filter(|vertex| vertex.surface[0] > 0.9).count();
         assert!(woven * 10 > coat.len() * 9);

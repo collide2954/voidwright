@@ -2,7 +2,7 @@ use std::array::from_fn;
 
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::cloth::{CLOTH_BONES, Capsule, Cloth, Drape};
+use crate::cloth::{CLOTH_BONES, Capsule, Cloth, Drape, Fabric, Feel};
 use crate::{Pose, Stride};
 
 const PULSE: f32 = 0.12;
@@ -30,7 +30,19 @@ pub enum Bone {
 }
 
 pub const JOINTS: usize = 17;
-pub const BONES: usize = JOINTS + CLOTH_BONES;
+pub const LANTERN_BONE: usize = JOINTS + CLOTH_BONES;
+pub const BONES: usize = LANTERN_BONE + 1;
+pub const LANTERN_HOOK: Vec3 = Vec3::new(0.150_3, 0.561, 0.284_5);
+pub const LANTERN_DROP: f32 = 0.065;
+const LANTERN_SLACK: f32 = 0.08;
+const LANTERN_FEEL: Feel = Feel {
+    drive: 0.3,
+    drag: 2.5,
+    inertia: 1.0,
+    spin: 1.0,
+};
+const BEDROLL: [Vec3; 2] = [Vec3::new(0.13, 0.42, 0.17), Vec3::new(-0.13, 0.42, 0.17)];
+const BEDROLL_RADIUS: f32 = 0.042;
 pub const COAT_CUT: Drape = Drape {
     top: 0.16,
     bottom: 0.28,
@@ -208,13 +220,14 @@ pub fn rest() -> [Mat4; JOINTS] {
 #[must_use]
 pub fn skin(pose: &Pose) -> [Mat4; BONES] {
     let (rest, posed) = (rest(), skeleton(pose));
-    let pelvis = Bone::Pelvis.index();
-    let hips = posed[pelvis] * rest[pelvis].inverse();
+    let follow = |bone: Bone| posed[bone.index()] * rest[bone.index()].inverse();
     from_fn(|bone| {
         if bone < JOINTS {
             posed[bone] * rest[bone].inverse()
+        } else if bone == LANTERN_BONE {
+            follow(Bone::Torso)
         } else {
-            hips
+            follow(Bone::Pelvis)
         }
     })
 }
@@ -222,13 +235,16 @@ pub fn skin(pose: &Pose) -> [Mat4; BONES] {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coat {
     cloth: Cloth,
+    lantern: Fabric<2>,
 }
 
 impl Coat {
     #[must_use]
     pub fn new(pose: &Pose, placement: Mat4) -> Self {
+        let hanging = [LANTERN_HOOK, LANTERN_HOOK - Vec3::Y * LANTERN_DROP];
         let mut coat = Self {
             cloth: Cloth::hanging(COAT_CUT),
+            lantern: Fabric::strand(hanging, LANTERN_SLACK, LANTERN_FEEL),
         };
         coat.update(pose, placement, 0.0);
         coat
@@ -252,14 +268,23 @@ impl Coat {
         ];
         let waist = placement * waist(bones[Bone::Pelvis.index()]);
         self.cloth.update(waist, &legs, seconds);
+        let torso = placement * bones[Bone::Torso.index()];
+        let bedroll = Capsule {
+            from: torso.transform_point3(BEDROLL[0]),
+            to: torso.transform_point3(BEDROLL[1]),
+            radius: BEDROLL_RADIUS,
+        };
+        self.lantern.update(torso, &[bedroll], seconds);
     }
 
     #[must_use]
     pub fn skins(&self, pose: &Pose) -> [Mat4; BONES] {
         let mut skins = skin(pose);
-        let pelvis = Bone::Pelvis.index();
-        let (rest, posed) = (waist(rest()[pelvis]), waist(skeleton(pose)[pelvis]));
-        skins[JOINTS..].copy_from_slice(&self.cloth.skins(rest, posed));
+        let (rest, posed) = (rest(), skeleton(pose));
+        let (pelvis, torso) = (Bone::Pelvis.index(), Bone::Torso.index());
+        let coat = self.cloth.skins(waist(rest[pelvis]), waist(posed[pelvis]));
+        skins[JOINTS..LANTERN_BONE].copy_from_slice(&coat);
+        skins[LANTERN_BONE] = self.lantern.skins(rest[torso], posed[torso])[0];
         skins
     }
 
@@ -281,7 +306,10 @@ pub fn pulse(time: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BONES, Bone, Coat, JOINTS, placement, pulse, rest, skeleton, skin};
+    use super::{
+        Bone, Coat, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK, placement, pulse, rest,
+        skeleton, skin,
+    };
     use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
     use glam::{Mat4, Vec2, Vec3};
@@ -497,10 +525,48 @@ mod tests {
         assert!((0.02..0.05).contains(&swing), "{swing}");
     }
 
+    fn lantern_middle() -> Vec3 {
+        rest()[Bone::Torso.index()].transform_point3(LANTERN_HOOK - Vec3::Y * LANTERN_DROP)
+    }
+
+    #[test]
+    fn a_still_lantern_hangs_straight_under_its_hook() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        let middle = lantern_middle();
+        let held = coat.skins(&pose)[LANTERN_BONE].transform_point3(middle);
+        assert!(held.distance(middle) < 0.002, "{held} {middle}");
+    }
+
+    #[test]
+    fn the_lantern_swings_back_when_the_figure_sets_off() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        for frame in 1..=8_u8 {
+            let ahead = Mat4::from_translation(Vec3::NEG_Z * 0.03 * f32::from(frame));
+            coat.update(&pose, ahead, 1.0 / 60.0);
+        }
+        let middle = lantern_middle();
+        let swung = coat.skins(&pose)[LANTERN_BONE].transform_point3(middle);
+        assert!(swung.z > middle.z + 0.005, "{swung} {middle}");
+    }
+
+    #[test]
+    fn a_bare_skin_carries_the_lantern_with_the_torso() {
+        let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
+        assert!(skins[LANTERN_BONE].abs_diff_eq(skins[Bone::Torso.index()], 1e-6));
+    }
+
     #[test]
     fn a_bare_skin_carries_the_coat_with_the_hips() {
         let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
-        for matrix in &skins[JOINTS..BONES] {
+        for matrix in &skins[JOINTS..LANTERN_BONE] {
             assert!(matrix.abs_diff_eq(skins[Bone::Pelvis.index()], 1e-6));
         }
     }

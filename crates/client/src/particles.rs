@@ -2,7 +2,7 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use voidwright_core::Rng;
 
 use crate::game::ISLAND_RADIUS;
-use crate::{BONES, Bone, Game, placement, skin, to_world};
+use crate::{BONES, Game, LANTERN_BONE, to_world};
 
 pub const LANTERN: Vec3 = Vec3::new(0.15, 1.456, 0.284);
 const SEED: u64 = 0x5350_4543_4b53;
@@ -27,12 +27,11 @@ impl Anchors {
     #[must_use]
     pub fn of(game: &Game) -> Self {
         let player = game.player_position();
-        let stride = game.stride();
         let map = game.world().map();
         let middle = Vec2::new(f32::from(map.width()), f32::from(map.height())) / 2.0;
         Self {
             player,
-            lantern: lantern(placement(player, stride), &skin(&stride.pose(game.time()))),
+            lantern: lantern(game.placement(), &game.skins()),
             island: to_world(middle, 0.0),
             shore: f32::from(ISLAND_RADIUS),
         }
@@ -148,7 +147,7 @@ pub fn seeds(count: usize, rng: &mut Rng) -> Vec<Vec4> {
 
 #[must_use]
 pub fn lantern(placement: Mat4, skin: &[Mat4; BONES]) -> Vec3 {
-    (placement * skin[Bone::Torso.index()]).transform_point3(LANTERN)
+    (placement * skin[LANTERN_BONE]).transform_point3(LANTERN)
 }
 
 fn unit(rng: &mut Rng) -> f32 {
@@ -160,7 +159,7 @@ mod tests {
     use super::{
         Anchor, Anchors, EMBERS, LANTERN, MOTES, SPORES, SWARMS, Swarm, lantern, seeds, specks,
     };
-    use crate::{Game, Pose, placement, skin, to_ground, voidwright};
+    use crate::{Game, LANTERN_BONE, Pose, skin, to_ground, voidwright};
     use glam::{Mat4, Vec2, Vec3, Vec4};
     use std::f32::consts::FRAC_PI_2;
     use voidwright_core::{Rng, TICK, Tile};
@@ -415,11 +414,8 @@ mod tests {
         }
         let anchors = Anchors::of(&game);
         assert_eq!(anchors.player, game.player_position());
-        let stride = game.stride();
-        let expected = lantern(
-            placement(game.player_position(), stride),
-            &skin(&stride.pose(game.time())),
-        );
+        let swinging = game.placement() * game.skins()[LANTERN_BONE];
+        let expected = swinging.transform_point3(LANTERN);
         assert!(anchors.lantern.distance(expected) < 1e-5);
         let lift = anchors.lantern - anchors.player;
         assert!((1.3..1.6).contains(&lift.y) && Vec2::new(lift.x, lift.z).length() < 0.5);
