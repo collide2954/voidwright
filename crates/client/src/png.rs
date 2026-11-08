@@ -1,23 +1,35 @@
+use std::borrow::Cow;
+
 use crate::deflate::zlib;
 
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
-const RGBA_HEADER: [u8; 5] = [8, 6, 0, 0, 0];
+const DEPTH: u8 = 8;
+const RGB: u8 = 2;
+const RGBA: u8 = 6;
 const CRC_POLYNOMIAL: u32 = 0xedb8_8320;
 const FILTERS: [u8; 5] = [0, 1, 2, 3, 4];
 
 #[must_use]
 pub fn encode(width: u16, height: u16, rgba: &[u8]) -> Vec<u8> {
-    let row = usize::from(width) * 4;
     assert_eq!(
         rgba.len(),
-        row * usize::from(height),
+        usize::from(width) * 4 * usize::from(height),
         "pixels match the size"
     );
-    let raw = filtered(rgba, row, 4);
+    let (each, _) = rgba.as_chunks::<4>();
+    let (kind, step, pixels) = if each.iter().all(|pixel| pixel[3] == u8::MAX) {
+        let colors = each
+            .iter()
+            .flat_map(|&[red, green, blue, _]| [red, green, blue]);
+        (RGB, 3, Cow::Owned(colors.collect()))
+    } else {
+        (RGBA, 4, Cow::Borrowed(rgba))
+    };
+    let raw = filtered(&pixels, usize::from(width) * step, step);
     let mut header = Vec::with_capacity(13);
     header.extend_from_slice(&u32::from(width).to_be_bytes());
     header.extend_from_slice(&u32::from(height).to_be_bytes());
-    header.extend_from_slice(&RGBA_HEADER);
+    header.extend_from_slice(&[DEPTH, kind, 0, 0, 0]);
     let mut png = SIGNATURE.to_vec();
     chunk(&mut png, *b"IHDR", &header);
     chunk(&mut png, *b"IDAT", &zlib(&raw));
@@ -232,6 +244,19 @@ mod tests {
             .map(|index| u8::try_from(index * index % 251).unwrap())
             .collect();
         assert_eq!(decode(&encode(width, height, &rgba)), rgba);
+    }
+
+    #[test]
+    fn an_opaque_picture_leaves_out_the_alpha_channel() {
+        let rgba = picture(64, 48);
+        let png = encode(64, 48, &rgba);
+        assert_eq!(chunk(&png, *b"IHDR")[8..10], [8, 2]);
+        assert_eq!(decode(&png), rgba);
+        let mut clear = rgba;
+        clear[7] = 254;
+        let png = encode(64, 48, &clear);
+        assert_eq!(chunk(&png, *b"IHDR")[8..10], [8, 6]);
+        assert_eq!(decode(&png), clear);
     }
 
     #[test]
