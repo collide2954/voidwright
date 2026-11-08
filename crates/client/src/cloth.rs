@@ -1,21 +1,31 @@
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 
-use crate::spline::smoothstep;
-
-pub const STRIPS: usize = 8;
-pub const CLOTH_BONES: usize = STRIPS * 2;
+pub const COLUMNS: usize = 7;
+pub const ROWS: usize = 5;
+pub const PANELS: usize = 2;
+pub const PARTICLES: usize = PANELS * COLUMNS * ROWS;
+pub const CLOTH_BONES: usize = PANELS * COLUMNS * (ROWS - 1);
+const DEPTHS: [f32; ROWS] = [0.0, 0.2, 0.45, 0.72, 1.0];
+const SLACK: [f32; ROWS] = [0.0, 0.05, 0.1, 0.16, 0.22];
+const EDGE: f32 = 0.05;
+const STEP: f32 = 1.0 / 240.0;
+const MOST_STEPS: u8 = 16;
+const SETTLING: u16 = 480;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
-const STEP: f32 = 1.0 / 120.0;
-const MOST_STEPS: u8 = 8;
-const DRAG: f32 = 12.0;
-const SHAPE: f32 = 4.0;
-const ITERATIONS: usize = 4;
-const RING: f32 = 0.6;
-const MARGIN: f32 = 0.015;
-const BAND: f32 = 0.07;
+const DRAG: f32 = 4.0;
+const DRIVE: f32 = 0.7;
+const INERTIA: f32 = 0.5;
+const SPIN: f32 = 0.5;
+const FRICTION: f32 = 0.3;
+const MARGIN: f32 = 0.025;
 const LEVER: f32 = 0.25;
+const STRETCH: f32 = 1.0;
+const WEAVE: f32 = 0.8;
+const SHEAR: f32 = 0.4;
+const BEND: f32 = 3.0;
+const CURVE: f32 = 10.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Capsule {
@@ -24,28 +34,126 @@ pub struct Capsule {
     pub radius: f32,
 }
 
+impl Capsule {
+    fn toward(self, other: Self, fraction: f32) -> Self {
+        Self {
+            from: self.from.lerp(other.from, fraction),
+            to: self.to.lerp(other.to, fraction),
+            radius: self.radius + (other.radius - self.radius) * fraction,
+        }
+    }
+
+    fn local(self, frame: Frame) -> Self {
+        Self {
+            from: frame.local(self.from),
+            to: frame.local(self.to),
+            radius: self.radius,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Drape {
     pub top: f32,
     pub bottom: f32,
     pub length: f32,
     pub squash: f32,
-    pub knee: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Frame {
+    rotation: Quat,
+    translation: Vec3,
+}
+
+impl Frame {
+    const ORIGIN: Self = Self {
+        rotation: Quat::IDENTITY,
+        translation: Vec3::ZERO,
+    };
+
+    fn of(matrix: Mat4) -> Self {
+        let (_, rotation, translation) = matrix.to_scale_rotation_translation();
+        Self {
+            rotation,
+            translation,
+        }
+    }
+
+    fn toward(self, other: Self, fraction: f32) -> Self {
+        Self {
+            rotation: self.rotation.slerp(other.rotation, fraction),
+            translation: self.translation.lerp(other.translation, fraction),
+        }
+    }
+
+    fn local(self, point: Vec3) -> Vec3 {
+        self.rotation.inverse() * (point - self.translation)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Link {
+    first: usize,
+    second: usize,
+    length: f32,
+    stiffness: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cloth {
-    rest: [[Vec3; 3]; STRIPS],
-    points: [[Vec3; 3]; STRIPS],
-    previous: [[Vec3; 3]; STRIPS],
+    squash: f32,
+    rest: [Vec3; PARTICLES],
+    settled: [Vec3; PARTICLES],
+    points: [Vec3; PARTICLES],
+    previous: [Vec3; PARTICLES],
+    links: Vec<Link>,
+    then: Frame,
+    history: [Frame; 2],
+    legs: Vec<Capsule>,
+    clock: f32,
     started: bool,
+}
+
+#[must_use]
+pub const fn particle(panel: usize, column: usize, row: usize) -> usize {
+    (panel * COLUMNS + column) * ROWS + row
+}
+
+#[must_use]
+pub const fn bone(panel: usize, column: usize, row: usize) -> Option<usize> {
+    if row == 0 {
+        None
+    } else {
+        Some((panel * COLUMNS + column) * (ROWS - 1) + row - 1)
+    }
+}
+
+fn count(value: usize) -> f32 {
+    f32::from(u8::try_from(value).unwrap_or(u8::MAX))
+}
+
+fn angle(panel: usize, column: f32) -> f32 {
+    let start = if panel == 0 { -FRAC_PI_2 } else { FRAC_PI_2 };
+    start + EDGE + (PI - 2.0 * EDGE) * column / count(COLUMNS - 1)
+}
+
+fn cells() -> impl Iterator<Item = (usize, usize, usize)> {
+    (0..PANELS).flat_map(|panel| {
+        (0..COLUMNS).flat_map(move |column| (0..ROWS).map(move |row| (panel, column, row)))
+    })
+}
+
+const fn free(index: usize) -> f32 {
+    if index.is_multiple_of(ROWS) { 0.0 } else { 1.0 }
 }
 
 impl Cloth {
     #[must_use]
     pub fn hanging(drape: Drape) -> Self {
-        let rest = std::array::from_fn(|strip| {
-            let (sin, cos) = strip_angle(strip).sin_cos();
+        let mut rest = [Vec3::ZERO; PARTICLES];
+        for (panel, column, row) in cells() {
+            let (sin, cos) = angle(panel, count(column)).sin_cos();
             let around = |radius: f32| Vec3::new(radius * cos, 0.0, radius * drape.squash * sin);
             let anchor = around(drape.top);
             let flare = around(drape.bottom) - anchor;
@@ -53,188 +161,294 @@ impl Cloth {
                 .max(0.0)
                 .sqrt();
             let hem = anchor + flare - Vec3::Y * drop;
-            [anchor, anchor.lerp(hem, drape.knee), hem]
-        });
+            rest[particle(panel, column, row)] = anchor.lerp(hem, DEPTHS[row]);
+        }
         Self {
+            squash: drape.squash,
             rest,
+            settled: rest,
             points: rest,
             previous: rest,
+            links: links(&rest),
+            then: Frame::ORIGIN,
+            history: [Frame::ORIGIN; 2],
+            legs: Vec::new(),
+            clock: 0.0,
             started: false,
         }
     }
 
     #[must_use]
-    pub fn rest(&self) -> &[[Vec3; 3]; STRIPS] {
+    pub const fn rest(&self) -> &[Vec3; PARTICLES] {
         &self.rest
     }
 
     #[must_use]
-    pub fn points(&self) -> &[[Vec3; 3]; STRIPS] {
+    pub const fn settled(&self) -> &[Vec3; PARTICLES] {
+        &self.settled
+    }
+
+    #[must_use]
+    pub const fn points(&self) -> &[Vec3; PARTICLES] {
         &self.points
     }
 
     pub fn update(&mut self, waist: Mat4, legs: &[Capsule], seconds: f32) {
-        let targets = self
-            .rest
-            .map(|strip| strip.map(|point| waist.transform_point3(point)));
+        let now = Frame::of(waist);
+        if !self.started || self.legs.len() != legs.len() {
+            self.legs = legs.to_vec();
+        }
         if !self.started {
-            self.points = targets;
-            self.previous = targets;
+            self.settle(now);
+            self.then = now;
             self.started = true;
             return;
         }
-        let seconds = seconds.min(STEP * f32::from(MOST_STEPS));
-        let steps = (seconds / STEP).ceil().clamp(1.0, f32::from(MOST_STEPS));
-        let step = seconds / steps;
-        let center = waist.transform_point3(Vec3::ZERO);
-        let mut left = seconds;
-        while left > step * 0.5 {
-            self.step(&targets, center, legs, step);
-            left -= step;
+        let seconds = seconds.clamp(0.0, STEP * f32::from(MOST_STEPS));
+        let mut moving = legs.to_vec();
+        self.clock += seconds;
+        while self.clock >= STEP {
+            self.clock -= STEP;
+            let fraction = if seconds > 0.0 {
+                (1.0 - self.clock / seconds).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let frame = self.then.toward(now, fraction);
+            for ((leg, from), to) in moving.iter_mut().zip(&self.legs).zip(legs) {
+                *leg = from.toward(*to, fraction).local(frame);
+            }
+            self.step(frame, &moving);
+        }
+        self.then = now;
+        self.legs.copy_from_slice(legs);
+    }
+
+    fn settle(&mut self, frame: Frame) {
+        self.points = self.rest;
+        self.previous = self.rest;
+        self.history = [frame; 2];
+        for _ in 0..SETTLING {
+            self.step(frame, &[]);
+        }
+        self.settled = self.points;
+        self.previous = self.points;
+    }
+
+    fn step(&mut self, frame: Frame, legs: &[Capsule]) {
+        let [one, two] = self.history;
+        self.history = [frame, one];
+        let back = frame.rotation.inverse();
+        let surge = back * (frame.translation - 2.0 * one.translation + two.translation) * INERTIA;
+        let turning = turn(one.rotation, frame.rotation);
+        let twist = (turning - turn(two.rotation, one.rotation)) * SPIN;
+        let spin = turning * SPIN;
+        let fall = back * GRAVITY * STEP * STEP;
+        let keep = (-DRAG * STEP).exp();
+        let pull = springy(DRIVE);
+        let particles = self
+            .points
+            .iter_mut()
+            .zip(&mut self.previous)
+            .zip(&self.rest);
+        for (index, ((point, before), rest)) in particles.enumerate() {
+            if free(index) == 0.0 {
+                *point = *rest;
+                *before = *rest;
+                continue;
+            }
+            let moving = *point - *before;
+            let fictitious = surge
+                + twist.cross(*point)
+                + spin.cross(turning.cross(*point))
+                + 2.0 * spin.cross(moving);
+            let mut next = *point + moving * keep + fall - fictitious;
+            next += (*rest - next) * pull;
+            *before = *point;
+            *point = next;
+        }
+        self.hold();
+        self.collide(legs);
+    }
+
+    fn hold(&mut self) {
+        for link in &self.links {
+            let gap = self.points[link.second] - self.points[link.first];
+            let length = gap.length();
+            let (first, second) = (free(link.first), free(link.second));
+            if length < 1e-6 || first + second <= 0.0 {
+                continue;
+            }
+            let shift = gap * ((length - link.length) / length * link.stiffness / (first + second));
+            self.points[link.first] += shift * first;
+            self.points[link.second] -= shift * second;
+        }
+        for (index, point) in self.points.iter_mut().enumerate() {
+            let row = index % ROWS;
+            if row == 0 {
+                continue;
+            }
+            let (anchor, rest) = (self.rest[index - row], self.rest[index]);
+            let tether = rest.distance(anchor);
+            let reach = *point - anchor;
+            if reach.length() > tether {
+                *point = anchor + reach.normalize() * tether;
+            }
+            let away = *point - rest;
+            if away.length() > SLACK[row] {
+                *point = rest + away.normalize() * SLACK[row];
+            }
         }
     }
 
-    fn step(
-        &mut self,
-        targets: &[[Vec3; 3]; STRIPS],
-        center: Vec3,
-        legs: &[Capsule],
-        seconds: f32,
-    ) {
-        let keep = (-DRAG * seconds).exp();
-        let pull = (SHAPE * seconds).min(1.0);
-        let strips = self.points.iter_mut().zip(&mut self.previous).zip(targets);
-        for ((points, previous), target) in strips {
-            points[0] = target[0];
-            previous[0] = target[0];
-            let joints = points.iter_mut().zip(previous.iter_mut()).zip(target);
-            for ((point, before), aim) in joints.skip(1) {
-                let current = *point;
-                let moving = (current - *before) * keep;
-                let mut next = current + moving + GRAVITY * seconds * seconds;
-                next += (*aim - next) * pull;
-                *before = current;
-                *point = next;
-            }
-        }
-        for _ in 0..ITERATIONS {
-            for strip in 0..STRIPS {
-                self.hold_lengths(strip);
-                if joined(strip) {
-                    self.hold_spacing(strip, (strip + 1) % STRIPS);
+    fn collide(&mut self, legs: &[Capsule]) {
+        for leg in legs {
+            for index in 0..PARTICLES {
+                if free(index) == 0.0 {
+                    continue;
                 }
-                for leg in legs {
-                    for point in 1..3 {
-                        self.points[strip][point] = clear(self.points[strip][point], leg, center);
-                    }
-                    for segment in 0..2 {
-                        self.clear_segment(strip, segment, leg, center);
-                    }
+                let point = self.points[index];
+                let push = clear(point, leg) - point;
+                if push.length_squared() > 0.0 {
+                    self.points[index] += push;
+                    self.rub(index, push);
+                }
+            }
+            for index in 0..PARTICLES {
+                if index % ROWS + 1 < ROWS {
+                    self.clear_segment(index, leg);
                 }
             }
         }
     }
 
-    fn clear_segment(&mut self, strip: usize, segment: usize, leg: &Capsule, center: Vec3) {
-        let (from, to) = (self.points[strip][segment], self.points[strip][segment + 1]);
+    fn rub(&mut self, index: usize, push: Vec3) {
+        let normal = push.normalize_or_zero();
+        let moving = self.points[index] - self.previous[index];
+        let sliding = moving - normal * moving.dot(normal);
+        self.previous[index] += sliding * FRICTION;
+    }
+
+    fn clear_segment(&mut self, upper: usize, leg: &Capsule) {
+        let lower = upper + 1;
+        let (from, to) = (self.points[upper], self.points[lower]);
         let along = nearest(from, to, leg.from, leg.to);
         let touching = from.lerp(to, along);
-        let push = clear(touching, leg, center) - touching;
+        let push = clear(touching, leg) - touching;
         if push.length_squared() < 1e-12 {
             return;
         }
-        if segment == 0 {
-            self.points[strip][1] += push / along.max(LEVER);
+        if free(upper) == 0.0 {
+            self.points[lower] += push / along.max(LEVER);
         } else {
             let share = (1.0 - along).powi(2) + along.powi(2);
-            self.points[strip][1] += push * (1.0 - along) / share;
-            self.points[strip][2] += push * along / share;
+            self.points[upper] += push * (1.0 - along) / share;
+            self.points[lower] += push * along / share;
         }
     }
 
     #[must_use]
-    pub fn skins(&self, placement: Mat4, rest_waist: Mat4, waist: Mat4) -> [Mat4; CLOTH_BONES] {
-        let to_model = placement.inverse();
-        let carry = Quat::from_mat4(&(waist * rest_waist.inverse()));
-        std::array::from_fn(|bone| {
-            let (strip, segment) = (bone / 2, bone % 2);
-            let rest_from = rest_waist.transform_point3(self.rest[strip][segment]);
-            let rest_to = rest_waist.transform_point3(self.rest[strip][segment + 1]);
-            let from = to_model.transform_point3(self.points[strip][segment]);
-            let to = to_model.transform_point3(self.points[strip][segment + 1]);
-            let carried = carry * (rest_to - rest_from).normalize_or_zero();
-            let swing = Quat::from_rotation_arc(carried, (to - from).normalize_or_zero());
-            Mat4::from_translation(from)
-                * Mat4::from_quat(swing * carry)
-                * Mat4::from_translation(-rest_from)
-        })
+    pub fn skins(&self, rest_waist: Mat4, waist: Mat4) -> [Mat4; CLOTH_BONES] {
+        let back = rest_waist.inverse();
+        let mut skins = [Mat4::IDENTITY; CLOTH_BONES];
+        for (panel, column, row) in cells() {
+            let Some(slot) = bone(panel, column, row) else {
+                continue;
+            };
+            let index = particle(panel, column, row);
+            let turn = basis(&self.points, panel, column, row)
+                * basis(&self.settled, panel, column, row).transpose();
+            skins[slot] = waist
+                * Mat4::from_translation(self.points[index])
+                * Mat4::from_mat3(turn)
+                * Mat4::from_translation(-self.settled[index])
+                * back;
+        }
+        skins
     }
 
     #[must_use]
-    pub fn weights(&self, point: Vec3) -> [(usize, f32); 4] {
-        let turn = |at: Vec3| at.z.atan2(at.x).rem_euclid(TAU);
-        let angles = self.rest.map(|strip| turn(strip[0]));
-        let at = turn(point);
-        let first = (0..STRIPS)
-            .rev()
-            .find(|&strip| angles[strip] <= at)
-            .unwrap_or(STRIPS - 1);
-        let next = (first + 1) % STRIPS;
-        let span = (angles[next] - angles[first]).rem_euclid(TAU);
-        let share = ((at - angles[first]).rem_euclid(TAU) / span).clamp(0.0, 1.0);
-        let share = if joined(first) {
-            share
+    pub fn weights(&self, point: Vec3) -> [(Option<usize>, f32); 4] {
+        let panel = usize::from(point.x < 0.0);
+        let start = if panel == 0 { -FRAC_PI_2 } else { FRAC_PI_2 };
+        let turn = (point.z / self.squash).atan2(point.x);
+        let turn = if panel == 0 {
+            turn
         } else {
-            f32::from(share >= 0.5)
+            turn.rem_euclid(TAU)
         };
-        let pair = |strip: usize, share: f32| {
-            let knee = -self.rest[strip][1].y;
-            let low = smoothstep(knee - BAND, knee + BAND, -point.y);
-            [
-                (strip * 2, share * (1.0 - low)),
-                (strip * 2 + 1, share * low),
-            ]
-        };
-        let [upper, lower] = pair(first, 1.0 - share);
-        let [next_upper, next_lower] = pair(next, share);
-        [upper, lower, next_upper, next_lower]
+        let last = count(COLUMNS - 1);
+        let place = ((turn - start - EDGE) / (PI - 2.0 * EDGE) * last).clamp(0.0, last);
+        let column = (0..COLUMNS - 1)
+            .rev()
+            .find(|&column| count(column) <= place)
+            .unwrap_or(0);
+        let across = place - count(column);
+        let hem = -self.rest[particle(panel, column, ROWS - 1)].y;
+        let depth = (-point.y / hem).clamp(0.0, 1.0);
+        let row = (0..ROWS - 1)
+            .rev()
+            .find(|&row| DEPTHS[row] <= depth)
+            .unwrap_or(0);
+        let down = ((depth - DEPTHS[row]) / (DEPTHS[row + 1] - DEPTHS[row])).clamp(0.0, 1.0);
+        [
+            (bone(panel, column, row), (1.0 - across) * (1.0 - down)),
+            (bone(panel, column + 1, row), across * (1.0 - down)),
+            (bone(panel, column, row + 1), (1.0 - across) * down),
+            (bone(panel, column + 1, row + 1), across * down),
+        ]
     }
+}
 
-    fn hold_lengths(&mut self, strip: usize) {
-        let rest = self.rest[strip];
-        let [anchor, knee, hem] = self.points[strip];
-        let knee = anchor + (knee - anchor).normalize_or_zero() * rest[0].distance(rest[1]);
-        let reach = rest[1].distance(rest[2]);
-        let middle = (knee + hem) / 2.0;
-        let along = (hem - knee).normalize_or_zero() * reach / 2.0;
-        self.points[strip][1] = knee;
-        self.points[strip][2] = middle + along;
-        let knee = self.points[strip][1];
-        self.points[strip][2] = knee + (self.points[strip][2] - knee).normalize_or_zero() * reach;
-    }
-
-    fn hold_spacing(&mut self, strip: usize, next: usize) {
-        for point in 1..3 {
-            let rest = self.rest[strip][point].distance(self.rest[next][point]);
-            let (first, second) = (self.points[strip][point], self.points[next][point]);
-            let gap = second - first;
-            let error = (gap.length() - rest) * RING / 2.0;
-            let shift = gap.normalize_or_zero() * error;
-            self.points[strip][point] += shift;
-            self.points[next][point] -= shift;
+fn links(rest: &[Vec3; PARTICLES]) -> Vec<Link> {
+    let mut links = Vec::new();
+    let mut join = |first: usize, second: usize, stiffness: f32| {
+        links.push(Link {
+            first,
+            second,
+            length: rest[first].distance(rest[second]),
+            stiffness,
+        });
+    };
+    for (panel, column, row) in cells() {
+        let at = |column: usize, row: usize| particle(panel, column, row);
+        if row + 1 < ROWS {
+            join(at(column, row), at(column, row + 1), STRETCH);
+        }
+        if row + 2 < ROWS {
+            join(at(column, row), at(column, row + 2), springy(BEND));
+        }
+        if column + 1 < COLUMNS && row > 0 {
+            join(at(column, row), at(column + 1, row), WEAVE);
+        }
+        if column + 2 < COLUMNS && row > 0 {
+            join(at(column, row), at(column + 2, row), springy(CURVE));
+        }
+        if column + 1 < COLUMNS && row + 1 < ROWS {
+            join(at(column, row), at(column + 1, row + 1), SHEAR);
+            join(at(column + 1, row), at(column, row + 1), SHEAR);
         }
     }
+    links
 }
 
-#[must_use]
-pub fn strip_angle(strip: usize) -> f32 {
-    let index = f32::from(u8::try_from(strip).unwrap_or(0));
-    (index + 0.5) * TAU / f32::from(u8::try_from(STRIPS).unwrap_or(1))
+fn springy(frequency: f32) -> f32 {
+    (TAU * frequency * STEP).powi(2)
 }
 
-fn joined(strip: usize) -> bool {
-    let left = |strip: usize| strip_angle(strip).cos() < 0.0;
-    left(strip) == left((strip + 1) % STRIPS)
+fn turn(from: Quat, to: Quat) -> Vec3 {
+    let change = from.inverse() * to;
+    let change = if change.w < 0.0 { -change } else { change };
+    change.to_scaled_axis()
+}
+
+fn basis(points: &[Vec3; PARTICLES], panel: usize, column: usize, row: usize) -> Mat3 {
+    let at = |column: usize, row: usize| points[particle(panel, column, row)];
+    let down = at(column, (row + 1).min(ROWS - 1)) - at(column, row.saturating_sub(1));
+    let across = at((column + 1).min(COLUMNS - 1), row) - at(column.saturating_sub(1), row);
+    let first = down.normalize_or(Vec3::NEG_Y);
+    let second = (across - first * across.dot(first)).normalize_or(Vec3::X);
+    Mat3::from_cols(first, second, first.cross(second))
 }
 
 fn nearest(from: Vec3, to: Vec3, other_from: Vec3, other_to: Vec3) -> f32 {
@@ -265,7 +479,7 @@ fn nearest(from: Vec3, to: Vec3, other_from: Vec3, other_to: Vec3) -> f32 {
     }
 }
 
-fn clear(point: Vec3, leg: &Capsule, center: Vec3) -> Vec3 {
+fn clear(point: Vec3, leg: &Capsule) -> Vec3 {
     let axis = leg.to - leg.from;
     let along = ((point - leg.from).dot(axis) / axis.length_squared().max(1e-9)).clamp(0.0, 1.0);
     let closest = leg.from + axis * along;
@@ -273,7 +487,7 @@ fn clear(point: Vec3, leg: &Capsule, center: Vec3) -> Vec3 {
     if point.distance_squared(closest) >= reach * reach {
         return point;
     }
-    let outward = Vec3::new(point.x - center.x, 0.0, point.z - center.z).normalize_or(Vec3::NEG_Z);
+    let outward = Vec3::new(point.x, 0.0, point.z).normalize_or(Vec3::NEG_Z);
     let direction = if along > 0.0 && along < 1.0 {
         axis.normalize_or_zero()
     } else {
@@ -287,22 +501,19 @@ fn clear(point: Vec3, leg: &Capsule, center: Vec3) -> Vec3 {
     }
     let half = offset.dot(push);
     let gap = offset.length_squared() - reach * reach;
-    let distance = (-half + (half * half - square * gap).max(0.0).sqrt()) / square;
-    point + outward * distance
+    point + outward * ((-half + (half * half - square * gap).max(0.0).sqrt()) / square)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Capsule, Cloth, Drape, STRIPS, strip_angle};
+    use super::{CLOTH_BONES, COLUMNS, Capsule, Cloth, Drape, PANELS, ROWS, bone, particle};
     use glam::{Mat4, Vec3};
-    use std::f32::consts::{FRAC_PI_2, PI};
 
     const COAT: Drape = Drape {
         top: 0.16,
         bottom: 0.28,
         length: 0.64,
         squash: 0.82,
-        knee: 0.45,
     };
     const FRAME: f32 = 1.0 / 60.0;
 
@@ -316,70 +527,188 @@ mod tests {
         }
     }
 
-    #[test]
-    fn strips_hang_around_the_waist_and_leave_the_front_and_back_open() {
-        let cloth = Cloth::hanging(COAT);
-        for strip in 0..STRIPS {
-            let [anchor, knee, hem] = cloth.rest()[strip];
-            assert!(anchor.y.abs() < 1e-6);
-            assert!((anchor.distance(knee) - COAT.length * COAT.knee).abs() < 1e-4);
-            assert!((knee.distance(hem) - COAT.length * (1.0 - COAT.knee)).abs() < 1e-4);
-            assert!(hem.y < -0.6 && Vec3::new(hem.x, 0.0, hem.z).length() > anchor.length());
-            let angle = strip_angle(strip);
-            assert!((angle - FRAC_PI_2).abs() > 0.2 && (angle + FRAC_PI_2).abs() > 0.2);
-            assert!((angle - 3.0 * FRAC_PI_2).abs() > 0.2);
-        }
+    fn hem(cloth: &Cloth) -> Vec3 {
+        let hems: Vec<Vec3> = (0..PANELS)
+            .flat_map(|panel| (0..COLUMNS).map(move |column| particle(panel, column, ROWS - 1)))
+            .map(|index| cloth.points()[index])
+            .collect();
+        hems.iter().sum::<Vec3>() / f32::from(u8::try_from(hems.len()).unwrap())
     }
 
-    #[test]
-    fn a_still_coat_settles_close_to_its_cut() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 180);
-        for strip in 0..STRIPS {
-            for point in 0..3 {
-                let rest = cloth.rest()[strip][point] + Vec3::Y;
-                assert!(cloth.points()[strip][point].distance(rest) < 0.03);
-            }
-        }
-    }
-
-    fn weight(weights: &[(usize, f32); 4], bone: usize) -> f32 {
+    fn weight(weights: &[(Option<usize>, f32); 4], slot: Option<usize>) -> f32 {
         weights
             .iter()
-            .filter(|(at, _)| *at == bone)
+            .filter(|(at, _)| *at == slot)
             .map(|(_, weight)| weight)
             .sum()
     }
 
     #[test]
-    fn a_point_high_on_a_strip_follows_its_upper_segment() {
+    fn the_panels_hang_from_the_waist_and_leave_the_front_and_back_open() {
         let cloth = Cloth::hanging(COAT);
-        let [anchor, knee, _] = cloth.rest()[3];
-        let weights = cloth.weights(anchor.lerp(knee, 0.3));
-        assert!(weight(&weights, 6) > 0.999);
+        for panel in 0..PANELS {
+            let side = if panel == 0 { 1.0 } else { -1.0 };
+            for column in 0..COLUMNS {
+                let anchor = cloth.rest()[particle(panel, column, 0)];
+                let lowest = cloth.rest()[particle(panel, column, ROWS - 1)];
+                assert!(anchor.y.abs() < 1e-6);
+                assert!(lowest.y < -0.6);
+                assert!((anchor.distance(lowest) - COAT.length).abs() < 1e-4);
+                for row in 0..ROWS {
+                    assert!(cloth.rest()[particle(panel, column, row)].x * side > 0.005);
+                }
+            }
+        }
     }
 
     #[test]
-    fn a_point_at_the_hem_follows_the_lower_segment() {
-        let cloth = Cloth::hanging(COAT);
-        let weights = cloth.weights(cloth.rest()[3][2]);
-        assert!(weight(&weights, 7) > 0.999);
+    fn a_coat_settles_close_to_its_cut() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 1);
+        for (settled, rest) in cloth.settled().iter().zip(cloth.rest()) {
+            assert!(settled.distance(*rest) < 0.04, "{settled} {rest}");
+        }
     }
 
     #[test]
-    fn a_point_between_joined_strips_shares_them() {
-        let cloth = Cloth::hanging(COAT);
-        let weights = cloth.weights(Vec3::new(-0.2, -0.1, 0.0));
-        assert!((weight(&weights, 6) - 0.5).abs() < 0.01);
-        assert!((weight(&weights, 8) - 0.5).abs() < 0.01);
+    fn a_still_coat_keeps_its_settled_shape() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 180);
+        for (point, settled) in cloth.points().iter().zip(cloth.settled()) {
+            assert!(point.distance(*settled) < 0.002, "{point} {settled}");
+        }
     }
 
     #[test]
-    fn a_point_beside_a_slit_keeps_to_its_own_side() {
+    fn a_coat_that_starts_moving_trails_behind() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 120);
+        let resting = hem(&cloth).z;
+        for frame in 1..=12_u8 {
+            cloth.update(
+                waist(Vec3::new(0.0, 1.0, -0.03 * f32::from(frame))),
+                &[],
+                FRAME,
+            );
+        }
+        let behind = hem(&cloth).z - resting;
+        assert!((0.01..0.2).contains(&behind), "{behind}");
+    }
+
+    #[test]
+    fn a_coat_moving_steadily_hangs_at_its_cut_again() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let resting = hem(&cloth);
+        for frame in 1..=180_u16 {
+            cloth.update(
+                waist(Vec3::new(0.0, 1.0, -0.03 * f32::from(frame))),
+                &[],
+                FRAME,
+            );
+        }
+        assert!(hem(&cloth).distance(resting) < 0.005);
+    }
+
+    fn walked(frames: &[f32], total: u16) -> Vec3 {
+        let mut cloth = Cloth::hanging(COAT);
+        cloth.update(waist(Vec3::Y), &[], 0.0);
+        let mut time = 0.0_f32;
+        for seconds in frames.iter().cycle().take(usize::from(total)) {
+            time += seconds;
+            cloth.update(waist(Vec3::new(0.0, 1.0, -1.8 * time)), &[], *seconds);
+        }
+        hem(&cloth)
+    }
+
+    #[test]
+    fn the_motion_does_not_depend_on_the_frame_rate() {
+        let steady = walked(&[1.0 / 60.0], 72);
+        let uneven = walked(&[1.0 / 40.0, 1.0 / 120.0], 72);
+        assert!(steady.distance(uneven) < 0.002, "{steady} {uneven}");
+    }
+
+    #[test]
+    fn a_long_frame_keeps_a_still_coat_calm() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 180);
+        let settled = *cloth.points();
+        cloth.update(waist(Vec3::Y), &[], 1.0);
+        for (point, was) in cloth.points().iter().zip(&settled) {
+            assert!(point.distance(*was) < 0.01, "{point} {was}");
+        }
+    }
+
+    #[test]
+    fn a_leg_that_overtakes_the_cloth_still_pushes_it_outward() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let index = particle(1, 3, ROWS - 1);
+        let lowest = cloth.points()[index];
+        let outward = Vec3::new(lowest.x, 0.0, lowest.z).normalize();
+        let axis = lowest + outward * 0.03;
+        let leg = Capsule {
+            from: axis + Vec3::Y * 1.3,
+            to: axis + Vec3::Y * 0.7,
+            radius: 0.08,
+        };
+        run(&mut cloth, Vec3::Y, &[leg], 2);
+        let moved = cloth.points()[index];
+        let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z).length();
+        assert!(flat(moved) > flat(axis) + 0.08, "{moved} {axis}");
+    }
+
+    #[test]
+    fn a_knee_between_two_rows_pushes_the_column_out() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let (upper, lower) = (particle(1, 5, 2), particle(1, 5, 3));
+        let middle = cloth.points()[upper].lerp(cloth.points()[lower], 0.5);
+        let outward = Vec3::new(middle.x, 0.0, middle.z).normalize();
+        let tip = middle + outward * 0.02;
+        let leg = Capsule {
+            from: Vec3::new(0.0, tip.y + 1.0, 0.0),
+            to: tip + Vec3::Y,
+            radius: 0.06,
+        };
+        run(&mut cloth, Vec3::Y, &[leg], 2);
+        let (from, to) = (cloth.points()[upper], cloth.points()[lower]);
+        let along = ((tip - from).dot(to - from) / (to - from).length_squared()).clamp(0.0, 1.0);
+        assert!(from.lerp(to, along).distance(tip) > 0.07);
+    }
+
+    #[test]
+    fn a_point_on_a_particle_follows_its_bone() {
         let cloth = Cloth::hanging(COAT);
-        for (x, z, bone) in [(-0.01, -0.13, 10), (0.01, -0.13, 12), (-0.01, 0.13, 4)] {
-            let weights = cloth.weights(Vec3::new(x, -0.1, z));
-            assert!(weight(&weights, bone) > 0.999, "{x} {z}");
+        let at = cloth.rest()[particle(1, 3, 2)];
+        assert!(weight(&cloth.weights(at), bone(1, 3, 2)) > 0.999);
+    }
+
+    #[test]
+    fn a_point_between_columns_shares_them() {
+        let cloth = Cloth::hanging(COAT);
+        let middle = cloth.rest()[particle(0, 2, 3)].lerp(cloth.rest()[particle(0, 3, 3)], 0.5);
+        let weights = cloth.weights(middle);
+        assert!((weight(&weights, bone(0, 2, 3)) - 0.5).abs() < 0.01);
+        assert!((weight(&weights, bone(0, 3, 3)) - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_point_beside_a_slit_keeps_to_its_own_panel() {
+        let cloth = Cloth::hanging(COAT);
+        let edges = [
+            (0.012, -0.2, 0, 0),
+            (-0.012, -0.2, 1, COLUMNS - 1),
+            (0.012, 0.2, 0, COLUMNS - 1),
+            (-0.012, 0.2, 1, 0),
+        ];
+        for (x, z, panel, column) in edges {
+            let weights = cloth.weights(Vec3::new(x, -0.6, z));
+            let allowed: Vec<Option<usize>> =
+                (0..ROWS).map(|row| bone(panel, column, row)).collect();
+            for (slot, share) in weights {
+                assert!(share < 1e-6 || allowed.contains(&slot), "{x} {z} {slot:?}");
+            }
         }
     }
 
@@ -393,98 +722,10 @@ mod tests {
             let weights = cloth.weights(point);
             let total: f32 = weights.iter().map(|(_, weight)| weight).sum();
             assert!((total - 1.0).abs() < 1e-5);
-            assert!(
-                weights
-                    .iter()
-                    .all(|(bone, weight)| *weight >= 0.0 && *bone < 16)
-            );
-        }
-    }
-
-    #[test]
-    fn a_long_frame_keeps_a_still_coat_calm() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 180);
-        let settled = *cloth.points();
-        cloth.update(waist(Vec3::Y), &[], 1.0);
-        for (strip, before) in cloth.points().iter().zip(&settled) {
-            for (point, was) in strip.iter().zip(before) {
-                assert!(point.distance(*was) < 0.01, "{point} {was}");
+            for (slot, share) in weights {
+                assert!(share >= 0.0 && slot.is_none_or(|slot| slot < CLOTH_BONES));
             }
         }
-    }
-
-    #[test]
-    fn a_coat_that_starts_moving_trails_behind() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 120);
-        for frame in 1..=12_u8 {
-            let at = Vec3::new(0.0, 1.0, -0.03 * f32::from(frame));
-            cloth.update(waist(at), &[], FRAME);
-        }
-        let behind = (0..STRIPS)
-            .map(|strip| cloth.points()[strip][2].z - (cloth.rest()[strip][2].z - 0.36))
-            .sum::<f32>()
-            / 8.0;
-        assert!((0.02..0.25).contains(&behind), "{behind}");
-    }
-
-    #[test]
-    fn a_leg_pushes_the_cloth_aside() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 60);
-        let hem = cloth.points()[3][1];
-        let leg = Capsule {
-            from: hem + Vec3::new(0.0, 0.3, 0.0),
-            to: hem - Vec3::new(0.0, 0.3, 0.0),
-            radius: 0.08,
-        };
-        run(&mut cloth, Vec3::Y, &[leg], 30);
-        for strip in 0..STRIPS {
-            for point in 1..3 {
-                let at = cloth.points()[strip][point];
-                let flat = Vec3::new(at.x - hem.x, 0.0, at.z - hem.z).length();
-                assert!(flat > 0.075 || (at.y - hem.y).abs() > 0.3);
-            }
-        }
-    }
-
-    #[test]
-    fn a_leg_that_overtakes_the_cloth_still_pushes_it_outward() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 60);
-        let hem = cloth.points()[3][2];
-        let outward = Vec3::new(hem.x, 0.0, hem.z).normalize();
-        let axis = hem + outward * 0.03;
-        let leg = Capsule {
-            from: axis + Vec3::Y * 0.3,
-            to: axis - Vec3::Y * 0.3,
-            radius: 0.08,
-        };
-        run(&mut cloth, Vec3::Y, &[leg], 1);
-        let moved = cloth.points()[3][2];
-        let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z).length();
-        assert!(flat(moved) > flat(axis) + 0.08, "{moved} {axis}");
-    }
-
-    #[test]
-    fn a_knee_between_two_strip_points_pushes_the_strip_out() {
-        let mut cloth = Cloth::hanging(COAT);
-        run(&mut cloth, Vec3::Y, &[], 60);
-        let [_, knee, hem] = cloth.points()[5];
-        let middle = knee.lerp(hem, 0.5);
-        let outward = Vec3::new(middle.x, 0.0, middle.z).normalize();
-        let tip = middle + outward * 0.02;
-        let leg = Capsule {
-            from: Vec3::new(0.0, tip.y, 0.0),
-            to: tip,
-            radius: 0.06,
-        };
-        run(&mut cloth, Vec3::Y, &[leg], 2);
-        let [_, knee, hem] = cloth.points()[5];
-        let along = ((tip - knee).dot(hem - knee) / (hem - knee).length_squared()).clamp(0.0, 1.0);
-        let passing = knee.lerp(hem, along);
-        assert!(passing.distance(tip) > 0.07, "{passing} {tip}");
     }
 
     #[test]
@@ -492,7 +733,7 @@ mod tests {
         let mut cloth = Cloth::hanging(COAT);
         let frame = Mat4::from_translation(Vec3::new(0.0, 0.98, 0.0));
         cloth.update(frame, &[], FRAME);
-        for matrix in cloth.skins(Mat4::IDENTITY, frame, frame) {
+        for matrix in cloth.skins(frame, frame) {
             assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-4));
         }
     }
@@ -502,32 +743,11 @@ mod tests {
         let mut cloth = Cloth::hanging(COAT);
         let frame = Mat4::from_translation(Vec3::new(0.0, 0.98, 0.0));
         cloth.update(frame, &[], FRAME);
-        cloth.points[0][2] += Vec3::new(0.0, 0.05, 0.25);
-        let skins = cloth.skins(Mat4::IDENTITY, frame, frame);
-        let rest_hem = frame.transform_point3(cloth.rest()[0][2]);
-        let skinned = skins[1].transform_point3(rest_hem);
-        assert!(skinned.z > rest_hem.z + 0.1);
-        let knee = frame.transform_point3(cloth.rest()[0][1]);
-        assert!(
-            skins[1]
-                .transform_point3(knee)
-                .distance(cloth.points()[0][1])
-                < 1e-4
-        );
-    }
-
-    #[test]
-    fn the_strips_keep_their_lengths_while_swinging() {
-        let mut cloth = Cloth::hanging(COAT);
-        for frame in 0..240_u16 {
-            let sway = (f32::from(frame) * 0.15).sin() * 0.2;
-            cloth.update(waist(Vec3::new(sway, 1.0, 0.0)), &[], FRAME);
-        }
-        for strip in 0..STRIPS {
-            let [anchor, knee, hem] = cloth.points()[strip];
-            assert!((anchor.distance(knee) - COAT.length * COAT.knee).abs() < 0.01);
-            assert!((knee.distance(hem) - COAT.length * (1.0 - COAT.knee)).abs() < 0.01);
-        }
-        let _ = PI;
+        let index = particle(0, 3, ROWS - 1);
+        cloth.points[index] += Vec3::new(0.0, 0.05, 0.25);
+        let skins = cloth.skins(frame, frame);
+        let rest = frame.transform_point3(cloth.settled()[index]);
+        let moved = skins[bone(0, 3, ROWS - 1).unwrap()].transform_point3(rest);
+        assert!(moved.distance(frame.transform_point3(cloth.points()[index])) < 1e-4);
     }
 }
