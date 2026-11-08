@@ -119,8 +119,8 @@ void main() {
     float lamp = fade * fade * max(dot(facing, toward_lantern), 0.0) * inversesqrt(near + 0.0001);
     vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
     vec3 lit = tinted * (sun * diffuse + ambient + lantern_light * lamp) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
-    vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), params.y);
+    vec3 shaded = mix(mix(lit, albedo * 2.5, min(params.y, 1.0)), fog_color, fog);
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), params.y / 3.0);
 }
 ";
 
@@ -186,6 +186,7 @@ impl Uniforms {
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::detail::{DETAIL_SIZE, Detail, paint};
+    use crate::shader::GLOW_RANGE;
     use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
     use glam::{Mat4, Vec3, Vec3Swizzles, Vec4};
@@ -516,8 +517,11 @@ mod tests {
     }
 
     #[test]
-    fn the_glow_marks_the_alpha_for_the_bloom() {
-        assert!(FRAGMENT.contains("vec4(pow(filmic(shaded), vec3(0.4545)), params.y);"));
+    fn the_glow_marks_the_alpha_for_the_bloom_within_its_range() {
+        assert!(FRAGMENT.contains(&format!(
+            "vec4(pow(filmic(shaded), vec3(0.4545)), params.y / {GLOW_RANGE:?});"
+        )));
+        assert!(FRAGMENT.contains("mix(lit, albedo * 2.5, min(params.y, 1.0))"));
     }
 
     #[test]

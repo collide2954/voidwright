@@ -70,6 +70,11 @@ impl Material {
     pub const fn textured(self, surface: Surface) -> Self {
         Self { surface, ..self }
     }
+
+    #[must_use]
+    pub const fn glowing(self, glow: f32) -> Self {
+        Self { glow, ..self }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -557,5 +562,12 @@ mod tests {
     fn lights_glow_and_paint_does_not() {
         assert!((Material::light(Vec3::ONE).glow - 1.0).abs() < 1e-6);
         assert!(PAINT.glow.abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_light_can_glow_brighter() {
+        let bright = Material::light(Vec3::ONE).glowing(3.0);
+        assert!((bright.glow - 3.0).abs() < 1e-6);
+        assert_eq!(bright.color, Vec3::ONE);
     }
 }

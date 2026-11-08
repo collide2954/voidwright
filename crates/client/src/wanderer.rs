@@ -9,6 +9,7 @@ use crate::figure::{
 };
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
+use crate::shader::GLOW_RANGE;
 use crate::shape::{Material, Surface};
 use crate::sky::noise3;
 use crate::spline::smoothstep;
@@ -31,8 +32,8 @@ const MASK: Material =
     Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.55).textured(Surface::Brushed);
 const BRASS: Material =
     Material::matte(Vec3::new(0.55, 0.42, 0.22), 0.7).textured(Surface::Brushed);
-const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85));
-const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25));
+const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85)).glowing(GLOW_RANGE);
+const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25)).glowing(GLOW_RANGE);
 const DUST: Vec3 = Vec3::new(0.42, 0.36, 0.28);
 
 fn weather(mesh: &mut SkinnedMesh) {
@@ -1093,6 +1094,36 @@ mod tests {
 
     fn glows(vertex: &SkinnedVertex) -> bool {
         vertex.params[1] > 0.99
+    }
+
+    #[test]
+    fn the_visor_armband_and_lantern_glow_at_the_full_range() {
+        let brightest = |teal: bool| {
+            FIGURE
+                .vertices
+                .iter()
+                .filter(|vertex| glows(vertex))
+                .filter(|vertex| {
+                    if teal {
+                        vertex.color[0] < 0.2
+                    } else {
+                        vertex.color[2] < 0.2
+                    }
+                })
+                .map(|vertex| vertex.params[1])
+                .fold(0.0_f32, f32::max)
+        };
+        let range = crate::shader::GLOW_RANGE;
+        assert!(
+            (brightest(true) - range).abs() < 0.05,
+            "{}",
+            brightest(true)
+        );
+        assert!(
+            (brightest(false) - range).abs() < 0.05,
+            "{}",
+            brightest(false)
+        );
     }
 
     fn swatch(count: u16, height: f32, glow: f32) -> Vec<SkinnedVertex> {

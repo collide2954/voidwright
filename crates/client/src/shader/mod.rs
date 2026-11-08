@@ -5,3 +5,5 @@ pub mod particles;
 pub mod post;
 pub mod skinned;
 pub mod sky;
+
+pub const GLOW_RANGE: f32 = 3.0;

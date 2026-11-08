@@ -76,7 +76,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | --- | --- |
 | Art direction | Cinematic and grounded: believable materials and wear, film-like light, soft sun shadows, glow on lights, and deep atmosphere. |
 | Palette | Moss, soil, and rock have natural, muted colors. Neon colors are only for lights, visors, crystals, and the nebula: deep indigo void, magenta and teal clouds, and amber starlight. |
-| Effects | Subtle bloom: soft halos on true lights only. Warm light pools under lamps and a soft contact shadow under each figure. Teal spores rise from the moss, pale motes drift in the void, and embers float near the lantern. The GPU moves all particles. A light vignette and fine grain finish the image. |
+| Effects | Soft bloom: halos on true lights only. The visor, the armband, and the lantern of the wanderer glow three times as strong as other lights, so their halos are visible. Warm light pools under lamps and a soft contact shadow under each figure. Teal spores rise from the moss, pale motes drift in the void, and embers float near the lantern. The GPU moves all particles. A light vignette and fine grain finish the image. |
 | Living motion | The lantern swings on its rod when the wanderer moves, turns, or stops. The coat skirt, the scarf tail, and the point of the hood move after the body and then settle. Dust puffs rise at each footstep. |
 | Ground and sky detail | Moss tufts and small glowing plants grow on the islands. Stars twinkle, the nebula drifts slowly, and thin mist falls from the island edges. |
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |

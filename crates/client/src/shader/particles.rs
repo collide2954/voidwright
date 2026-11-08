@@ -78,7 +78,7 @@ vec3 filmic(vec3 x) {
 void main() {
     float falloff = max(1.0 - dot(spot, spot), 0.0);
     vec3 shaded = mix(glow, fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0) * falloff * falloff * strength;
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0 / 3.0) * falloff * falloff * strength;
 }
 ";
 
@@ -181,6 +181,7 @@ mod tests {
     use crate::OrbitCamera;
     use crate::palette::{VOID, linear};
     use crate::particles::{Anchors, SWARMS, SpeckVertex};
+    use crate::shader::GLOW_RANGE;
     use glam::{Mat4, Vec3};
     use miniquad::{BlendFactor, BlendState, Comparison, Equation, UniformDesc, UniformType};
 
@@ -320,7 +321,7 @@ mod tests {
     #[test]
     fn each_speck_marks_its_own_light_in_the_alpha() {
         assert!(FRAGMENT.contains(
-            "gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0) * falloff * falloff * strength;"
+            &format!("gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0 / {GLOW_RANGE:?}) * falloff * falloff * strength;")
         ));
     }
 

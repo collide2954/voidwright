@@ -128,7 +128,7 @@ void main() {
         }
     }
     vec3 color = sum.rgb / max(sum.a, 0.001);
-    gl_FragColor = vec4(unfilmic(pow(color, vec3(2.2))) * sum.a / 16.0, 1.0);
+    gl_FragColor = vec4(unfilmic(pow(color, vec3(2.2))) * sum.a * 3.0 / 16.0, 1.0);
 }
 ";
 
@@ -161,7 +161,7 @@ void main() {
     mod tests {
         use super::super::mirror::{FILMIC, declared, filmic, unfilmic};
         use super::{FRAGMENT, Uniforms, meta};
-        use crate::shader::{baked, particles, skinned};
+        use crate::shader::{GLOW_RANGE, baked, particles, skinned};
         use glam::{Vec2, Vec3, Vec4};
 
         fn taps(fragment: Vec2) -> [Vec2; 16] {
@@ -179,7 +179,7 @@ void main() {
                 .map(|&(color, glow)| (color * glow).extend(glow))
                 .sum();
             let color = sum.truncate() / sum.w.max(0.001);
-            color.powf(2.2).map(unfilmic) * sum.w / 16.0
+            color.powf(2.2).map(unfilmic) * sum.w * GLOW_RANGE / 16.0
         }
 
         #[test]
@@ -250,15 +250,20 @@ void main() {
         fn only_glowing_pixels_feed_the_bloom() {
             assert!(FRAGMENT.contains("sum += vec4(tap.rgb * tap.a, tap.a);"));
             assert!(FRAGMENT.contains("vec3 color = sum.rgb / max(sum.a, 0.001);"));
-            assert!(FRAGMENT.contains("unfilmic(pow(color, vec3(2.2))) * sum.a / 16.0"));
+            assert!(FRAGMENT.contains(&format!(
+                "unfilmic(pow(color, vec3(2.2))) * sum.a * {GLOW_RANGE:?} / 16.0"
+            )));
             let sunlit = (Vec3::ONE, 0.0);
             assert_eq!(prefilter(&[sunlit; 16]), Vec3::ZERO);
             let teal = Vec3::new(0.3, 1.0, 0.85) * 2.5;
             let shown = teal.map(filmic).powf(0.4545);
             let mut block = [sunlit; 16];
-            block[..8].fill((shown, 1.0));
+            block[..8].fill((shown, 1.0 / GLOW_RANGE));
             let light = prefilter(&block);
             assert!(light.distance(teal * 0.5) < 0.01, "{light}");
+            block[..8].fill((shown, 1.0));
+            let bright = prefilter(&block);
+            assert!(bright.distance(teal * 0.5 * GLOW_RANGE) < 0.03, "{bright}");
         }
     }
 }

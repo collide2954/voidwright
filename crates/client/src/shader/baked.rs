@@ -101,7 +101,7 @@ vec3 pool() {
 }
 void main() {
     vec3 shaded = mix(mix(color * (sunlight() + pool()), TEAL * 2.5, ring()), fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), ring());
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), ring() / 3.0);
 }
 ";
 
@@ -194,6 +194,7 @@ impl Uniforms {
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::particles::LANTERN;
+    use crate::shader::GLOW_RANGE;
     use crate::shadow::{DIGITS, MAP_SIZE};
     use crate::{Lamp, VAEL, smoothstep};
     use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -494,7 +495,9 @@ mod tests {
 
     #[test]
     fn only_the_marker_ring_marks_the_alpha_for_the_bloom() {
-        assert!(FRAGMENT.contains("vec4(pow(filmic(shaded), vec3(0.4545)), ring());"));
+        assert!(FRAGMENT.contains(&format!(
+            "vec4(pow(filmic(shaded), vec3(0.4545)), ring() / {GLOW_RANGE:?});"
+        )));
         assert!(FRAGMENT.contains("const float SOFT = 0.02;"));
         let marker = Vec4::new(3.0, 1.0, -2.0, 1.0);
         assert!(ring(Vec3::new(3.31, 1.0, -2.0), marker) > 0.99);
