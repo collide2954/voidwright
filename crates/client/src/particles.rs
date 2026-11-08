@@ -1,7 +1,8 @@
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use voidwright_core::Rng;
 
-use crate::{BONES, Bone};
+use crate::game::ISLAND_RADIUS;
+use crate::{BONES, Bone, Game, placement, skin, to_world};
 
 pub const LANTERN: Vec3 = Vec3::new(0.15, 1.456, 0.284);
 const SEED: u64 = 0x5350_4543_4b53;
@@ -20,6 +21,22 @@ pub struct Anchors {
     pub lantern: Vec3,
     pub island: Vec3,
     pub shore: f32,
+}
+
+impl Anchors {
+    #[must_use]
+    pub fn of(game: &Game) -> Self {
+        let player = game.player_position();
+        let stride = game.stride();
+        let map = game.world().map();
+        let middle = Vec2::new(f32::from(map.width()), f32::from(map.height())) / 2.0;
+        Self {
+            player,
+            lantern: lantern(placement(player, stride), &skin(&stride.pose(game.time()))),
+            island: to_world(middle, 0.0),
+            shore: f32::from(ISLAND_RADIUS),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,7 +71,7 @@ pub const SPORES: Swarm = Swarm {
     span: Vec3::new(16.0, 1.95, 16.0),
     drift: Vec3::new(0.02, 0.12, 0.01),
     sway: Vec2::new(0.25, 0.6),
-    size: 0.03,
+    size: 0.04,
     color: Vec3::new(0.1, 1.3, 0.9),
     twinkle: Vec2::new(0.8, 1.0),
     ashore: true,
@@ -66,7 +83,7 @@ pub const MOTES: Swarm = Swarm {
     span: Vec3::new(50.0, 20.0, 50.0),
     drift: Vec3::new(0.05, 0.015, -0.03),
     sway: Vec2::new(0.3, 0.25),
-    size: 0.014,
+    size: 0.016,
     color: Vec3::new(0.3, 0.33, 0.45),
     twinkle: Vec2::new(0.4, 0.5),
     ashore: false,
@@ -74,13 +91,13 @@ pub const MOTES: Swarm = Swarm {
 pub const EMBERS: Swarm = Swarm {
     count: 6,
     anchor: Anchor::Lantern,
-    lift: 0.12,
-    span: Vec3::new(0.2, 0.36, 0.2),
+    lift: 0.15,
+    span: Vec3::new(0.3, 0.45, 0.3),
     drift: Vec3::new(0.013, 0.09, -0.007),
-    sway: Vec2::new(0.025, 2.5),
-    size: 0.01,
-    color: Vec3::new(2.4, 0.6, 0.06),
-    twinkle: Vec2::new(11.0, 0.8),
+    sway: Vec2::new(0.035, 2.5),
+    size: 0.016,
+    color: Vec3::new(2.4, 0.22, 0.016),
+    twinkle: Vec2::new(11.0, 0.55),
     ashore: false,
 };
 pub const SWARMS: [Swarm; 3] = [SPORES, MOTES, EMBERS];
@@ -143,10 +160,10 @@ mod tests {
     use super::{
         Anchor, Anchors, EMBERS, LANTERN, MOTES, SPORES, SWARMS, Swarm, lantern, seeds, specks,
     };
-    use crate::{Pose, skin, voidwright};
-    use glam::{Mat4, Vec3, Vec4};
+    use crate::{Game, Pose, placement, skin, to_ground, voidwright};
+    use glam::{Mat4, Vec2, Vec3, Vec4};
     use std::f32::consts::FRAC_PI_2;
-    use voidwright_core::Rng;
+    use voidwright_core::{Rng, TICK, Tile};
 
     fn total() -> usize {
         SWARMS.iter().map(|swarm| swarm.count).sum()
@@ -386,5 +403,34 @@ mod tests {
         };
         let at = lantern(Mat4::IDENTITY, &skin(&leaning));
         assert!(at.z < LANTERN.z - 0.1, "{at}");
+    }
+
+    #[test]
+    fn the_anchors_follow_the_player_and_the_lantern() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 3, start.y + 1));
+        for _ in 0..40 {
+            game.update(TICK / 20);
+        }
+        let anchors = Anchors::of(&game);
+        assert_eq!(anchors.player, game.player_position());
+        let stride = game.stride();
+        let expected = lantern(
+            placement(game.player_position(), stride),
+            &skin(&stride.pose(game.time())),
+        );
+        assert!(anchors.lantern.distance(expected) < 1e-5);
+        let lift = anchors.lantern - anchors.player;
+        assert!((1.3..1.6).contains(&lift.y) && Vec2::new(lift.x, lift.z).length() < 0.5);
+    }
+
+    #[test]
+    fn the_island_anchor_marks_the_middle_of_the_island() {
+        let game = Game::new(3);
+        let anchors = Anchors::of(&game);
+        let spawn = to_ground(game.player_position());
+        assert!(to_ground(anchors.island).distance(spawn) < 1e-5);
+        assert!((anchors.shore - 20.0).abs() < 1e-6);
     }
 }

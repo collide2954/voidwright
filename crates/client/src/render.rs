@@ -7,7 +7,8 @@ use miniquad::{
 };
 
 use crate::detail::{DETAIL_SIZE, paint};
-use crate::shader::{baked, caster, skinned};
+use crate::particles::{Anchors, specks};
+use crate::shader::{baked, caster, particles, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
     BONES, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin,
@@ -45,9 +46,11 @@ pub struct Renderer {
     skinned: Pipeline,
     caster: Pipeline,
     shadow: RenderPass,
+    particles: Pipeline,
     sky: Model,
     terrain: Model,
     avatar: Model,
+    specks: Model,
 }
 
 impl Renderer {
@@ -119,15 +122,26 @@ impl Renderer {
         avatar.bindings.images = [&detail.height, &detail.slope_u, &detail.slope_v]
             .map(|bytes| detail_texture(context, bytes))
             .to_vec();
+        let particles = pipeline(
+            context,
+            [particles::VERTEX, particles::FRAGMENT],
+            particles::meta(),
+            &particles::attributes(),
+            particles::params(),
+        );
+        let swarms = specks();
+        let specks = upload(context, &swarms.vertices, &swarms.indices);
         Self {
             backdrop,
             baked,
             skinned,
             caster,
             shadow,
+            particles,
             sky,
             terrain,
             avatar,
+            specks,
         }
     }
 
@@ -224,6 +238,16 @@ impl Renderer {
             &VAEL,
         )));
         context.draw(0, self.avatar.count, 1);
+        context.apply_pipeline(&self.particles);
+        context.apply_bindings(&self.specks.bindings);
+        context.apply_uniforms(UniformsSource::table(&particles::Uniforms::new(
+            view_projection,
+            camera.view(),
+            camera.eye(),
+            &Anchors::of(game),
+            game.time(),
+        )));
+        context.draw(0, self.specks.count, 1);
     }
 }
 

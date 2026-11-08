@@ -50,13 +50,13 @@ void main() {
     float beat = rhythm.y * pace * time + phase;
     float pulse = 0.5 + 0.25 * (sin(beat) + sin(2.7 * beat + phase));
     float away = length(place - eye);
-    float size = max(tint.w, 0.0015 * away);
+    float size = max(tint.w, 0.0022 * away);
     strength = smoothstep(0.0, 0.2, life) * (1.0 - smoothstep(0.5, 1.0, life))
         * (1.0 - smoothstep(0.7, 1.0, reach))
         * (1.0 - rhythm.w * shore)
         * mix(1.0, pulse, rhythm.z)
         * smoothstep(0.3, 1.2, away)
-        * (tint.w / size) * (tint.w / size);
+        * tint.w / size;
     vec2 corner = vec2(mod(in_corner, 2.0), floor(0.5 * in_corner)) * 2.0 - 1.0;
     spot = corner;
     glow = tint.rgb;

@@ -6,7 +6,7 @@ use voidwright_core::{Island, TICK, Tile, World};
 use crate::ground::Ground;
 use crate::{OrbitCamera, Stride, Ticker, center, pick, position, to_ground, to_world};
 
-const ISLAND_RADIUS: u8 = 20;
+pub(crate) const ISLAND_RADIUS: u8 = 20;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 
 #[derive(Clone, Debug)]
