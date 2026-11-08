@@ -81,7 +81,8 @@ fn woven(at: Vec2) -> f32 {
 
 fn slub(across: f32, threads: i32, along: f32, seed: u32) -> f32 {
     let line = (across * 16.0).floor() / 16.0;
-    0.85 + 0.3 * noise(Vec2::new(line, along), IVec2::new(threads, 6), seed)
+    let thickness = noise(Vec2::new(line, 0.0), IVec2::new(threads, 1), seed + 50);
+    0.6 + 0.6 * noise(Vec2::new(line, along), IVec2::new(threads, 6), seed) + 0.3 * thickness
 }
 
 fn knitted(at: Vec2) -> f32 {
@@ -202,6 +203,20 @@ mod tests {
             .map(|index| step(channel, offset, (index % SIZE, index / SIZE)))
             .sum();
         total / f32::from(DETAIL_SIZE).powi(2)
+    }
+
+    #[test]
+    fn woven_threads_vary_in_thickness() {
+        let peaks: Vec<f32> = (0..256_u16)
+            .map(|cell| {
+                let middle = Vec2::new(f32::from(cell % 16), f32::from(cell / 16)) + 0.5;
+                woven(middle / 16.0)
+            })
+            .collect();
+        let mean = peaks.iter().sum::<f32>() / 256.0;
+        let deviation =
+            (peaks.iter().map(|peak| (peak - mean).powi(2)).sum::<f32>() / 256.0).sqrt();
+        assert!(deviation / mean > 0.12, "{}", deviation / mean);
     }
 
     #[test]
