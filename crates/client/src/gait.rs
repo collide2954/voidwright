@@ -353,6 +353,16 @@ mod tests {
     }
 
     #[test]
+    fn the_running_heel_lands_on_the_ground() {
+        for (bone, lag) in FEET {
+            let (_, [[heel, _], _]) = strides(1.0, bone, lag)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .unwrap();
+            assert!(heel.y.abs() < 0.005, "{bone:?}: {}", heel.y);
+        }
+    }
+
+    #[test]
     fn the_swinging_knee_eases_into_heel_strike() {
         for pace in [0.0, 1.0] {
             let knee = |sample: u16| {
