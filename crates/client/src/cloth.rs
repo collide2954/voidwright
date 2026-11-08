@@ -2,12 +2,13 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{Mat3, Mat4, Quat, Vec3};
 
+use crate::field::squash;
+
 pub const COLUMNS: usize = 7;
 pub const ROWS: usize = 5;
 pub const PANELS: usize = 2;
 pub const PARTICLES: usize = PANELS * COLUMNS * ROWS;
 pub const CLOTH_BONES: usize = PANELS * COLUMNS * (ROWS - 1);
-const DEPTHS: [f32; ROWS] = [0.0, 0.2, 0.45, 0.72, 1.0];
 const SLACK: [f32; ROWS] = [0.0, 0.05, 0.1, 0.16, 0.22];
 const EDGE: f32 = 0.05;
 const STEP: f32 = 1.0 / 240.0;
@@ -65,13 +66,7 @@ impl Capsule {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Drape {
-    pub top: f32,
-    pub bottom: f32,
-    pub length: f32,
-    pub squash: f32,
-}
+pub type Drape = [Vec3; ROWS];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Frame {
@@ -126,7 +121,7 @@ struct Layout<const N: usize> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fabric<const N: usize> {
     feel: Feel,
-    squash: f32,
+    profile: Vec<Vec3>,
     layout: Layout<N>,
     rest: [Vec3; N],
     settled: [Vec3; N],
@@ -186,16 +181,9 @@ impl Cloth {
         };
         for (panel, column, row) in cells() {
             let (sin, cos) = angle(panel, count(column)).sin_cos();
-            let around = |radius: f32| Vec3::new(radius * cos, 0.0, radius * drape.squash * sin);
-            let anchor = around(drape.top);
-            let flare = around(drape.bottom) - anchor;
-            let drop = (drape.length * drape.length - flare.length_squared())
-                .max(0.0)
-                .sqrt();
-            let hem = anchor + flare - Vec3::Y * drop;
             let index = particle(panel, column, row);
             let at = |column: usize, row: usize| particle(panel, column, row);
-            rest[index] = anchor.lerp(hem, DEPTHS[row]);
+            rest[index] = drape[row] * Vec3::new(cos, 1.0, sin);
             layout.pinned[index] = row == 0;
             layout.tether[index] = at(column, 0);
             layout.slack[index] = SLACK[row];
@@ -220,7 +208,7 @@ impl Cloth {
             .collect();
         Self::new(
             COAT_FEEL,
-            drape.squash,
+            drape.to_vec(),
             layout,
             rest,
             grid_links(&rest),
@@ -232,7 +220,7 @@ impl Cloth {
     pub fn weights(&self, point: Vec3) -> [(Option<usize>, f32); 4] {
         let panel = usize::from(point.x < 0.0);
         let start = if panel == 0 { -FRAC_PI_2 } else { FRAC_PI_2 };
-        let turn = (point.z / self.squash).atan2(point.x);
+        let turn = (point.z / squash(&self.profile, point.y)).atan2(point.x);
         let turn = if panel == 0 {
             turn
         } else {
@@ -245,13 +233,12 @@ impl Cloth {
             .find(|&column| count(column) <= place)
             .unwrap_or(0);
         let across = place - count(column);
-        let hem = -self.rest[particle(panel, column, ROWS - 1)].y;
-        let depth = (-point.y / hem).clamp(0.0, 1.0);
+        let height = |row: usize| self.profile[row].y;
         let row = (0..ROWS - 1)
             .rev()
-            .find(|&row| DEPTHS[row] <= depth)
+            .find(|&row| height(row) >= point.y)
             .unwrap_or(0);
-        let down = ((depth - DEPTHS[row]) / (DEPTHS[row + 1] - DEPTHS[row])).clamp(0.0, 1.0);
+        let down = ((height(row) - point.y) / (height(row) - height(row + 1))).clamp(0.0, 1.0);
         [
             (bone(panel, column, row), (1.0 - across) * (1.0 - down)),
             (bone(panel, column + 1, row), across * (1.0 - down)),
@@ -282,7 +269,7 @@ impl<const N: usize> Fabric<N> {
             })
             .collect();
         let edges = (1..N).map(|index| (index - 1, index)).collect();
-        Self::new(feel, 1.0, layout, rest, links, edges)
+        Self::new(feel, Vec::new(), layout, rest, links, edges)
     }
 
     #[must_use]
@@ -307,7 +294,7 @@ impl<const N: usize> Fabric<N> {
 
     fn new(
         feel: Feel,
-        squash: f32,
+        profile: Vec<Vec3>,
         layout: Layout<N>,
         rest: [Vec3; N],
         links: Vec<Link>,
@@ -315,7 +302,7 @@ impl<const N: usize> Fabric<N> {
     ) -> Self {
         Self {
             feel,
-            squash,
+            profile,
             layout,
             rest,
             settled: rest,
@@ -651,9 +638,10 @@ fn clear(point: Vec3, leg: &Capsule) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CLOTH_BONES, COLUMNS, Capsule, Cloth, Drape, Fabric, Feel, PANELS, ROWS, bone, particle,
+        CLOTH_BONES, COLUMNS, Capsule, Cloth, Drape, Fabric, Feel, PANELS, ROWS, bone, cells,
+        particle,
     };
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Vec2, Vec3};
 
     const TAIL: Feel = Feel {
         drive: 1.0,
@@ -769,12 +757,13 @@ mod tests {
         assert!((end[1].1 - 1.0).abs() < 1e-4);
     }
 
-    const COAT: Drape = Drape {
-        top: 0.16,
-        bottom: 0.28,
-        length: 0.64,
-        squash: 0.82,
-    };
+    const COAT: Drape = [
+        Vec3::new(0.16, 0.0, 0.1312),
+        Vec3::new(0.184, -0.126, 0.1509),
+        Vec3::new(0.214, -0.2835, 0.1755),
+        Vec3::new(0.2464, -0.4536, 0.202),
+        Vec3::new(0.28, -0.63, 0.2296),
+    ];
     const FRAME: f32 = 1.0 / 60.0;
 
     fn waist(at: Vec3) -> Mat4 {
@@ -813,12 +802,39 @@ mod tests {
                 let lowest = cloth.rest()[particle(panel, column, ROWS - 1)];
                 assert!(anchor.y.abs() < 1e-6);
                 assert!(lowest.y < -0.6);
-                assert!((anchor.distance(lowest) - COAT.length).abs() < 1e-4);
+                assert!((lowest.y - COAT[ROWS - 1].y).abs() < 1e-6);
                 for row in 0..ROWS {
                     assert!(cloth.rest()[particle(panel, column, row)].x * side > 0.005);
                 }
             }
         }
+    }
+
+    #[test]
+    fn each_row_follows_the_oval_and_the_height_of_the_cut() {
+        let cut: Drape = [
+            Vec3::new(0.14, 0.0, 0.1),
+            Vec3::new(0.21, -0.09, 0.13),
+            Vec3::new(0.21, -0.25, 0.15),
+            Vec3::new(0.25, -0.45, 0.2),
+            Vec3::new(0.29, -0.62, 0.25),
+        ];
+        let cloth = Cloth::hanging(cut);
+        for (panel, column, row) in cells() {
+            let point = cloth.rest()[particle(panel, column, row)];
+            let around = Vec2::new(point.x / cut[row].x, point.z / cut[row].z).length();
+            assert!((around - 1.0).abs() < 1e-5, "{row} {point}");
+            assert!((point.y - cut[row].y).abs() < 1e-6);
+            let weights = cloth.weights(point);
+            assert!(
+                weight(&weights, bone(panel, column, row)) > 0.999,
+                "{row} {point}"
+            );
+        }
+        let between = cloth.rest()[particle(0, 2, 1)].lerp(cloth.rest()[particle(0, 2, 2)], 0.25);
+        let weights = cloth.weights(between);
+        assert!((weight(&weights, bone(0, 2, 1)) - 0.75).abs() < 0.01);
+        assert!((weight(&weights, bone(0, 2, 2)) - 0.25).abs() < 0.01);
     }
 
     #[test]

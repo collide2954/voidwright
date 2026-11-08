@@ -15,6 +15,8 @@ use crate::sky::noise3;
 use crate::spline::smoothstep;
 
 const COWL_REACH: [f32; 2] = [0.05, 0.09];
+const HIP_DROP: f32 = 0.03;
+const BRACER: [Vec3; 2] = [Vec3::new(0.048, 0.0, 0.048), Vec3::new(0.036, -0.09, 0.036)];
 const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06).textured(Surface::Woven);
 const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05).textured(Surface::Woven);
 const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05).textured(Surface::Woven);
@@ -401,10 +403,9 @@ const fn ring(radius: f32, thickness: f32) -> Form {
     Form::Ring { radius, thickness }
 }
 
-const fn tube(length: f32, radii: Vec2, thickness: f32, folds: Vec2) -> Form {
+const fn tube(profile: &'static [Vec3], thickness: f32, folds: Vec2) -> Form {
     Form::Drape {
-        length,
-        radii,
+        profile,
         thickness,
         folds,
     }
@@ -508,7 +509,12 @@ fn leg(clay: &mut Sculpt, side: Side) {
     let (thigh, shin) = (side.thigh(), side.shin());
     let trousers = Vec3::new(10.0, 16.0, 10.0);
     for (bone, form, at, blend) in [
-        (thigh, limb(THIGH, 0.088, 0.058), Vec3::ZERO, 0.03),
+        (
+            thigh,
+            limb(THIGH - HIP_DROP, 0.088, 0.058),
+            Vec3::new(0.0, -HIP_DROP, 0.0),
+            0.03,
+        ),
         (
             thigh,
             egg(0.06, 0.13, 0.05),
@@ -694,14 +700,12 @@ fn hand(side: Side) -> Sculpt {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let radii = Vec2::new(COAT_CUT.top, COAT_CUT.bottom);
-        let panel = tube(COAT_CUT.length, radii, 0.022, Vec2::new(9.0, 0.05));
+        let panel = tube(&COAT_CUT, 0.022, Vec2::new(9.0, 0.05));
         clay.add(
             stroke(Bone::Pelvis, panel, COAT)
                 .lined(LINING)
-                .at(Vec3::Y * COAT_TOP)
+                .at(COAT_TOP)
                 .turned(Quat::from_rotation_x(COAT_TILT))
-                .squashed(Vec3::new(1.0, 1.0, COAT_CUT.squash))
                 .clipped(Vec3::X * -side.sign(), -0.01)
                 .wrinkled(0.003, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
@@ -958,14 +962,7 @@ fn pauldron() -> Sculpt {
 fn bracer() -> Sculpt {
     let mut clay = clay();
     let arm = Bone::RightForearm;
-    clay.add(
-        stroke(
-            arm,
-            tube(0.09, Vec2::new(0.048, 0.036), 0.011, Vec2::ZERO),
-            PLATE,
-        )
-        .at(Vec3::new(0.0, -0.12, 0.0)),
-    );
+    clay.add(stroke(arm, tube(&BRACER, 0.011, Vec2::ZERO), PLATE).at(Vec3::new(0.0, -0.12, 0.0)));
     clay.part();
     clay.add(stroke(arm, ring(0.042, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.195, 0.0)));
     clay.part();
@@ -1997,6 +1994,47 @@ mod tests {
             }
         }
         assert!(deepest.0 > 0.0, "{deepest:?}");
+    }
+
+    #[test]
+    fn the_skirt_hugs_the_waist_and_clears_the_body_at_rest() {
+        let solids = [
+            super::body(),
+            super::hand(super::Side::Left),
+            super::hand(super::Side::Right),
+        ];
+        let inside = |point: Vec3| {
+            solids
+                .iter()
+                .map(|solid| solid.distance(point))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let closest = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| on_cloth(vertex) > 0.5)
+            .map(|vertex| (inside(Vec3::from(vertex.position)), vertex.position))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .expect("the figure has a skirt");
+        assert!(closest.0 > 0.002, "{closest:?}");
+        let garments = super::garments();
+        for step in 0..36_u16 {
+            let angle = (f32::from(step) * 10.0).to_radians();
+            let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+            if direction.z.abs() > 0.9 {
+                continue;
+            }
+            let ray = |reach: f32| Vec3::new(0.0, 0.95, 0.0) + direction * reach;
+            let mut reaches = (0..400_u16).map(|index| f32::from(index) * 0.001);
+            let cloth = reaches
+                .clone()
+                .find(|&reach| garments.distance(ray(reach)) < 0.0)
+                .expect("the skirt surrounds the waist");
+            let skin = reaches
+                .rfind(|&reach| reach < cloth && inside(ray(reach)) < 0.0)
+                .unwrap_or(0.0);
+            assert!(cloth - skin < 0.025, "{step} {skin} {cloth}");
+        }
     }
 
     #[test]

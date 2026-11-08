@@ -43,19 +43,63 @@ pub fn ring(point: Vec3, radius: f32, thickness: f32) -> f32 {
 }
 
 #[must_use]
-pub fn drape(point: Vec3, length: f32, radii: Vec2, thickness: f32, folds: Vec2) -> f32 {
-    let flat = unfold(point, length, folds);
-    let top = Vec2::new(radii.x, 0.0);
-    let side = Vec2::new(radii.y, -length) - top;
-    let along = ((flat - top).dot(side) / side.length_squared()).clamp(0.0, 1.0);
-    (flat - top - side * along).length() - thickness / 2.0
+pub fn drape(point: Vec3, profile: &[Vec3], thickness: f32, folds: Vec2) -> f32 {
+    let squash = squash(profile, point.y);
+    let scaled = Vec3::new(point.x, point.y, point.z / squash);
+    let flat = unfold(scaled, span(profile), folds);
+    let (gap, offset) = profile
+        .windows(2)
+        .map(|pair| {
+            let [from, to] = [pair[0].xy(), pair[1].xy()];
+            let side = to - from;
+            let along = ((flat - from).dot(side) / side.length_squared()).clamp(0.0, 1.0);
+            let offset = flat - from - side * along;
+            (offset.length(), offset)
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .unwrap_or((f32::INFINITY, Vec2::X));
+    let around = scaled.xz().normalize_or(Vec2::X);
+    let stretch = Vec2::new(around.x, around.y / squash).length();
+    let normal = offset.normalize_or(Vec2::X);
+    gap / Vec2::new(normal.x * stretch, normal.y).length() - thickness / 2.0
 }
 
 #[must_use]
-pub fn inside_drape(point: Vec3, length: f32, radii: Vec2, folds: Vec2) -> bool {
-    let flat = unfold(point, length, folds);
-    let down = (-flat.y / length).clamp(0.0, 1.0);
-    flat.x < radii.x + (radii.y - radii.x) * down
+pub fn inside_drape(point: Vec3, profile: &[Vec3], folds: Vec2) -> bool {
+    let squash = squash(profile, point.y);
+    let flat = unfold(
+        Vec3::new(point.x, point.y, point.z / squash),
+        span(profile),
+        folds,
+    );
+    flat.x < section(profile, flat.y).x
+}
+
+#[must_use]
+pub fn section(profile: &[Vec3], height: f32) -> Vec2 {
+    let (Some(top), Some(bottom)) = (profile.first(), profile.last()) else {
+        return Vec2::ONE;
+    };
+    if height >= top.y {
+        return top.xz();
+    }
+    profile
+        .windows(2)
+        .find(|pair| height >= pair[1].y)
+        .map_or(bottom.xz(), |pair| {
+            let share = (pair[0].y - height) / (pair[0].y - pair[1].y).max(f32::EPSILON);
+            pair[0].xz().lerp(pair[1].xz(), share)
+        })
+}
+
+#[must_use]
+pub fn squash(profile: &[Vec3], height: f32) -> f32 {
+    let section = section(profile, height);
+    section.y / section.x.max(f32::EPSILON)
+}
+
+fn span(profile: &[Vec3]) -> f32 {
+    profile.last().map_or(0.0, |bottom| -bottom.y)
 }
 
 fn unfold(point: Vec3, length: f32, folds: Vec2) -> Vec2 {
@@ -101,7 +145,9 @@ pub fn smooth_carve(base: f32, carved: f32, blend: f32) -> (f32, f32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
+    use super::{
+        ball, block, drape, egg, inside_drape, limb, ring, section, smooth_carve, smooth_union,
+    };
     use glam::{Vec2, Vec3};
     use std::f32::consts::TAU;
 
@@ -151,36 +197,75 @@ mod tests {
         assert!(near(ring(Vec3::ZERO, 0.3, 0.05), 0.25));
     }
 
+    const CONE: [Vec3; 2] = [Vec3::new(0.1, 0.0, 0.1), Vec3::new(0.2, -0.4, 0.2)];
+
     #[test]
     fn a_drape_is_a_thick_open_wall_around_its_axis() {
-        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::ZERO);
+        let folds = Vec2::ZERO;
         let middle = Vec3::new(0.0, -0.2, 0.0);
+        assert!(near(drape(Vec3::X * 0.1, &CONE, 0.04, folds), -0.02));
+        assert!(near(drape(middle, &CONE, 0.04, folds), 0.1255));
         assert!(near(
-            drape(Vec3::X * 0.1, length, radii, 0.04, folds),
-            -0.02
-        ));
-        assert!(near(drape(middle, length, radii, 0.04, folds), 0.1255));
-        assert!(near(
-            drape(Vec3::new(0.0, -0.4, 0.22), length, radii, 0.04, folds),
+            drape(Vec3::new(0.0, -0.4, 0.22), &CONE, 0.04, folds),
             0.0
         ));
-        assert!(inside_drape(middle, length, radii, folds));
-        assert!(!inside_drape(
-            Vec3::new(0.3, -0.2, 0.0),
-            length,
-            radii,
-            folds
-        ));
+        assert!(inside_drape(middle, &CONE, folds));
+        assert!(!inside_drape(Vec3::new(0.3, -0.2, 0.0), &CONE, folds));
+    }
+
+    #[test]
+    fn a_drape_follows_each_bend_of_its_profile() {
+        let profile = [
+            Vec3::new(0.1, 0.0, 0.1),
+            Vec3::new(0.2, -0.1, 0.2),
+            Vec3::new(0.2, -0.4, 0.2),
+        ];
+        let folds = Vec2::ZERO;
+        for height in [-0.1, -0.25, -0.4] {
+            let wall = Vec3::new(0.0, height, 0.2);
+            assert!(near(drape(wall, &profile, 0.04, folds), -0.02), "{height}");
+            assert!(inside_drape(wall - Vec3::Z * 0.03, &profile, folds));
+            assert!(!inside_drape(wall + Vec3::Z * 0.03, &profile, folds));
+        }
+        assert!(near(section(&profile, -0.05).x, 0.15));
+        assert!(near(section(&profile, 0.1).x, 0.1) && near(section(&profile, -0.5).x, 0.2));
+    }
+
+    #[test]
+    fn a_drape_wraps_an_oval_section_that_changes_with_height() {
+        let profile = [Vec3::new(0.15, 0.0, 0.1), Vec3::new(0.3, -0.6, 0.25)];
+        let folds = Vec2::ZERO;
+        for (height, side, back) in [(0.0, 0.15, 0.1), (-0.3, 0.225, 0.175), (-0.6, 0.3, 0.25)] {
+            assert!(near(
+                drape(Vec3::new(side, height, 0.0), &profile, 0.04, folds),
+                -0.02
+            ));
+            assert!(near(
+                drape(Vec3::new(0.0, height, back), &profile, 0.04, folds),
+                -0.02
+            ));
+            let outside = Vec3::new(0.0, height, back + 0.05);
+            assert!((drape(outside, &profile, 0.04, folds) - 0.03).abs() < 0.004);
+            assert!(inside_drape(
+                Vec3::new(0.0, height, back - 0.01),
+                &profile,
+                folds
+            ));
+            assert!(!inside_drape(
+                Vec3::new(0.0, height, back + 0.01),
+                &profile,
+                folds
+            ));
+        }
     }
 
     fn pushes(down: f32) -> Vec<f32> {
-        let (length, radii, folds) = (0.4, Vec2::new(0.1, 0.2), Vec2::new(9.0, 0.1));
+        let folds = Vec2::new(9.0, 0.1);
         (0..360)
             .map(|step| {
                 let angle = TAU * f32::from(u16::try_from(step).unwrap()) / 360.0;
                 let point = Vec3::new(angle.cos(), 0.0, angle.sin()) * 0.3 - Vec3::Y * down;
-                drape(point, length, radii, 0.0, Vec2::ZERO)
-                    - drape(point, length, radii, 0.0, folds)
+                drape(point, &CONE, 0.0, Vec2::ZERO) - drape(point, &CONE, 0.0, folds)
             })
             .collect()
     }

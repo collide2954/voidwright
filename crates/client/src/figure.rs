@@ -70,13 +70,14 @@ const LANTERN_FEEL: Feel = Feel {
 };
 const BEDROLL: [Vec3; 2] = [Vec3::new(0.13, 0.42, 0.17), Vec3::new(-0.13, 0.42, 0.17)];
 const BEDROLL_RADIUS: f32 = 0.042;
-pub const COAT_CUT: Drape = Drape {
-    top: 0.16,
-    bottom: 0.30,
-    length: 0.64,
-    squash: 1.0,
-};
-pub const COAT_TOP: f32 = 0.08;
+pub const COAT_CUT: Drape = [
+    Vec3::new(0.138, 0.0, 0.105),
+    Vec3::new(0.203, -0.094, 0.15),
+    Vec3::new(0.235, -0.281, 0.231),
+    Vec3::new(0.2608, -0.4496, 0.292),
+    Vec3::new(0.3, -0.6245, 0.3),
+];
+pub const COAT_TOP: Vec3 = Vec3::new(0.0, 0.08, 0.004);
 pub const COAT_TILT: f32 = 0.06;
 const THIGH_RADIUS: f32 = 0.075;
 const THIGH_START: f32 = 0.35;
@@ -169,7 +170,7 @@ pub const FINGER: f32 = 0.105;
 const SHOULDER: Vec2 = Vec2::new(0.185, 0.44);
 const TRUNK: f32 = 0.54;
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
-const ARM_SPLAY: f32 = 0.1;
+const ARM_SPLAY: f32 = 0.14;
 const HEAD_STEADY: f32 = 0.6;
 const HEAD_LEVEL: f32 = 0.85;
 const COUNTER_TWIST: f32 = 0.8;
@@ -252,7 +253,7 @@ pub fn skeleton(pose: &Pose) -> [Mat4; JOINTS] {
 
 #[must_use]
 pub fn waist(pelvis: Mat4) -> Mat4 {
-    pelvis * Mat4::from_translation(Vec3::Y * COAT_TOP) * Mat4::from_rotation_x(COAT_TILT)
+    pelvis * Mat4::from_translation(COAT_TOP) * Mat4::from_rotation_x(COAT_TILT)
 }
 
 #[must_use]

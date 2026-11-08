@@ -117,8 +117,7 @@ pub enum Form {
         thickness: f32,
     },
     Drape {
-        length: f32,
-        radii: Vec2,
+        profile: &'static [Vec3],
         thickness: f32,
         folds: Vec2,
     },
@@ -133,22 +132,16 @@ impl Form {
             Self::Block { half, rounding } => block(point, half, rounding),
             Self::Ring { radius, thickness } => ring(point, radius, thickness),
             Self::Drape {
-                length,
-                radii,
+                profile,
                 thickness,
                 folds,
-            } => drape(point, length, radii, thickness, folds),
+            } => drape(point, profile, thickness, folds),
         }
     }
 
     fn inside(self, point: Vec3) -> bool {
         match self {
-            Self::Drape {
-                length,
-                radii,
-                folds,
-                ..
-            } => inside_drape(point, length, radii, folds),
+            Self::Drape { profile, folds, .. } => inside_drape(point, profile, folds),
             _ => false,
         }
     }
@@ -164,15 +157,23 @@ impl Form {
             Self::Block { half, .. } => (Vec3::ZERO, half.length()),
             Self::Ring { radius, thickness } => (Vec3::ZERO, radius + thickness),
             Self::Drape {
-                length,
-                radii,
+                profile,
                 thickness,
                 folds,
-            } => (
-                Vec3::new(0.0, -length / 2.0, 0.0),
-                Vec2::new(length / 2.0, radii.max_element() * (1.0 + folds.y)).length()
-                    + thickness / 2.0,
-            ),
+            } => {
+                let heights = profile.iter().map(|point| point.y);
+                let low = heights.clone().fold(0.0, f32::min);
+                let high = heights.fold(0.0, f32::max);
+                let widest = profile
+                    .iter()
+                    .map(|point| point.x.max(point.z))
+                    .fold(0.0, f32::max);
+                (
+                    Vec3::new(0.0, f32::midpoint(low, high), 0.0),
+                    Vec2::new((high - low) / 2.0, widest * (1.0 + folds.y)).length()
+                        + thickness / 2.0,
+                )
+            }
         }
     }
 }
@@ -321,6 +322,18 @@ struct Part {
 }
 
 impl Part {
+    fn hold(&mut self, placed: &Placed) {
+        if !placed.stroke.carve {
+            let reach = Vec3::splat(placed.reach + placed.stroke.blend);
+            let (low, high) = self.bounds.unwrap_or((placed.center, placed.center));
+            self.bounds = Some((
+                low.min(placed.center - reach),
+                high.max(placed.center + reach),
+            ));
+        }
+        self.strokes.push(*placed);
+    }
+
     fn gap(&self, point: Vec3) -> f32 {
         self.bounds.map_or(FAR, |(low, high)| {
             (low - point).max(point - high).max(Vec3::ZERO).length()
@@ -409,19 +422,15 @@ impl Sculpt {
         let place =
             self.rest[stroke.bone] * Mat4::from_rotation_translation(stroke.turn, stroke.offset);
         let (center, reach) = stroke.bound();
-        let center = place.transform_point3(center);
-        let part = self.parts.last_mut().expect("a sculpt has a part");
-        if !stroke.carve {
-            let reach = Vec3::splat(reach + stroke.blend);
-            let (low, high) = part.bounds.unwrap_or((center, center));
-            part.bounds = Some((low.min(center - reach), high.max(center + reach)));
-        }
-        part.strokes.push(Placed {
-            stroke,
-            inverse: Affine3A::from_mat4(place).inverse(),
-            center,
-            reach,
-        });
+        self.parts
+            .last_mut()
+            .expect("a sculpt has a part")
+            .hold(&Placed {
+                stroke,
+                inverse: Affine3A::from_mat4(place).inverse(),
+                center: place.transform_point3(center),
+                reach,
+            });
     }
 
     pub fn part(&mut self) {
@@ -761,10 +770,11 @@ mod tests {
         Vec3::from(vertex.color).distance(linear(material.color)) < 1e-3
     }
 
+    const CONE: [Vec3; 2] = [Vec3::new(0.1, 0.0, 0.1), Vec3::new(0.2, -0.4, 0.2)];
+
     fn drape(depth: f32) -> Form {
         Form::Drape {
-            length: 0.4,
-            radii: Vec2::new(0.1, 0.2),
+            profile: &CONE,
             thickness: 0.04,
             folds: Vec2::new(8.0, depth),
         }
@@ -796,8 +806,7 @@ mod tests {
     fn a_thin_shell_keeps_its_normals_with_its_faces() {
         let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
         let shell = Form::Drape {
-            length: 0.4,
-            radii: Vec2::new(0.1, 0.2),
+            profile: &CONE,
             thickness: 0.025,
             folds: Vec2::ZERO,
         };
