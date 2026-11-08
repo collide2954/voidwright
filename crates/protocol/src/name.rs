@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::Error;
+use crate::wire::Cursor;
 
 pub const MAX_NAME: usize = 12;
 
@@ -23,6 +24,21 @@ impl Name {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub(crate) fn encode(&self, payload: &mut Vec<u8>) {
+        let length = u8::try_from(self.0.len()).unwrap_or(u8::MAX);
+        payload.push(length);
+        payload.extend_from_slice(self.0.as_bytes());
+    }
+
+    pub(crate) fn decode(cursor: &mut Cursor<'_>) -> Result<Self, Error> {
+        let length = usize::from(cursor.u8()?);
+        if length > MAX_NAME {
+            return Err(Error::Name);
+        }
+        let text = std::str::from_utf8(cursor.take(length)?).map_err(|_| Error::Name)?;
+        Self::new(text)
     }
 }
 

@@ -20,6 +20,12 @@ impl<'a> Cursor<'a> {
         Ok(*head)
     }
 
+    pub fn take(&mut self, count: usize) -> Result<&'a [u8], Error> {
+        let (head, tail) = self.bytes.split_at_checked(count).ok_or(Error::Truncated)?;
+        self.bytes = tail;
+        Ok(head)
+    }
+
     pub fn u8(&mut self) -> Result<u8, Error> {
         self.array().map(u8::from_le_bytes)
     }

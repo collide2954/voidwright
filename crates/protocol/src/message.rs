@@ -1,8 +1,9 @@
 use voidwright_core::Tile;
 
-use crate::Error;
 use crate::wire::{Cursor, put_tile};
+use crate::{Error, Name, VERSION};
 
+const HELLO: u8 = 0x01;
 const WALK: u8 = 0x02;
 
 pub trait Message: Sized {
@@ -15,6 +16,7 @@ pub trait Message: Sized {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientMessage {
+    Hello(Name),
     Walk(Tile),
 }
 
@@ -23,6 +25,12 @@ impl Message for ClientMessage {
 
     fn encode(&self, payload: &mut Vec<u8>) -> Result<(), Error> {
         match self {
+            Self::Hello(name) => {
+                payload.push(HELLO);
+                payload.extend_from_slice(&VERSION.to_le_bytes());
+                name.encode(payload);
+                Ok(())
+            }
             Self::Walk(tile) => {
                 payload.push(WALK);
                 put_tile(payload, *tile)
@@ -33,6 +41,10 @@ impl Message for ClientMessage {
     fn decode(payload: &[u8]) -> Result<Self, Error> {
         let mut cursor = Cursor::new(payload);
         let message = match cursor.u8()? {
+            HELLO => {
+                cursor.u16()?;
+                Self::Hello(Name::decode(&mut cursor)?)
+            }
             WALK => Self::Walk(cursor.tile()?),
             tag => return Err(Error::Tag(tag)),
         };
@@ -44,7 +56,7 @@ impl Message for ClientMessage {
 #[cfg(test)]
 mod tests {
     use super::{ClientMessage, Message};
-    use crate::Error;
+    use crate::{Error, Name, VERSION};
     use voidwright_core::Tile;
 
     fn encoded(message: &impl Message) -> Vec<u8> {
@@ -93,6 +105,30 @@ mod tests {
             let mut payload = Vec::new();
             let result = ClientMessage::Walk(tile).encode(&mut payload);
             assert_eq!(result, Err(Error::Range));
+        }
+    }
+
+    fn hello_payload(version: u16, name: &[u8]) -> Vec<u8> {
+        let mut payload = vec![0x01];
+        payload.extend_from_slice(&version.to_le_bytes());
+        payload.push(u8::try_from(name.len()).unwrap());
+        payload.extend_from_slice(name);
+        payload
+    }
+
+    #[test]
+    fn a_hello_holds_the_version_and_the_name() {
+        let hello = ClientMessage::Hello(Name::new("Ash").unwrap());
+        let bytes = hello_payload(VERSION, b"Ash");
+        assert_eq!(encoded(&hello), bytes);
+        assert_eq!(ClientMessage::decode(&bytes), Ok(hello));
+    }
+
+    #[test]
+    fn a_hello_with_a_bad_name_is_rejected() {
+        for name in [&b""[..], b"A!h", b"Ash\xff", b"thirteen_long"] {
+            let bytes = hello_payload(VERSION, name);
+            assert_eq!(ClientMessage::decode(&bytes), Err(Error::Name), "{name:?}");
         }
     }
 }
