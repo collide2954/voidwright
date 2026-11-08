@@ -38,6 +38,8 @@ uniform vec3 toward_sun;
 uniform vec3 sun;
 uniform vec3 sky;
 uniform vec3 below;
+uniform vec3 toward_fill;
+uniform vec3 fill;
 varying mediump vec3 toward_eye;
 varying mediump vec3 normal;
 varying mediump vec3 albedo;
@@ -54,7 +56,7 @@ void main() {
     float diffuse = max(dot(facing, toward_sun), 0.0);
     float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
     float rim = pow(1.0 - abs(dot(facing, view)), 4.0);
-    vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5);
+    vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
     vec3 lit = albedo * (sun * diffuse + ambient) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
     vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
@@ -84,6 +86,8 @@ pub struct Shading {
     pub sun: [f32; 3],
     pub sky: [f32; 3],
     pub below: [f32; 3],
+    pub toward_fill: [f32; 3],
+    pub fill: [f32; 3],
 }
 
 impl Shading {
@@ -97,6 +101,8 @@ impl Shading {
             sun: light.sun.to_array(),
             sky: light.sky.to_array(),
             below: light.below.to_array(),
+            toward_fill: light.toward_fill.to_array(),
+            fill: light.fill.to_array(),
         }
     }
 
@@ -110,6 +116,8 @@ impl Shading {
             UniformDesc::new("sun", UniformType::Float3),
             UniformDesc::new("sky", UniformType::Float3),
             UniformDesc::new("below", UniformType::Float3),
+            UniformDesc::new("toward_fill", UniformType::Float3),
+            UniformDesc::new("fill", UniformType::Float3),
         ]
     }
 }
@@ -168,5 +176,7 @@ mod tests {
         let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO, &VAEL);
         assert_eq!(uniforms.shading.toward_sun, VAEL.toward_sun.to_array());
         assert_eq!(uniforms.shading.below, VAEL.below.to_array());
+        assert_eq!(uniforms.shading.toward_fill, VAEL.toward_fill.to_array());
+        assert_eq!(uniforms.shading.fill, VAEL.fill.to_array());
     }
 }

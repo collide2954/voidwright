@@ -52,6 +52,8 @@ uniform vec3 toward_sun;
 uniform vec3 sun;
 uniform vec3 sky;
 uniform vec3 below;
+uniform vec3 toward_fill;
+uniform vec3 fill;
 uniform sampler2D detail_height;
 uniform sampler2D detail_u;
 uniform sampler2D detail_v;
@@ -101,7 +103,7 @@ void main() {
     float diffuse = max(dot(facing, toward_sun), 0.0);
     float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
     float rim = pow(1.0 - abs(dot(facing, view)), 4.0);
-    vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5);
+    vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
     vec3 lit = tinted * (sun * diffuse + ambient) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
     vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
