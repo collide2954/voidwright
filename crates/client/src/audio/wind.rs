@@ -1,16 +1,14 @@
 use super::dsp::{Frame, Noise, OnePole, Phase, Smooth, Svf, sine};
 
-const BASE: f32 = -34.0;
-const SWING: f32 = 3.5;
-const LOW: f32 = 350.0;
-const LOW_Q: f32 = 0.8;
-const HOWL: f32 = 1_100.0;
-const HOWL_Q: f32 = 1.5;
-const HOWLING: f32 = 0.12;
-const DARK: f32 = 1_800.0;
-const BAND_LEVEL: f32 = 0.078;
+const BASE: f32 = -50.0;
+const SWING: f32 = 5.5;
+const LOW: f32 = 210.0;
+const LOW_Q: f32 = 0.7;
+const DRIFT: f32 = 0.4;
+const DARK: f32 = 700.0;
+const BAND_LEVEL: f32 = 0.06;
 const CONTROL: u16 = 64;
-const GUSTS: [(f32, f32); 3] = [(0.05, 0.6), (0.11, 0.4), (0.19, 0.2)];
+const GUSTS: [(f32, f32); 3] = [(0.04, 0.6), (0.09, 0.4), (0.15, 0.2)];
 
 #[derive(Clone, Copy, Debug)]
 pub struct Wind {
@@ -18,10 +16,8 @@ pub struct Wind {
     gusts: [Phase; 3],
     noise: [Noise; 2],
     low: [Svf; 2],
-    howl: [Svf; 2],
-    dark: [OnePole; 2],
+    dark: [[OnePole; 2]; 2],
     gain: Smooth,
-    howling: Smooth,
     count: u16,
 }
 
@@ -38,10 +34,8 @@ impl Wind {
             gusts,
             noise: [Noise::new(seed ^ 0x5A5A), Noise::new(seed ^ 0xA5A5)],
             low: [Svf::new(LOW, LOW_Q, rate); 2],
-            howl: [Svf::new(HOWL, HOWL_Q, rate); 2],
-            dark: [OnePole::low(DARK, rate); 2],
+            dark: [[OnePole::low(DARK, rate); 2]; 2],
             gain: Smooth::new(0.0, 0.05, rate),
-            howling: Smooth::new(0.0, 0.05, rate),
             count: 0,
         }
     }
@@ -55,14 +49,10 @@ impl Wind {
             .map(|(phase, (frequency, weight))| weight * sine(phase.advance(frequency, control)))
             .sum();
         for filter in &mut self.low {
-            filter.set(LOW * 2.0_f32.powf(0.6 * gust), LOW_Q, self.rate);
-        }
-        for filter in &mut self.howl {
-            filter.set(HOWL * 2.0_f32.powf(0.3 * gust), HOWL_Q, self.rate);
+            filter.set(LOW * 2.0_f32.powf(DRIFT * gust), LOW_Q, self.rate);
         }
         self.gain
             .set(10.0_f32.powf((BASE + SWING * gust) / 20.0) / BAND_LEVEL);
-        self.howling.set(HOWLING * gust.max(0.0).powi(2));
     }
 
     pub fn sample(&mut self) -> Frame {
@@ -71,13 +61,11 @@ impl Wind {
         }
         self.count = (self.count + 1) % CONTROL;
         let gain = self.gain.step();
-        let howling = self.howling.step();
         let mut frame = [0.0; 2];
         for (side, out) in frame.iter_mut().enumerate() {
-            let white = self.noise[side].sample();
-            let low = self.low[side].process(white).band;
-            let howl = self.howl[side].process(white).band;
-            *out = self.dark[side].process(low + howling * howl) * gain;
+            let low = self.low[side].process(self.noise[side].sample()).band;
+            let [first, second] = &mut self.dark[side];
+            *out = second.process(first.process(low)) * gain;
         }
         frame
     }
@@ -110,21 +98,21 @@ mod tests {
     }
 
     #[test]
-    fn the_wind_always_blows_softly() {
+    fn the_wind_stays_far_in_the_background() {
         let frames = render(60);
         for second in frames.chunks(48_000) {
             let rms = decibels(level(second));
-            assert!((-48.0..-24.0).contains(&rms), "{rms}");
+            assert!((-70.0..-40.0).contains(&rms), "{rms}");
         }
         assert!(
             frames
                 .iter()
-                .all(|[left, right]| left.abs() < 0.5 && right.abs() < 0.5)
+                .all(|[left, right]| left.abs() < 0.1 && right.abs() < 0.1)
         );
     }
 
     #[test]
-    fn the_wind_rises_and_falls_in_gusts() {
+    fn the_wind_rises_in_gusts_and_dies_down_between_them() {
         let frames = render(60);
         let levels: Vec<f32> = frames
             .chunks(48_000)
@@ -132,14 +120,15 @@ mod tests {
             .collect();
         let loudest = levels.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let softest = levels.iter().copied().fold(f32::INFINITY, f32::min);
-        assert!(loudest - softest > 4.0, "{softest} {loudest}");
+        assert!(loudest - softest > 6.0, "{softest} {loudest}");
+        assert!(softest < -52.0, "{softest}");
         let steps = levels.windows(2).map(|pair| (pair[1] - pair[0]).abs());
         let steepest = steps.fold(0.0, f32::max);
         assert!(steepest < 4.0, "{steepest} {levels:?}");
     }
 
     #[test]
-    fn the_wind_is_wide_and_mostly_low() {
+    fn the_wind_is_wide_and_dark() {
         let frames = render(20);
         let (mut both, mut left, mut right) = (0.0_f32, 0.0_f32, 0.0_f32);
         for [l, r] in &frames {
@@ -149,7 +138,7 @@ mod tests {
         }
         let correlation = both / (left * right).sqrt();
         assert!(correlation.abs() < 0.5, "{correlation}");
-        let mut smooth = OnePole::low(3_000.0, RATE);
+        let mut smooth = OnePole::low(1_500.0, RATE);
         let high: f32 = frames
             .iter()
             .map(|[l, _]| {
@@ -157,6 +146,6 @@ mod tests {
                 edge * edge
             })
             .sum();
-        assert!(high < left * 0.1, "{}", high / left);
+        assert!(high < left * 0.05, "{}", high / left);
     }
 }

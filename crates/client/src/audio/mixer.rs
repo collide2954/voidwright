@@ -216,8 +216,8 @@ mod tests {
     fn with_no_commands_only_the_quiet_bed_plays() {
         let out = render(&[], 48_000);
         let level = decibels(&out);
-        assert!((-50.0..-24.0).contains(&level), "{level}");
-        assert!(out.iter().all(|[l, r]| l.abs() < 0.2 && r.abs() < 0.2));
+        assert!((-66.0..-40.0).contains(&level), "{level}");
+        assert!(out.iter().all(|[l, r]| l.abs() < 0.1 && r.abs() < 0.1));
     }
 
     #[test]
@@ -258,7 +258,7 @@ mod tests {
             swing,
         };
         let still = render(&[listener(), lantern(0.0)], 48_000);
-        let swinging = render(&[listener(), lantern(0.9)], 48_000);
+        let swinging = render(&[listener(), lantern(1.5)], 48_000);
         let [left, right] = energies(&swinging, &still);
         assert!(right > left, "{left} {right}");
         assert!(decibels(&swinging) > decibels(&still) + 1.0);
