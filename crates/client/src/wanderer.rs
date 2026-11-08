@@ -429,32 +429,72 @@ fn leg(clay: &mut Sculpt, side: Side) {
 
 fn arm(clay: &mut Sculpt, side: Side) {
     let (upper, fore) = (side.upper_arm(), side.forearm());
+    let out = side.sign();
     let sleeve = Vec3::new(10.0, 22.0, 10.0);
+    for (bone, form, at, blend) in [
+        (upper, limb(UPPER_ARM, 0.047, 0.04), Vec3::ZERO, 0.0),
+        (
+            upper,
+            egg(0.062, 0.08, 0.062),
+            Vec3::new(out * 0.018, -0.035, 0.0),
+            0.03,
+        ),
+        (
+            upper,
+            egg(0.036, 0.075, 0.032),
+            Vec3::new(0.0, -0.15, -0.025),
+            0.03,
+        ),
+        (
+            upper,
+            egg(0.04, 0.09, 0.034),
+            Vec3::new(0.0, -0.12, 0.022),
+            0.03,
+        ),
+        (
+            fore,
+            egg(0.045, 0.035, 0.045),
+            Vec3::new(0.0, 0.0, 0.008),
+            0.02,
+        ),
+        (
+            fore,
+            egg(0.048, 0.085, 0.044),
+            Vec3::new(out * 0.004, -0.07, -0.004),
+            0.03,
+        ),
+        (
+            fore,
+            limb(FOREARM - 0.015, 0.042, 0.024),
+            Vec3::new(0.0, -0.02, 0.0),
+            0.03,
+        ),
+        (
+            fore,
+            egg(0.024, 0.03, 0.032),
+            Vec3::new(0.0, 0.02 - FOREARM, 0.0),
+            0.02,
+        ),
+        (
+            fore,
+            egg(0.034, 0.018, 0.038),
+            Vec3::new(0.0, 0.028 - FOREARM, 0.0),
+            0.012,
+        ),
+    ] {
+        clay.add(
+            stroke(bone, form, COAT)
+                .at(at)
+                .wrinkled(0.004, sleeve)
+                .blended(blend),
+        );
+    }
     clay.add(
-        stroke(upper, egg(0.066, 0.064, 0.062), COAT)
-            .at(Vec3::new(side.sign() * 0.004, -0.005, 0.0))
-            .wrinkled(0.003, sleeve),
-    );
-    clay.add(
-        stroke(upper, limb(UPPER_ARM, 0.055, 0.045), COAT)
+        stroke(upper, limb(0.12, 0.048, 0.026), COAT)
+            .at(Vec3::new(out * 0.028, -0.04, 0.0))
+            .turned(toward(Vec3::new(-out * 0.15, -1.0, 0.0)))
             .wrinkled(0.004, sleeve)
             .blended(0.03),
-    );
-    clay.add(
-        stroke(fore, egg(0.05, 0.036, 0.05), COAT)
-            .at(Vec3::new(0.0, 0.0, 0.005))
-            .blended(0.02),
-    );
-    clay.add(
-        stroke(fore, limb(FOREARM - 0.02, 0.046, 0.034), COAT)
-            .wrinkled(0.004, sleeve)
-            .blended(0.025),
-    );
-    clay.add(
-        stroke(fore, egg(0.045, 0.026, 0.045), COAT)
-            .at(Vec3::new(0.0, 0.025 - FOREARM, 0.0))
-            .wrinkled(0.003, sleeve)
-            .blended(0.015),
     );
 }
 
@@ -1238,6 +1278,31 @@ mod tests {
             .fold(0.0, f32::max);
         assert!((0.15..0.23).contains(&widest), "{widest}");
         assert!(width(1.5) > 0.14, "{}", width(1.5));
+    }
+
+    #[test]
+    fn the_arms_swell_at_the_muscles_and_taper_to_the_wrists() {
+        use crate::figure::{FOREARM, UPPER_ARM, rest};
+        let mut arm = super::clay();
+        super::arm(&mut arm, super::Side::Right);
+        let bones = rest();
+        let across = |bone: Bone, down: f32, axis: Vec3| {
+            let frame = bones[bone.index()];
+            let middle = frame.transform_point3(Vec3::NEG_Y * down);
+            let axis = frame.transform_vector3(axis);
+            extent(&arm, middle - axis * 0.15, axis * 0.001)
+        };
+        let upper = |down: f32, axis: Vec3| across(Bone::RightUpperArm, down, axis);
+        let fore = |down: f32| across(Bone::RightForearm, down, Vec3::X);
+        assert!(upper(0.14, Vec3::Z) > upper(0.14, Vec3::X) * 1.12);
+        assert!(upper(UPPER_ARM - 0.03, Vec3::Z) < upper(0.14, Vec3::Z) * 0.92);
+        assert!(fore(0.07) > fore(FOREARM - 0.07) * 1.3);
+        let body = super::body();
+        let shoulders = (0..10_u8)
+            .map(|step| 1.33 + f32::from(step) * 0.01)
+            .map(|height| extent(&body, Vec3::new(-0.4, height, 0.0), Vec3::X * 0.002))
+            .fold(0.0, f32::max);
+        assert!((0.51..0.56).contains(&shoulders), "{shoulders}");
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
