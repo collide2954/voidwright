@@ -66,13 +66,13 @@ pub struct Session {
 
 impl Session {
     #[must_use]
-    pub fn new(bounds: [Vec3; 2], aspect: f32, options: &Options) -> Self {
+    pub fn new(figure: impl IntoIterator<Item = Vec3>, aspect: f32, options: &Options) -> Self {
         let mut session = Self {
             gait: options.gait,
             playback: Playback::new(options.time),
             view: View::new(Vec3::ZERO, 0.0, 0.0, 1.0),
             spinning: false,
-            bounds,
+            bounds: bounds(figure),
             aspect,
         };
         session.reset();
@@ -170,6 +170,16 @@ impl Session {
     }
 }
 
+fn bounds(points: impl IntoIterator<Item = Vec3>) -> [Vec3; 2] {
+    let mut points = points.into_iter();
+    let Some(first) = points.next() else {
+        return [Vec3::ZERO; 2];
+    };
+    points.fold([first; 2], |[low, high], point| {
+        [low.min(point), high.max(point)]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Command, Session};
@@ -185,6 +195,30 @@ mod tests {
 
     fn session() -> Session {
         Session::new(BOUNDS, ASPECT, &Options::default())
+    }
+
+    #[test]
+    fn the_session_frames_every_point_of_the_figure() {
+        let points = [
+            Vec3::new(0.1, 0.0, 0.0),
+            Vec3::new(-0.4, 1.2, 0.3),
+            Vec3::new(0.2, 1.8, -0.1),
+            Vec3::new(0.0, 0.6, 0.5),
+        ];
+        let session = Session::new(points, ASPECT, &Options::default());
+        let middle = Vec3::new(-0.1, 0.9, 0.2);
+        assert!(session.view().target().distance(middle) < 1e-6);
+        let view_projection = session.view().projection(ASPECT) * session.view().view();
+        for point in points {
+            let shown = view_projection.project_point3(point);
+            assert!(shown.x.abs() < 1.0 && shown.y.abs() < 1.0, "{point}");
+        }
+    }
+
+    #[test]
+    fn a_figure_without_points_frames_the_origin() {
+        let session = Session::new([], ASPECT, &Options::default());
+        assert!(session.view().target().length() < 1e-6);
     }
 
     #[test]
