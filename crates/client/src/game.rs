@@ -100,6 +100,7 @@ impl Game {
             self.course.advance(self.world.player().trail());
             self.world.tick();
         }
+        self.course.update(delta.div_duration_f32(TICK));
         let after = self.player_position();
         let seconds = delta.as_secs_f32();
         self.stride.update(before, to_ground(after), seconds);
@@ -116,7 +117,15 @@ impl Game {
     }
 
     pub fn walk_to(&mut self, tile: Tile) {
+        let from = self.world.player().next_step();
         self.world.walk_to(tile);
+        let player = self.world.player();
+        self.course.reroute(
+            player.trail(),
+            from,
+            player.next_step(),
+            self.ticker.alpha(),
+        );
     }
 
     #[must_use]
@@ -168,6 +177,27 @@ mod tests {
             .windows(2)
             .map(|pair| pair[0].angle_to(pair[1]).abs())
             .fold(0.0, f32::max)
+    }
+
+    fn hardest_push(points: &[Vec2]) -> f32 {
+        let frames = f32::from(u16::try_from(FRAMES).unwrap());
+        points
+            .windows(3)
+            .map(|three| (three[2] - 2.0 * three[1] + three[0]).length() * frames * frames)
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_new_order_in_mid_step_bends_the_path_without_a_jump() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 5, start.y));
+        let mut points = walk_frames(&mut game, FRAMES * 2 + 28);
+        game.walk_to(Tile::new(start.x + 2, start.y + 4));
+        points.extend(walk_frames(&mut game, FRAMES));
+        let order = points.len() - usize::try_from(FRAMES).unwrap();
+        let push = hardest_push(&points[order - 8..order + 24]);
+        assert!(push < 8.0, "{push}");
     }
 
     #[test]

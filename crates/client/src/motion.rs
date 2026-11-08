@@ -2,10 +2,14 @@ use glam::{IVec2, Vec2};
 use voidwright_core::Tile;
 
 const CUT: f32 = 0.25;
+const SETTLE: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Course {
     before: Option<Tile>,
+    shift: Vec2,
+    drift: Vec2,
+    age: f32,
 }
 
 impl Course {
@@ -13,9 +17,33 @@ impl Course {
         self.before = trail.iter().nth_back(1).copied();
     }
 
+    pub fn update(&mut self, ticks: f32) {
+        self.age = (self.age + ticks).min(SETTLE);
+    }
+
+    pub fn reroute(&mut self, trail: &[Tile], from: Option<Tile>, to: Option<Tile>, progress: f32) {
+        if from == to {
+            return;
+        }
+        let (old, old_velocity) = self.sample(trail, from, progress);
+        let (new, new_velocity) = sample(self.before, trail, to, progress);
+        self.shift = old - new;
+        self.drift = old_velocity - new_velocity;
+        self.age = 0.0;
+    }
+
     #[must_use]
     pub fn position(&self, trail: &[Tile], after: Option<Tile>, progress: f32) -> Vec2 {
-        position(self.before, trail, after, progress)
+        self.sample(trail, after, progress).0
+    }
+
+    fn sample(&self, trail: &[Tile], after: Option<Tile>, progress: f32) -> (Vec2, Vec2) {
+        let (at, velocity) = sample(self.before, trail, after, progress);
+        let (offset, offset_velocity) = hermite(
+            [self.shift, self.drift * SETTLE, Vec2::ZERO, Vec2::ZERO],
+            self.age / SETTLE,
+        );
+        (at + offset, velocity + offset_velocity / SETTLE)
     }
 }
 
@@ -26,9 +54,19 @@ pub fn center(tile: Tile) -> Vec2 {
 
 #[must_use]
 pub fn position(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, progress: f32) -> Vec2 {
+    sample(before, trail, after, progress).0
+}
+
+fn sample(
+    before: Option<Tile>,
+    trail: &[Tile],
+    after: Option<Tile>,
+    progress: f32,
+) -> (Vec2, Vec2) {
     let steps = trail.len().saturating_sub(1);
     if steps == 0 {
-        return trail.first().map_or(Vec2::ZERO, |&tile| center(tile));
+        let at = trail.first().map_or(Vec2::ZERO, |&tile| center(tile));
+        return (at, Vec2::ZERO);
     }
     let along = progress.clamp(0.0, 1.0) * count(steps);
     let index = (0..steps)
@@ -36,7 +74,8 @@ pub fn position(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, progr
         .unwrap_or(steps - 1);
     let (from, leave) = knot(before, trail, after, index);
     let (to, arrive) = knot(before, trail, after, index + 1);
-    hermite([from, leave, to, arrive], along - count(index))
+    let (at, velocity) = hermite([from, leave, to, arrive], along - count(index));
+    (at, velocity * count(steps))
 }
 
 fn knot(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, index: usize) -> (Vec2, Vec2) {
@@ -57,12 +96,16 @@ fn knot(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, index: usize)
     }
 }
 
-fn hermite([from, leave, to, arrive]: [Vec2; 4], s: f32) -> Vec2 {
+fn hermite([from, leave, to, arrive]: [Vec2; 4], s: f32) -> (Vec2, Vec2) {
     let (square, cube) = (s * s, s * s * s);
-    from * (2.0 * cube - 3.0 * square + 1.0)
+    let at = from * (2.0 * cube - 3.0 * square + 1.0)
         + leave * (cube - 2.0 * square + s)
         + to * (3.0 * square - 2.0 * cube)
-        + arrive * (cube - square)
+        + arrive * (cube - square);
+    let velocity = (to - from) * (6.0 * (s - square))
+        + leave * (3.0 * square - 4.0 * s + 1.0)
+        + arrive * (3.0 * square - 2.0 * s);
+    (at, velocity)
 }
 
 fn count(steps: usize) -> f32 {
@@ -218,6 +261,25 @@ mod tests {
         let trail = [Tile::new(1, 1), Tile::new(2, 1)];
         let at = course.position(&trail, None, 0.0);
         assert!(close(at, center(Tile::new(1, 1))));
+    }
+
+    #[test]
+    fn a_new_route_takes_over_the_course_without_a_jump() {
+        let mut course = Course::default();
+        course.advance(&[Tile::new(-1, 0), Tile::new(0, 0)]);
+        let trail = [Tile::new(0, 0), Tile::new(1, 0)];
+        let (east, north) = (Some(Tile::new(2, 0)), Some(Tile::new(1, 1)));
+        let (step, progress) = (1.0 / f32::from(FRAMES), 0.8);
+        let earlier = course.position(&trail, east, progress - step);
+        let now = course.position(&trail, east, progress);
+        course.reroute(&trail, east, north, progress);
+        assert!(close(course.position(&trail, north, progress), now));
+        course.update(step);
+        let later = course.position(&trail, north, progress + step);
+        assert!((later - 2.0 * now + earlier).length() < 0.005);
+        course.update(1.0);
+        let settled = position(Some(Tile::new(-1, 0)), &trail, north, 1.0);
+        assert!(close(course.position(&trail, north, 1.0), settled));
     }
 
     #[test]
