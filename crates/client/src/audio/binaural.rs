@@ -6,6 +6,7 @@ const HEAD: f32 = 0.0875;
 const SOUND: f32 = 343.0;
 const AHEAD: f32 = 20_000.0;
 const SIDE: f32 = 1_500.0;
+const BEHIND: f32 = 6_000.0;
 const GLIDE: f32 = 0.02;
 
 pub struct Binaural {
@@ -32,7 +33,7 @@ impl Binaural {
             written: 0,
             azimuth: 0.0_f32.to_bits(),
             delays: [Smooth::new(0.0, GLIDE, rate); 2],
-            shades: [Smooth::new(shade(0.0, rate), GLIDE, rate); 2],
+            shades: [Smooth::new(shade(0.0, 0.0, rate), GLIDE, rate); 2],
             ears: Vec2::ZERO,
         }
     }
@@ -56,7 +57,8 @@ impl Binaural {
 
     fn aim(&mut self, azimuth: f32) {
         self.azimuth = azimuth.to_bits();
-        let side = azimuth.sin();
+        let (side, ahead) = azimuth.sin_cos();
+        let behind = (-ahead).max(0.0);
         for ((delay, filter), far) in self
             .delays
             .iter_mut()
@@ -65,7 +67,7 @@ impl Binaural {
         {
             let far = far.max(0.0);
             delay.set(lag(far) * self.rate);
-            filter.set(shade(far, self.rate));
+            filter.set(shade(far, behind, self.rate));
         }
     }
 
@@ -79,8 +81,8 @@ fn lag(far: f32) -> f32 {
     HEAD / SOUND * (far.asin() + far)
 }
 
-fn shade(far: f32, rate: f32) -> f32 {
-    let cutoff = AHEAD * (SIDE / AHEAD).powf(far);
+fn shade(far: f32, behind: f32, rate: f32) -> f32 {
+    let cutoff = AHEAD * (SIDE / AHEAD).powf(far) * (BEHIND / AHEAD).powf(behind);
     1.0 - (-TAU * cutoff / rate).exp()
 }
 
@@ -200,5 +202,17 @@ mod tests {
         for jump in jumps(|step| if step < SETTLE { -FRAC_PI_2 } else { FRAC_PI_2 }) {
             assert!(jump < 1.1, "{jump}");
         }
+    }
+
+    #[test]
+    fn a_source_behind_sounds_duller_than_ahead() {
+        let mut noise = Noise::new(6);
+        let sound: Vec<f32> = (0..4 * LENGTH).map(|_| noise.sample()).collect();
+        let brightness = |azimuth: f32| {
+            let heard = listen(azimuth, &sound);
+            highs(heard.iter().map(|frame| frame[0])) + highs(heard.iter().map(|frame| frame[1]))
+        };
+        let (behind, ahead) = (brightness(PI), brightness(0.0));
+        assert!(behind < 0.5 * ahead, "{behind} against {ahead}");
     }
 }
