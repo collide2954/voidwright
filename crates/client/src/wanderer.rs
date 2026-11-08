@@ -664,9 +664,9 @@ fn hand(side: Side) -> Sculpt {
             .blended(0.01),
     );
     let base = Vec3::new(inward * 0.006, -0.03, -0.03);
-    let knuckle = base + Vec3::new(inward * 0.35, -0.8, -0.5).normalize() * 0.04;
+    let knuckle = base + Vec3::new(inward * 0.3, -0.88, -0.35).normalize() * 0.04;
     clay.add(segment(hand, base, knuckle, 0.012, LEATHER).blended(0.006));
-    let tip = knuckle + Vec3::new(inward * 0.45, -0.85, -0.15).normalize() * 0.03;
+    let tip = knuckle + Vec3::new(inward * 0.35, -0.93, 0.05).normalize() * 0.03;
     clay.add(segment(hand, knuckle, tip, 0.0105, LEATHER).blended(0.003));
     for (across, reach, bend) in [
         (-0.029, 0.86_f32, 0.35_f32),
@@ -1711,6 +1711,20 @@ mod tests {
                 .collect();
             let curl = tips.iter().sum::<f32>() / f32::from(u16::try_from(tips.len()).unwrap());
             assert!(curl > 0.02, "{curl}");
+        }
+    }
+
+    #[test]
+    fn the_resting_thumb_lies_close_in_front_of_the_hand() {
+        for side in super::Side::BOTH {
+            let back = crate::figure::rest()[side.hand().index()].inverse();
+            let front = super::hand(side)
+                .mesh(0.004)
+                .vertices
+                .iter()
+                .map(|vertex| back.transform_point3(Vec3::from(vertex.position)).z)
+                .fold(f32::INFINITY, f32::min);
+            assert!(front > -0.058, "{front}");
         }
     }
 
