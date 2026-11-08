@@ -589,22 +589,22 @@ fn head(clay: &mut Sculpt) {
 fn scarf(clay: &mut Sculpt) {
     let wool = Vec3::splat(18.0);
     clay.add(
-        stroke(Bone::Torso, ring(0.1, 0.042), SCARF)
-            .at(Vec3::new(0.0, 0.475, 0.0))
-            .turned(Quat::from_rotation_x(0.12))
-            .wrinkled(0.008, wool),
+        stroke(Bone::Torso, ring(0.076, 0.03), SCARF)
+            .at(Vec3::new(0.0, 0.52, 0.008))
+            .turned(Quat::from_rotation_x(0.15))
+            .wrinkled(0.006, wool),
     );
     clay.add(
-        stroke(Bone::Torso, ring(0.085, 0.036), SCARF)
-            .at(Vec3::new(0.0, 0.53, -0.005))
-            .turned(Quat::from_rotation_x(-0.1) * Quat::from_rotation_z(0.12))
-            .wrinkled(0.007, wool)
-            .blended(0.025),
+        stroke(Bone::Torso, ring(0.07, 0.026), SCARF)
+            .at(Vec3::new(0.0, 0.565, 0.004))
+            .turned(Quat::from_rotation_x(-0.08) * Quat::from_rotation_z(0.1))
+            .wrinkled(0.005, wool)
+            .blended(0.02),
     );
     clay.add(
-        stroke(Bone::Torso, egg(0.045, 0.038, 0.032), SCARF)
-            .at(Vec3::new(-0.062, 0.465, -0.108))
-            .wrinkled(0.006, wool)
+        stroke(Bone::Torso, egg(0.045, 0.03, 0.022), SCARF)
+            .at(Vec3::new(-0.055, 0.49, -0.1))
+            .wrinkled(0.005, wool)
             .blended(0.02),
     );
 }
@@ -1226,6 +1226,18 @@ mod tests {
         assert!((0.2..0.23).contains(&depth(waist)), "{}", depth(waist));
         assert!(width(chest) > width(waist) * 1.15, "{}", width(chest));
         assert!(depth(chest) > depth(waist) * 1.15, "{}", depth(chest));
+    }
+
+    #[test]
+    fn the_scarf_wraps_the_neck_snugly() {
+        let mut scarf = super::clay();
+        super::scarf(&mut scarf);
+        let width = |height: f32| extent(&scarf, Vec3::new(-0.3, height, 0.0), Vec3::X * 0.0015);
+        let widest = (0..20_u8)
+            .map(|step| width(1.38 + f32::from(step) * 0.01))
+            .fold(0.0, f32::max);
+        assert!((0.15..0.23).contains(&widest), "{widest}");
+        assert!(width(1.5) > 0.14, "{}", width(1.5));
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
