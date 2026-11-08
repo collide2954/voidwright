@@ -61,6 +61,55 @@ pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
     })
 }
 
+pub mod composite {
+    use miniquad::{ShaderMeta, UniformBlockLayout};
+
+    pub const FRAGMENT: &str = "#version 100
+precision mediump float;
+uniform sampler2D scene;
+varying highp vec2 uv;
+void main() {
+    gl_FragColor = vec4(texture2D(scene, uv).rgb, 1.0);
+}
+";
+
+    #[must_use]
+    pub fn meta() -> ShaderMeta {
+        ShaderMeta {
+            images: vec!["scene".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: Vec::new(),
+            },
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{FRAGMENT, meta};
+
+        #[test]
+        fn the_shader_uses_glsl_100() {
+            assert!(FRAGMENT.starts_with("#version 100"));
+        }
+
+        #[test]
+        fn the_scene_reaches_the_shader() {
+            assert_eq!(meta().images, ["scene"]);
+            assert!(FRAGMENT.contains("uniform sampler2D scene;"));
+            assert!(FRAGMENT.contains("texture2D(scene, uv)"));
+        }
+
+        #[test]
+        fn the_screen_stays_opaque() {
+            let output = FRAGMENT
+                .lines()
+                .find(|line| line.contains("gl_FragColor"))
+                .expect("the shader writes a color");
+            assert!(output.ends_with(", 1.0);"), "{output}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SAMPLES, TRIANGLE, VERTEX, attributes, levels, targets};
