@@ -61,8 +61,14 @@ impl fmt::Display for Close {
 }
 
 enum Stage {
-    Greeting { since: Instant },
-    Playing { id: PlayerId, name: Name },
+    Greeting {
+        since: Instant,
+    },
+    Playing {
+        id: PlayerId,
+        name: Name,
+        order: Option<Tile>,
+    },
 }
 
 struct Host<'a> {
@@ -136,7 +142,11 @@ impl Connection {
             ClientMessage::Walk(_) if self.greeting() => {
                 self.close = Some(Close::Fault("a walk order before the hello"));
             }
-            ClientMessage::Walk(_) => {}
+            ClientMessage::Walk(target) => {
+                if let Stage::Playing { order, .. } = &mut self.stage {
+                    *order = Some(target);
+                }
+            }
         }
     }
 
@@ -157,7 +167,11 @@ impl Connection {
             return;
         }
         println!("{} joins as {} {name}", self.peer, id.get());
-        self.stage = Stage::Playing { id, name };
+        self.stage = Stage::Playing {
+            id,
+            name,
+            order: None,
+        };
     }
 
     fn refuse(&mut self, reason: Reason) {
@@ -171,6 +185,13 @@ impl Connection {
             Error::Version(_) if greeting => self.refuse(Reason::Version),
             Error::Name if greeting => self.refuse(Reason::Name),
             _ => self.close = Some(Close::Malformed(error)),
+        }
+    }
+
+    fn take_order(&mut self) -> Option<(PlayerId, Tile)> {
+        match &mut self.stage {
+            Stage::Playing { id, order, .. } => order.take().map(|target| (*id, target)),
+            Stage::Greeting { .. } => None,
         }
     }
 
@@ -211,7 +232,7 @@ impl Connection {
             stats.dropped += 1;
         }
         match self.stage {
-            Stage::Playing { id, name } => println!("{} {name} leaves: {close}", id.get()),
+            Stage::Playing { id, name, .. } => println!("{} {name} leaves: {close}", id.get()),
             Stage::Greeting { .. } => println!("{} closes: {close}", self.peer),
         }
     }
@@ -283,6 +304,11 @@ impl Server {
     }
 
     pub fn tick(&mut self) {
+        for connection in &mut self.connections {
+            if let Some((id, target)) = connection.take_order() {
+                let _ = self.world.try_walk_to(id, target);
+            }
+        }
         self.world.tick();
         self.stats.tick = self.stats.tick.wrapping_add(1);
         for connection in &mut self.connections {
