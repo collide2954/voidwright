@@ -16,6 +16,9 @@ const TOE_OFF: f32 = 0.55;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.997;
+const WALK_SURGE: f32 = 0.03;
+const RUN_SURGE: f32 = 0.09;
+const BANK_SWAY: f32 = 0.12;
 const RUN_DIP: f32 = 0.06;
 const WALK_ROLL: f32 = 0.04;
 const ARM_LAG: f32 = 0.3;
@@ -35,7 +38,14 @@ const GLANCE: f32 = 0.36;
 const WALKING_CURL: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Lean {
+    pub surge: f32,
+    pub bank: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pose {
+    pub surge: f32,
     pub sway: f32,
     pub bob: f32,
     pub twist: f32,
@@ -61,6 +71,11 @@ pub fn cycle(pace: f32) -> f32 {
 
 #[must_use]
 pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
+    pose_leaning(phase, motion, pace, time, Lean::default())
+}
+
+#[must_use]
+pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -> Pose {
     let (sin, cos) = phase.sin_cos();
     let blend = |walk: f32, run: f32| (walk + (run - walk) * pace) * motion;
     let arm = blend(0.32, 0.55);
@@ -72,7 +87,8 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
     let free = [shift.max(0.0), (-shift).max(0.0)];
     let roll = SHIFT_ROLL * shift * rest - WALK_ROLL * sin * motion;
     let twist = -blend(0.12, 0.16) * cos;
-    let walk = stride(phase, pace, twist);
+    let surge = blend(WALK_SURGE, RUN_SURGE) + lean.surge;
+    let walk = stride(phase, pace, twist, surge);
     let relaxed = |leg: usize| (RELAXED_THIGH * free[leg], RELAXED_KNEE * free[leg]);
     let leg = |index: usize| {
         let (thigh, knee) = relaxed(index);
@@ -85,13 +101,14 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
     let drift = |hand: f32, rate: f32| (time * rate + hand * 1.7).sin();
     let curl = |hand: f32| 0.42 + 0.34 * dwell(drift(hand, 0.53));
     Pose {
-        sway: -SWAY * sin * motion + SHIFT_SWAY * shift * rest,
+        surge,
+        sway: -SWAY * sin * motion + SHIFT_SWAY * shift * rest + BANK_SWAY * lean.bank,
         bob: walk.bob * motion,
         twist,
         lean: blend(0.035, 0.22) + 0.012 * (time * 0.9).sin() * rest,
         breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * rest,
         roll,
-        counter: -COUNTER_ROLL * roll,
+        counter: -COUNTER_ROLL * roll + lean.bank,
         look: GLANCE * dwell(0.6 * (time * 0.23).sin() + 0.4 * (time * 0.41 + 2.0).sin()) * rest,
         nod: 0.05 * (time * 0.17 + 1.0).sin() * rest,
         thighs: [left.0, right.0],
@@ -121,9 +138,9 @@ struct Footing {
     pitch: f32,
 }
 
-fn stride(phase: f32, pace: f32, twist: f32) -> Walk {
+fn stride(phase: f32, pace: f32, twist: f32, surge: f32) -> Walk {
     let feet = [footing(phase, pace), footing(phase + PI, pace)];
-    let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin());
+    let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin() + surge);
     let length = REACH * (THIGH + ANKLE);
     let rest = THIGH + ANKLE + ANKLE_HEIGHT;
     let strike = footing(0.0, pace).ankle;

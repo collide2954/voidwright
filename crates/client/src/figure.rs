@@ -141,7 +141,7 @@ impl Bone {
         match self {
             Self::Pelvis => {
                 let settle = HIP.x * pose.roll.sin().abs();
-                Mat4::from_translation(Vec3::new(pose.sway, pose.bob - settle, 0.0))
+                Mat4::from_translation(Vec3::new(pose.sway, pose.bob - settle, -pose.surge))
                     * Mat4::from_rotation_y(pose.twist)
                     * Mat4::from_rotation_z(pose.roll)
             }
