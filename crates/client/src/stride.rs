@@ -2,13 +2,12 @@ use std::f32::consts::{PI, TAU};
 
 use glam::Vec2;
 
+use crate::gait::cycle;
 use crate::{Pose, pose_at};
 
 const TURN_RATE: f32 = 9.0;
 const WALK_SPEED: f32 = 1.0 / 0.6;
 const RUN_SPEED: f32 = 2.0 / 0.6;
-const WALK_CYCLE: f32 = 1.5;
-const RUN_CYCLE: f32 = 2.4;
 const EASE_RATE: f32 = 8.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -27,8 +26,7 @@ impl Stride {
             let turn = shortest((-step.x).atan2(step.y) - self.facing);
             let limit = TURN_RATE * seconds;
             self.facing = shortest(self.facing + turn.clamp(-limit, limit));
-            let cycle = WALK_CYCLE + (RUN_CYCLE - WALK_CYCLE) * self.pace;
-            self.phase = (self.phase + distance * TAU / cycle).rem_euclid(TAU);
+            self.phase = (self.phase + distance * TAU / cycle(self.pace)).rem_euclid(TAU);
         }
         let speed = if seconds > 0.0 {
             distance / seconds

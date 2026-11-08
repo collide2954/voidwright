@@ -35,28 +35,28 @@ pub enum Bone {
 pub const BONES: usize = 19;
 
 const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
-    (Bone::Pelvis, None, Vec3::new(0.0, 0.8, 0.0)),
+    (Bone::Pelvis, None, Vec3::new(0.0, PELVIS, 0.0)),
     (Bone::Torso, Some(Bone::Pelvis), Vec3::new(0.0, 0.06, 0.0)),
     (Bone::Head, Some(Bone::Torso), Vec3::new(0.0, 0.5, 0.0)),
     (
         Bone::LeftThigh,
         Some(Bone::Pelvis),
-        Vec3::new(-0.1, -0.02, 0.0),
+        Vec3::new(-HIP.x, HIP.y, 0.0),
     ),
     (
         Bone::LeftShin,
         Some(Bone::LeftThigh),
-        Vec3::new(0.0, -0.39, 0.0),
+        Vec3::new(0.0, -THIGH, 0.0),
     ),
     (
         Bone::RightThigh,
         Some(Bone::Pelvis),
-        Vec3::new(0.1, -0.02, 0.0),
+        Vec3::new(HIP.x, HIP.y, 0.0),
     ),
     (
         Bone::RightShin,
         Some(Bone::RightThigh),
-        Vec3::new(0.0, -0.39, 0.0),
+        Vec3::new(0.0, -THIGH, 0.0),
     ),
     (
         Bone::LeftUpperArm,
@@ -119,14 +119,17 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Vec3::new(0.0, -ANKLE, 0.0),
     ),
 ];
+pub const PELVIS: f32 = 0.8;
+pub const HIP: Vec2 = Vec2::new(0.1, -0.02);
+pub const THIGH: f32 = 0.39;
 pub const ANKLE: f32 = 0.33;
+pub const ANKLE_HEIGHT: f32 = 0.06;
+const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
 const HEAD_LEVEL: f32 = 0.85;
 const COUNTER_TWIST: f32 = 0.8;
 const SKIRT_FOLLOW: f32 = 0.6;
-const HIP: Vec2 = Vec2::new(0.1, -0.02);
-const LEG: f32 = 0.78;
 
 impl Bone {
     #[must_use]
@@ -227,8 +230,10 @@ pub fn marker_ring() -> LitMesh {
 #[cfg(test)]
 mod tests {
     use super::{BONES, Bone, placement, pulse, rest, skeleton, skin};
+    use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
     use glam::{Mat4, Vec2, Vec3};
+    use std::f32::consts::TAU;
 
     #[test]
     fn a_skin_at_rest_moves_nothing() {
@@ -276,6 +281,56 @@ mod tests {
                 - open[bone.index()].transform_point3(tip);
             assert!(moved.x * inward > 0.02);
         }
+    }
+
+    const SAMPLES: u16 = 240;
+
+    fn walked(sample: u16) -> (f32, [Mat4; BONES]) {
+        let phase = TAU * f32::from(sample) / f32::from(SAMPLES);
+        let travelled = cycle(0.0) * f32::from(sample) / f32::from(SAMPLES);
+        (travelled, skeleton(&pose_at(phase, 1.0, 0.0, 0.0)))
+    }
+
+    fn world_ankle(sample: u16, bone: Bone) -> Vec3 {
+        let (travelled, bones) = walked(sample);
+        bones[bone.index()].transform_point3(Vec3::ZERO) - Vec3::Z * travelled
+    }
+
+    #[test]
+    fn planted_feet_stay_still_while_the_body_walks_on() {
+        for bone in [Bone::LeftFoot, Bone::RightFoot] {
+            let still = (0..SAMPLES)
+                .filter(|&sample| {
+                    let moved = world_ankle(sample + 1, bone) - world_ankle(sample, bone);
+                    moved.length() < 0.002
+                })
+                .count();
+            assert!(still * 10 > usize::from(SAMPLES) * 4, "{bone:?} {still}");
+        }
+    }
+
+    #[test]
+    fn the_swinging_foot_clears_the_ground() {
+        let highest = (0..SAMPLES)
+            .map(|sample| world_ankle(sample, Bone::LeftFoot).y)
+            .fold(0.0, f32::max);
+        assert!(highest > 0.1);
+    }
+
+    #[test]
+    fn the_leading_hip_turns_forward() {
+        let (_, bones) = walked(0);
+        let hip = |bone: Bone| bones[bone.index()].transform_point3(Vec3::ZERO);
+        assert!(hip(Bone::LeftThigh).z < hip(Bone::RightThigh).z - 0.01);
+    }
+
+    #[test]
+    fn the_feet_land_heel_first() {
+        let (_, bones) = walked(0);
+        let foot = bones[Bone::LeftFoot.index()];
+        let toe = foot.transform_point3(Vec3::new(0.0, -0.05, -0.15));
+        let heel = foot.transform_point3(Vec3::new(0.0, -0.05, 0.06));
+        assert!(toe.y > heel.y + 0.03);
     }
 
     #[test]
