@@ -538,7 +538,7 @@ void main() {
 pub mod halo {
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 
-    pub const STRENGTH: f32 = 0.05;
+    pub const STRENGTH: f32 = 0.3;
 
     pub const FRAGMENT: &str = "#version 100
 precision mediump float;
@@ -643,10 +643,11 @@ void main() {
         }
 
         #[test]
-        fn the_halo_of_the_brightest_light_stays_soft() {
-            assert!((0.01..=0.2).contains(&STRENGTH));
-            assert!(halo(2.5) < 0.55, "{}", halo(2.5));
-            assert!(halo(0.1) > 0.02);
+        fn the_halo_spreads_a_visible_but_small_share_of_each_light() {
+            assert!((0.2..=0.35).contains(&STRENGTH));
+            let light = filmic(2.5).powf(0.4545);
+            assert!(halo(2.5) < light - 0.05, "{}", halo(2.5));
+            assert!(halo(0.1) > 0.1, "{}", halo(0.1));
         }
     }
 }
