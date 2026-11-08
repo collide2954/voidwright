@@ -2,7 +2,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use glam::{Quat, Vec2, Vec3};
 
-use crate::figure::{Bone, rest};
+use crate::figure::{ANKLE, Bone, THIGH, rest};
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
 use crate::shape::{Material, Surface};
@@ -288,7 +288,7 @@ fn leg(clay: &mut Sculpt, side: Side) {
     let (thigh, shin) = (side.thigh(), side.shin());
     let trousers = Vec3::new(10.0, 16.0, 10.0);
     clay.add(
-        stroke(thigh, limb(0.39, 0.08, 0.06), CLOTH)
+        stroke(thigh, limb(THIGH, 0.076, 0.058), CLOTH)
             .wrinkled(0.005, trousers)
             .blended(0.03),
     );
@@ -298,18 +298,18 @@ fn leg(clay: &mut Sculpt, side: Side) {
             .blended(0.025),
     );
     clay.add(
-        stroke(shin, limb(0.3, 0.055, 0.044), CLOTH)
+        stroke(shin, limb(ANKLE - 0.04, 0.055, 0.044), CLOTH)
             .wrinkled(0.004, trousers)
             .blended(0.035),
     );
     clay.add(
-        stroke(shin, egg(0.05, 0.085, 0.052), CLOTH)
-            .at(Vec3::new(0.0, -0.1, 0.014))
+        stroke(shin, egg(0.05, 0.09, 0.052), CLOTH)
+            .at(Vec3::new(0.0, -0.12, 0.014))
             .blended(0.03),
     );
     clay.add(
-        stroke(shin, limb(0.17, 0.055, 0.059), BOOT)
-            .at(Vec3::new(0.0, -0.16, 0.0))
+        stroke(shin, limb(0.18, 0.055, 0.059), BOOT)
+            .at(Vec3::new(0.0, -(ANKLE - 0.18), 0.0))
             .wrinkled(0.003, Vec3::new(18.0, 28.0, 18.0))
             .blended(0.012),
     );
@@ -391,7 +391,7 @@ fn arm(clay: &mut Sculpt, side: Side) {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(0.56, Vec2::new(0.15, 0.25), 0.04, Vec2::new(9.0, 0.07));
+        let panel = tube(0.64, Vec2::new(0.15, 0.26), 0.04, Vec2::new(9.0, 0.07));
         clay.add(
             stroke(side.skirt(), panel, COAT)
                 .lined(LINING)
@@ -662,7 +662,7 @@ fn knee() -> Sculpt {
 
 fn wraps(side: Side) -> Sculpt {
     let mut clay = clay();
-    for (index, y) in [-0.12, -0.155, -0.19, -0.225].into_iter().enumerate() {
+    for (index, y) in [-0.17, -0.205, -0.24, -0.275].into_iter().enumerate() {
         let lean = if index % 2 == 0 { 0.16 } else { -0.12 };
         clay.add(
             stroke(side.shin(), ring(0.056, 0.0085), WRAP)
@@ -930,7 +930,7 @@ mod tests {
                 .vertices
                 .iter()
                 .filter(|vertex| {
-                    (0.94..0.98).contains(&vertex.position[1])
+                    (1.04..1.08).contains(&vertex.position[1])
                         && (0.03..0.07).contains(&(vertex.position[0] * side))
                 })
                 .map(|vertex| -vertex.position[2])

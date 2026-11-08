@@ -119,10 +119,10 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Vec3::new(0.0, -ANKLE, 0.0),
     ),
 ];
-pub const PELVIS: f32 = 0.8;
+pub const PELVIS: f32 = 0.9;
 pub const HIP: Vec2 = Vec2::new(0.1, -0.02);
-pub const THIGH: f32 = 0.39;
-pub const ANKLE: f32 = 0.33;
+pub const THIGH: f32 = 0.44;
+pub const ANKLE: f32 = 0.38;
 pub const ANKLE_HEIGHT: f32 = 0.06;
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;

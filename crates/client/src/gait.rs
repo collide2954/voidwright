@@ -5,7 +5,7 @@ use glam::Vec2;
 use crate::figure::{ANKLE, ANKLE_HEIGHT, HIP, THIGH};
 use crate::smoothstep;
 
-const WALK_CYCLE: f32 = 1.2;
+const WALK_CYCLE: f32 = 1.25;
 const RUN_CYCLE: f32 = 2.4;
 const WALK_DUTY: f32 = 0.58;
 const RUN_DUTY: f32 = 0.38;
@@ -15,7 +15,7 @@ const HEEL_STRIKE: f32 = 0.3;
 const TOE_OFF: f32 = 0.55;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
-const REACH: f32 = 0.985;
+const REACH: f32 = 0.997;
 const RUN_DIP: f32 = 0.06;
 const WALK_ROLL: f32 = 0.04;
 const ARM_LAG: f32 = 0.3;
@@ -88,7 +88,7 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
         sway: -SWAY * sin * motion + SHIFT_SWAY * shift * rest,
         bob: walk.bob * motion,
         twist,
-        lean: blend(0.06, 0.24) + 0.012 * (time * 0.9).sin() * rest,
+        lean: blend(0.035, 0.22) + 0.012 * (time * 0.9).sin() * rest,
         breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * rest,
         roll,
         counter: -COUNTER_ROLL * roll,
