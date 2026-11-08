@@ -1,10 +1,11 @@
-use voidwright_core::Tile;
+use voidwright_core::{PlayerId, Tile};
 
 use crate::wire::{Cursor, put_tile};
 use crate::{Error, Name, VERSION};
 
 const HELLO: u8 = 0x01;
 const WALK: u8 = 0x02;
+const WELCOME: u8 = 0x81;
 
 pub trait Message: Sized {
     const LIMIT: usize;
@@ -18,6 +19,18 @@ pub trait Message: Sized {
 pub enum ClientMessage {
     Hello(Name),
     Walk(Tile),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Welcome {
+    pub id: PlayerId,
+    pub seed: u64,
+    pub spawn: Tile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerMessage {
+    Welcome(Welcome),
 }
 
 impl Message for ClientMessage {
@@ -56,11 +69,40 @@ impl Message for ClientMessage {
     }
 }
 
+impl Message for ServerMessage {
+    const LIMIT: usize = 2048;
+
+    fn encode(&self, payload: &mut Vec<u8>) -> Result<(), Error> {
+        match self {
+            Self::Welcome(welcome) => {
+                payload.push(WELCOME);
+                payload.extend_from_slice(&welcome.id.get().to_le_bytes());
+                payload.extend_from_slice(&welcome.seed.to_le_bytes());
+                put_tile(payload, welcome.spawn)
+            }
+        }
+    }
+
+    fn decode(payload: &[u8]) -> Result<Self, Error> {
+        let mut cursor = Cursor::new(payload);
+        let message = match cursor.u8()? {
+            WELCOME => Self::Welcome(Welcome {
+                id: PlayerId::new(cursor.u16()?),
+                seed: cursor.u64()?,
+                spawn: cursor.tile()?,
+            }),
+            tag => return Err(Error::Tag(tag)),
+        };
+        cursor.finish()?;
+        Ok(message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ClientMessage, Message};
+    use super::{ClientMessage, Message, ServerMessage, Welcome};
     use crate::{Error, Name, VERSION};
-    use voidwright_core::Tile;
+    use voidwright_core::{PlayerId, Tile};
 
     fn encoded(message: &impl Message) -> Vec<u8> {
         let mut payload = Vec::new();
@@ -143,5 +185,26 @@ mod tests {
             bytes.push(0xff);
             assert_eq!(ClientMessage::decode(&bytes), Err(Error::Version(version)));
         }
+    }
+
+    #[test]
+    fn a_welcome_holds_the_id_the_seed_and_the_spawn() {
+        let welcome = ServerMessage::Welcome(Welcome {
+            id: PlayerId::new(0x0201),
+            seed: 0x0807_0605_0403_0201,
+            spawn: Tile::new(28, 300),
+        });
+        let bytes = encoded(&welcome);
+        assert_eq!(
+            bytes,
+            [0x81, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 28, 0, 0x2c, 0x01]
+        );
+        assert_eq!(ServerMessage::decode(&bytes), Ok(welcome));
+    }
+
+    #[test]
+    fn a_client_tag_is_not_a_server_message() {
+        assert_eq!(ServerMessage::decode(&[0x02]), Err(Error::Tag(0x02)));
+        assert_eq!(ClientMessage::decode(&[0x81]), Err(Error::Tag(0x81)));
     }
 }

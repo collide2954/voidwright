@@ -34,6 +34,10 @@ impl<'a> Cursor<'a> {
         self.array().map(u16::from_le_bytes)
     }
 
+    pub fn u64(&mut self) -> Result<u64, Error> {
+        self.array().map(u64::from_le_bytes)
+    }
+
     pub fn tile(&mut self) -> Result<Tile, Error> {
         let x = self.u16()?;
         let y = self.u16()?;

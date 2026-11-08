@@ -6,7 +6,7 @@ mod wire;
 
 pub use error::Error;
 pub use frame::{Inbox, Outbox, frame};
-pub use message::{ClientMessage, Message};
+pub use message::{ClientMessage, Message, ServerMessage, Welcome};
 pub use name::{MAX_NAME, Name};
 
 pub const VERSION: u16 = 1;
