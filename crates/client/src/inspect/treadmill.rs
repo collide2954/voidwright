@@ -17,6 +17,15 @@ pub enum Gait {
 
 impl Gait {
     #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Walk => "walk",
+            Self::Run => "run",
+        }
+    }
+
+    #[must_use]
     pub const fn motion(self) -> f32 {
         match self {
             Self::Idle => 0.0,

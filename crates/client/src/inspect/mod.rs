@@ -1,7 +1,9 @@
 mod playback;
+mod session;
 mod treadmill;
 mod view;
 
 pub use playback::Playback;
+pub use session::{Command, Session};
 pub use treadmill::Gait;
 pub use view::View;
