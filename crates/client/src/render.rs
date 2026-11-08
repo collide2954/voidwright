@@ -8,7 +8,7 @@ use miniquad::{
 
 use crate::detail::{DETAIL_SIZE, paint};
 use crate::particles::{Anchors, specks};
-use crate::shader::{baked, caster, particles, skinned};
+use crate::shader::{self, baked, caster, particles, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
     BONES, Game, Painter, VAEL, cliff, flip_rows, palette, png, projection, pulse, sky, top,
@@ -61,9 +61,9 @@ impl Renderer {
         ];
         let backdrop = pipeline(
             context,
-            [baked::VERTEX, baked::FRAGMENT],
-            baked::meta(),
-            &baked_attributes,
+            [shader::sky::VERTEX, shader::sky::FRAGMENT],
+            shader::sky::meta(),
+            &shader::sky::attributes(),
             behind(),
         );
         let baked = pipeline(
@@ -106,8 +106,7 @@ impl Renderer {
         });
         let shadow = context.new_render_pass(map, Some(depth));
         let backdrop_mesh = sky();
-        let mut sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
-        sky.bindings.images = vec![map];
+        let sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
         let ground = game.ground();
         let painter = Painter::default();
         let mut terrain = top(ground, &painter, &VAEL);
@@ -207,14 +206,10 @@ impl Renderer {
         let view_projection = projection(aspect) * camera.view();
         context.apply_pipeline(&self.backdrop);
         context.apply_bindings(&self.sky.bindings);
-        context.apply_uniforms(UniformsSource::table(
-            &baked::Uniforms::new(
-                view_projection,
-                Mat4::from_translation(camera.eye()),
-                camera.eye(),
-            )
-            .unfogged(),
-        ));
+        context.apply_uniforms(UniformsSource::table(&shader::sky::Uniforms::new(
+            view_projection,
+            camera.eye(),
+        )));
         context.draw(0, self.sky.count, 1);
         let marker = game
             .marker()
