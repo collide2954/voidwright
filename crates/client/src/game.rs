@@ -7,7 +7,6 @@ use crate::ground::Ground;
 use crate::{OrbitCamera, Stride, Ticker, center, pick, position, to_ground, to_world};
 
 const ISLAND_RADIUS: u8 = 20;
-const MARKER_LIFT: f32 = 0.03;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 
 #[derive(Clone, Debug)]
@@ -93,7 +92,7 @@ impl Game {
     pub fn marker(&self) -> Option<Vec3> {
         self.world.player().destination().map(|tile| {
             let below = center(tile);
-            to_world(below, self.ground.height_at(below) + MARKER_LIFT)
+            to_world(below, self.ground.height_at(below))
         })
     }
 
@@ -159,6 +158,16 @@ mod tests {
             game.update(TICK);
         }
         assert_eq!(game.marker(), None);
+    }
+
+    #[test]
+    fn the_marker_lies_on_the_ground() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 2, start.y));
+        let marker = game.marker().expect("a walk order shows a marker");
+        let ground = game.ground().height_at(to_ground(marker));
+        assert!((marker.y - ground).abs() < 1e-5);
     }
 
     #[test]
