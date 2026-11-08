@@ -16,6 +16,7 @@ const SETTLING: u16 = 480;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const GIVE: f32 = 0.25;
 const CONTACT: f32 = 0.35;
+const KICK: f32 = 1.0;
 const FRICTION: f32 = 0.3;
 const MARGIN: f32 = 0.025;
 const LEVER: f32 = 0.25;
@@ -455,7 +456,9 @@ impl<const N: usize> Fabric<N> {
             let away = self.points[index] - rest;
             let beyond = away.length() - self.layout.slack[index];
             if beyond > 0.0 {
-                self.points[index] -= away.normalize() * beyond * GIVE;
+                let back = away.normalize() * beyond * GIVE;
+                self.points[index] -= back;
+                self.previous[index] -= back;
             }
         }
     }
@@ -471,11 +474,20 @@ impl<const N: usize> Fabric<N> {
                 if push.length_squared() > 0.0 {
                     self.points[index] += push;
                     self.rub(index, push);
+                    self.calm(index);
                 }
             }
             for edge in 0..self.edges.len() {
                 self.clear_segment(self.edges[edge], leg);
             }
+        }
+    }
+
+    fn calm(&mut self, index: usize) {
+        let moving = self.points[index] - self.previous[index];
+        let limit = KICK * STEP;
+        if moving.length() > limit {
+            self.previous[index] = self.points[index] - moving.normalize() * limit;
         }
     }
 
@@ -500,7 +512,9 @@ impl<const N: usize> Fabric<N> {
             let share = (1.0 - along).powi(2) + along.powi(2);
             self.points[upper] += push * (1.0 - along) / share;
             self.points[lower] += push * along / share;
+            self.calm(upper);
         }
+        self.calm(lower);
     }
 
     #[must_use]
@@ -878,6 +892,26 @@ mod tests {
         let moved = cloth.points()[index];
         let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z).length();
         assert!(flat(moved) > flat(axis) + 0.08, "{moved} {axis}");
+    }
+
+    #[test]
+    fn a_leg_flicking_past_a_strand_leaves_it_slow() {
+        let mut strand = Fabric::strand([Vec3::ZERO, Vec3::new(0.0, -0.3, 0.1)], 0.5, TAIL);
+        run(&mut strand, Vec3::Y, &[], 60);
+        let tip = strand.points()[1] + Vec3::Y;
+        for frame in 0..4_u8 {
+            let z = tip.z - 0.12 + 0.06 * f32::from(frame);
+            let leg = Capsule {
+                from: Vec3::new(tip.x, tip.y + 0.2, z),
+                to: Vec3::new(tip.x, tip.y - 0.2, z),
+                radius: 0.05,
+            };
+            strand.update(waist(Vec3::Y), &[leg], FRAME);
+        }
+        let before = strand.points()[1];
+        strand.update(waist(Vec3::Y), &[], FRAME);
+        let speed = strand.points()[1].distance(before) / FRAME;
+        assert!(speed < 2.5, "{speed}");
     }
 
     #[test]
