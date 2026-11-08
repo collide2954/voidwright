@@ -261,6 +261,49 @@ impl Cloth {
 }
 
 impl<const N: usize> Fabric<N> {
+    #[must_use]
+    pub fn strand(rest: [Vec3; N], slack: f32, feel: Feel) -> Self {
+        let last = N.saturating_sub(1);
+        let layout = Layout {
+            pinned: std::array::from_fn(|index| index == 0),
+            tether: [0; N],
+            slack: std::array::from_fn(|index| slack * count(index) / count(last.max(1))),
+            down: std::array::from_fn(|index| (index.saturating_sub(1), (index + 1).min(last))),
+            across: [None; N],
+            bones: std::array::from_fn(|index| index.checked_sub(1)),
+        };
+        let links = (1..N)
+            .map(|index| Link {
+                first: index - 1,
+                second: index,
+                length: rest[index - 1].distance(rest[index]),
+                stiffness: STRETCH,
+            })
+            .collect();
+        let edges = (1..N).map(|index| (index - 1, index)).collect();
+        Self::new(feel, 1.0, layout, rest, links, edges)
+    }
+
+    #[must_use]
+    pub fn along(&self, point: Vec3) -> [(Option<usize>, f32); 2] {
+        let mut best = (f32::INFINITY, 1, 0.0);
+        for segment in 1..N {
+            let (from, to) = (self.rest[segment - 1], self.rest[segment]);
+            let span = to - from;
+            let share =
+                ((point - from).dot(span) / span.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            let gap = point.distance(from + span * share);
+            if gap < best.0 {
+                best = (gap, segment, share);
+            }
+        }
+        let (_, segment, share) = best;
+        [
+            (self.layout.bones[segment - 1], 1.0 - share),
+            (self.layout.bones[segment], share),
+        ]
+    }
+
     fn new(
         feel: Feel,
         squash: f32,
@@ -588,8 +631,105 @@ fn clear(point: Vec3, leg: &Capsule) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CLOTH_BONES, COLUMNS, Capsule, Cloth, Drape, PANELS, ROWS, bone, particle};
+    use super::{
+        CLOTH_BONES, COLUMNS, Capsule, Cloth, Drape, Fabric, Feel, PANELS, ROWS, bone, particle,
+    };
     use glam::{Mat4, Vec3};
+
+    const TAIL: Feel = Feel {
+        drive: 1.0,
+        drag: 4.0,
+        inertia: 0.5,
+        spin: 0.5,
+    };
+
+    fn tail() -> Fabric<4> {
+        Fabric::strand(
+            [
+                Vec3::ZERO,
+                Vec3::new(0.0, -0.1, -0.02),
+                Vec3::new(0.0, -0.2, -0.04),
+                Vec3::new(0.0, -0.3, -0.06),
+            ],
+            0.15,
+            TAIL,
+        )
+    }
+
+    #[test]
+    fn a_strand_hangs_still_from_its_anchor() {
+        let mut strand = tail();
+        run(&mut strand, Vec3::Y, &[], 120);
+        assert!(strand.points()[0].length() < 1e-6);
+        for (point, settled) in strand.points().iter().zip(strand.settled()) {
+            assert!(point.distance(*settled) < 0.002, "{point} {settled}");
+        }
+        assert!(strand.settled()[3].distance(strand.rest()[3]) < 0.05);
+    }
+
+    #[test]
+    fn a_strand_swings_back_when_its_anchor_sets_off() {
+        let mut strand = tail();
+        run(&mut strand, Vec3::Y, &[], 120);
+        let resting = strand.points()[3].z;
+        for frame in 1..=12_u8 {
+            strand.update(
+                waist(Vec3::new(0.0, 1.0, -0.03 * f32::from(frame))),
+                &[],
+                FRAME,
+            );
+        }
+        assert!(strand.points()[3].z > resting + 0.01);
+    }
+
+    #[test]
+    fn a_strand_rests_outside_a_body_capsule() {
+        let mut strand = tail();
+        run(&mut strand, Vec3::Y, &[], 60);
+        let behind = strand.points()[3].z + 0.02;
+        let body = Capsule {
+            from: Vec3::new(0.0, 1.0, behind),
+            to: Vec3::new(0.0, 0.5, behind),
+            radius: 0.05,
+        };
+        run(&mut strand, Vec3::Y, &[body], 30);
+        assert!(
+            strand.points()[3].z < behind - 0.07,
+            "{}",
+            strand.points()[3]
+        );
+    }
+
+    #[test]
+    fn a_strand_skins_each_free_point() {
+        let mut strand = tail();
+        let frame = Mat4::from_translation(Vec3::Y);
+        strand.update(frame, &[], FRAME);
+        let skins = strand.skins(frame, frame);
+        assert_eq!(skins.len(), 3);
+        for matrix in &skins {
+            assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-4));
+        }
+        strand.points[3] += Vec3::new(0.0, 0.0, 0.1);
+        let skins = strand.skins(frame, frame);
+        let rest = frame.transform_point3(strand.settled()[3]);
+        let moved = frame.transform_point3(strand.points()[3]);
+        assert!(skins[2].transform_point3(rest).distance(moved) < 1e-4);
+    }
+
+    #[test]
+    fn a_point_on_a_strand_follows_its_nearest_points() {
+        let strand = tail();
+        let top = strand.along(Vec3::new(0.0, -0.01, 0.0));
+        assert_eq!(top[0].0, None);
+        assert!(top[0].1 > 0.85);
+        let middle = strand.along(strand.rest()[1].lerp(strand.rest()[2], 0.5));
+        assert_eq!((middle[0].0, middle[1].0), (Some(0), Some(1)));
+        assert!((middle[0].1 - 0.5).abs() < 1e-4);
+        let end = strand.along(strand.rest()[3] - Vec3::Y * 0.05);
+        assert_eq!(end[1].0, Some(2));
+        assert!((end[1].1 - 1.0).abs() < 1e-4);
+    }
 
     const COAT: Drape = Drape {
         top: 0.16,
@@ -603,7 +743,7 @@ mod tests {
         Mat4::from_translation(at)
     }
 
-    fn run(cloth: &mut Cloth, at: Vec3, legs: &[Capsule], frames: u16) {
+    fn run<const N: usize>(cloth: &mut Fabric<N>, at: Vec3, legs: &[Capsule], frames: u16) {
         for _ in 0..frames {
             cloth.update(waist(at), legs, FRAME);
         }
