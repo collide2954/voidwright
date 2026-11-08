@@ -58,7 +58,7 @@ const SHIN_RADIUS: f32 = 0.06;
 const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (Bone::Pelvis, None, Vec3::new(0.0, PELVIS, 0.0)),
     (Bone::Torso, Some(Bone::Pelvis), Vec3::new(0.0, 0.06, 0.0)),
-    (Bone::Head, Some(Bone::Torso), Vec3::new(0.0, 0.5, 0.0)),
+    (Bone::Head, Some(Bone::Torso), Vec3::new(0.0, TRUNK, 0.0)),
     (
         Bone::LeftThigh,
         Some(Bone::Pelvis),
@@ -140,6 +140,7 @@ pub const FOREARM: f32 = 0.26;
 pub const PALM: f32 = 0.09;
 pub const FINGER: f32 = 0.105;
 const SHOULDER: Vec2 = Vec2::new(0.185, 0.44);
+const TRUNK: f32 = 0.54;
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;

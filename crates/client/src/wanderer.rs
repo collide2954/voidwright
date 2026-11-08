@@ -560,10 +560,18 @@ fn hood(clay: &mut Sculpt) {
 }
 
 fn head(clay: &mut Sculpt) {
-    clay.add(stroke(Bone::Head, limb(0.1, 0.05, 0.053), CLOTH).at(Vec3::new(0.0, 0.1, 0.0)));
+    let neck = [Vec3::new(0.0, -0.03, 0.015), Vec3::new(0.0, 0.09, 0.0)];
     clay.add(
-        stroke(Bone::Head, egg(0.08, 0.098, 0.09), CLOTH)
-            .at(Vec3::new(0.0, 0.135, -0.005))
+        segment(Bone::Head, neck[0], neck[1], 0.06, CLOTH).squashed(Vec3::new(1.0, 1.0, 1.15)),
+    );
+    clay.add(
+        stroke(Bone::Head, egg(0.077, 0.1, 0.1), CLOTH)
+            .at(Vec3::new(0.0, 0.16, -0.01))
+            .blended(0.03),
+    );
+    clay.add(
+        stroke(Bone::Head, egg(0.056, 0.05, 0.065), CLOTH)
+            .at(Vec3::new(0.0, 0.08, -0.05))
             .blended(0.03),
     );
 }
@@ -616,16 +624,16 @@ fn pack(clay: &mut Sculpt) {
 fn face() -> Sculpt {
     let mut clay = clay();
     clay.add(
-        stroke(Bone::Head, block(0.06, 0.046, 0.038, 0.026), MASK)
-            .at(Vec3::new(0.0, 0.088, -0.068)),
+        stroke(Bone::Head, block(0.058, 0.046, 0.036, 0.026), MASK)
+            .at(Vec3::new(0.0, 0.082, -0.094)),
     );
     clay.add(
         stroke(Bone::Head, egg(0.04, 0.036, 0.03), MASK)
-            .at(Vec3::new(0.0, 0.078, -0.098))
+            .at(Vec3::new(0.0, 0.074, -0.124))
             .blended(0.018),
     );
     for side in [-1.0, 1.0] {
-        let base = Vec3::new(side * 0.048, 0.072, -0.092);
+        let base = Vec3::new(side * 0.05, 0.068, -0.116);
         let turn = toward(Vec3::new(side * 0.55, -0.45, -0.7));
         clay.add(
             stroke(Bone::Head, limb(0.042, 0.021, 0.019), METAL)
@@ -641,23 +649,23 @@ fn face() -> Sculpt {
         );
     }
     clay.part();
-    let visor = Vec3::new(0.0, 0.158, -0.004);
+    let visor = Vec3::new(0.0, 0.146, -0.01);
     clay.add(
         stroke(Bone::Head, ring(0.088, 0.014), METAL)
             .at(visor)
-            .squashed(Vec3::new(1.0, 1.2, 1.1))
+            .squashed(Vec3::new(1.0, 1.2, 1.15))
             .clipped(Vec3::Z, -0.02),
     );
     clay.add(
         stroke(Bone::Head, ring(0.093, 0.013), METAL)
             .at(visor)
-            .squashed(Vec3::new(1.0, 0.6, 1.1))
+            .squashed(Vec3::new(1.0, 0.6, 1.15))
             .carved(),
     );
     clay.add(
         stroke(Bone::Head, ring(0.094, 0.012), TEAL_LIGHT)
             .at(visor)
-            .squashed(Vec3::new(1.0, 0.5, 1.1))
+            .squashed(Vec3::new(1.0, 0.5, 1.15))
             .clipped(Vec3::Z, -0.035),
     );
     clay
@@ -1106,6 +1114,31 @@ mod tests {
             assert!((tip - 0.66).abs() < 0.03, "{hand:?} {tip}");
             assert!((wrist - tip - 0.19).abs() < 0.015, "{hand:?} {wrist} {tip}");
         }
+    }
+
+    #[test]
+    fn the_head_sits_on_the_neck_and_is_an_eighth_of_the_stature() {
+        let neck = crate::figure::rest()[Bone::Head.index()].transform_point3(Vec3::ZERO);
+        assert!((neck.y - 1.5).abs() < 0.02, "{neck}");
+        let mut clay = super::clay();
+        super::head(&mut clay);
+        let head = clay.mesh(0.008);
+        let crown = head
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let chin = head
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position[2] < -0.07)
+            .map(|vertex| vertex.position[1])
+            .fold(f32::INFINITY, f32::min);
+        assert!((crown - 1.76).abs() < 0.015, "{crown}");
+        assert!(
+            ((crown - chin) / 1.76 - 0.13).abs() < 0.01,
+            "{chin} {crown}"
+        );
     }
 
     #[test]
