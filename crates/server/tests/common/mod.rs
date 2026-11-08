@@ -2,7 +2,9 @@
 
 use std::io::{ErrorKind, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::thread;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use voidwright_core::PlayerId;
@@ -40,6 +42,44 @@ pub fn settle(server: &mut Server, done: impl Fn(&Server) -> bool) {
         assert!(Instant::now() < deadline, "the server does not settle");
         server.poll();
         thread::sleep(PAUSE);
+    }
+}
+
+pub struct Running {
+    address: SocketAddr,
+    flag: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Running {
+    pub fn start(config: Config) -> Self {
+        let mut server = server(config);
+        let address = server.address();
+        let flag = Arc::new(AtomicBool::new(true));
+        let running = Arc::clone(&flag);
+        let thread = thread::spawn(move || server.run(&running));
+        Self {
+            address,
+            flag,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Pump for Running {
+    fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    fn pump(&mut self) {}
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
     }
 }
 

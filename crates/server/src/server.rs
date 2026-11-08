@@ -1,9 +1,11 @@
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
-use voidwright_core::{Direction, ISLAND_RADIUS, Island, PlayerId, Tile, World};
+use voidwright_core::{Direction, ISLAND_RADIUS, Island, PlayerId, TICK, Tile, World};
 use voidwright_protocol::{
     ClientMessage, Error, Inbox, MAX_SIGHTINGS, Name, Outbox, Reason, ServerMessage, Sighting,
     Update, Welcome,
@@ -16,10 +18,13 @@ const GREETERS: usize = 64;
 const GREETING: Duration = Duration::from_secs(5);
 const VIEW: u16 = 32;
 const BACKLOG: usize = 64 * 1024;
+const POLL: Duration = Duration::from_millis(5);
+const REPORT: u32 = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub seed: u64,
+    pub tick: Duration,
     pub capacity: usize,
     pub greeting: Duration,
     pub view: u16,
@@ -30,6 +35,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             seed: 1,
+            tick: TICK,
             capacity: CAPACITY,
             greeting: GREETING,
             view: VIEW,
@@ -339,6 +345,30 @@ impl Server {
             connection.flush();
         }
         self.sweep();
+    }
+
+    pub fn run(&mut self, running: &AtomicBool) {
+        let mut next = Instant::now() + self.config.tick;
+        let mut slowest = Duration::ZERO;
+        while running.load(Ordering::Relaxed) {
+            self.poll();
+            let now = Instant::now();
+            if now < next {
+                thread::sleep((next - now).min(POLL));
+                continue;
+            }
+            self.tick();
+            slowest = slowest.max(now.elapsed());
+            next = (next + self.config.tick).max(now);
+            if self.stats.tick.is_multiple_of(REPORT) {
+                let stats = self.stats();
+                println!(
+                    "tick {}: {} players, slowest tick {slowest:?}",
+                    stats.tick, stats.players
+                );
+                slowest = Duration::ZERO;
+            }
+        }
     }
 
     fn accept(&mut self) {

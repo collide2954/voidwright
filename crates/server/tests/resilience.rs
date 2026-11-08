@@ -2,7 +2,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{Client, server, settle};
+use common::{Client, Running, server, settle};
 use voidwright_server::Config;
 
 #[test]
@@ -48,4 +48,37 @@ fn a_client_that_stops_reading_does_not_hold_up_the_tick() {
 #[test]
 fn the_backlog_of_a_world_holds_64_kib() {
     assert_eq!(Config::default().backlog, 64 * 1024);
+}
+
+#[test]
+fn the_server_loop_keeps_its_pace_while_one_client_stalls_and_one_drops() {
+    const TICK: Duration = Duration::from_millis(20);
+    const TICKS: u32 = 50;
+    let mut running = Running::start(Config {
+        tick: TICK,
+        ..Config::default()
+    });
+    let (mut ash, _) = Client::join(&mut running, "Ash");
+    let (_bryn, _) = Client::join(&mut running, "Bryn");
+    let (cara, _) = Client::join(&mut running, "Cara");
+    let mut cara = Some(cara);
+    let start = Instant::now();
+    let mut last = ash.update(&mut running);
+    for count in 0..TICKS {
+        if count == TICKS / 2 {
+            cara = None;
+        }
+        let update = ash.update(&mut running);
+        assert_eq!(update.tick, last.tick + 1);
+        last = update;
+    }
+    assert!(cara.is_none());
+    let elapsed = start.elapsed();
+    assert!(elapsed < TICK * TICKS * 3, "{elapsed:?}");
+    assert_eq!(last.players.len(), 2);
+}
+
+#[test]
+fn a_world_ticks_every_600_milliseconds() {
+    assert_eq!(Config::default().tick, voidwright_core::TICK);
 }
