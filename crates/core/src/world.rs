@@ -68,6 +68,15 @@ impl World {
         Some(id)
     }
 
+    pub fn leave(&mut self, id: PlayerId) -> bool {
+        self.players.remove(&id).is_some()
+    }
+
+    #[must_use]
+    pub fn population(&self) -> usize {
+        self.players.len()
+    }
+
     #[must_use]
     pub fn player(&self, id: PlayerId) -> Option<&Walker> {
         self.players.get(&id).map(|player| &player.walker)
@@ -191,5 +200,38 @@ mod tests {
         world.tick();
         assert_eq!(tile(&world, north), Tile::new(1, 1));
         assert_eq!(tile(&world, south), Tile::new(1, 0));
+    }
+
+    #[test]
+    fn a_player_that_leaves_is_gone() {
+        let (mut world, id) = corridor();
+        assert!(world.leave(id));
+        assert_eq!(world.player(id), None);
+        assert!(!world.leave(id));
+    }
+
+    #[test]
+    fn the_population_counts_the_players() {
+        let (mut world, first) = corridor();
+        assert!(world.join(Tile::new(1, 0)).is_some());
+        assert_eq!(world.population(), 2);
+        world.leave(first);
+        assert_eq!(world.population(), 1);
+    }
+
+    #[test]
+    fn the_id_of_a_player_that_left_is_not_given_again_at_once() {
+        let (mut world, first) = corridor();
+        world.leave(first);
+        assert_ne!(world.join(Tile::new(0, 0)), Some(first));
+    }
+
+    #[test]
+    fn a_join_fails_when_every_id_is_in_use() {
+        let mut world = World::new(fixtures::map(&["."]));
+        for _ in 0..=u16::MAX {
+            assert!(world.join(Tile::new(0, 0)).is_some());
+        }
+        assert_eq!(world.join(Tile::new(0, 0)), None);
     }
 }
