@@ -52,6 +52,11 @@ pub fn attributes() -> [VertexAttribute; 1] {
 }
 
 #[must_use]
+pub fn texel(size: [u16; 2]) -> [f32; 2] {
+    size.map(|side| 1.0 / f32::from(side.max(1)))
+}
+
+#[must_use]
 pub fn levels(screen: [u16; 2]) -> [[u16; 2]; LEVELS] {
     let mut size = screen.map(|side| side.div_ceil(4).max(1));
     std::array::from_fn(|_| {
@@ -59,6 +64,191 @@ pub fn levels(screen: [u16; 2]) -> [[u16; 2]; LEVELS] {
         size = size.map(|side| side.div_ceil(2));
         level
     })
+}
+
+#[cfg(test)]
+mod mirror {
+    pub(super) const FILMIC: &str = "vec3 filmic(vec3 x) {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}";
+
+    pub(super) fn filmic(x: f32) -> f32 {
+        ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+    }
+
+    pub(super) fn unfilmic(y: f32) -> f32 {
+        let a = 2.51 - 2.43 * y;
+        let b = 0.03 - 0.59 * y;
+        ((b * b + 0.56 * y * a).sqrt() - b) / (2.0 * a)
+    }
+
+    pub(super) fn declared(shader: &str, meta: &miniquad::ShaderMeta) -> usize {
+        for uniform in &meta.uniforms.uniforms {
+            assert!(shader.contains(&uniform.name), "{}", uniform.name);
+        }
+        meta.uniforms
+            .uniforms
+            .iter()
+            .map(|uniform| uniform.uniform_type.size() * uniform.array_count)
+            .sum()
+    }
+}
+
+pub mod prefilter {
+    use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
+
+    pub const FRAGMENT: &str = "#version 100
+precision mediump float;
+uniform sampler2D scene;
+uniform highp vec2 texel;
+vec3 unfilmic(vec3 y) {
+    vec3 a = 2.51 - 2.43 * y;
+    vec3 b = 0.03 - 0.59 * y;
+    return (sqrt(b * b + 0.56 * y * a) - b) / (2.0 * a);
+}
+void main() {
+    highp vec2 corner = 4.0 * gl_FragCoord.xy - 1.5;
+    vec4 sum = vec4(0.0);
+    for (int row = 0; row < 4; row++) {
+        for (int column = 0; column < 4; column++) {
+            vec4 tap = texture2D(scene, (corner + vec2(float(column), float(row))) * texel);
+            sum += vec4(tap.rgb * tap.a, tap.a);
+        }
+    }
+    vec3 color = sum.rgb / max(sum.a, 0.001);
+    gl_FragColor = vec4(unfilmic(pow(color, vec3(2.2))) * sum.a / 16.0, 1.0);
+}
+";
+
+    #[must_use]
+    pub fn meta() -> ShaderMeta {
+        ShaderMeta {
+            images: vec!["scene".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: vec![UniformDesc::new("texel", UniformType::Float2)],
+            },
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Uniforms {
+        pub texel: [f32; 2],
+    }
+
+    impl Uniforms {
+        #[must_use]
+        pub fn new(scene: [u16; 2]) -> Self {
+            Self {
+                texel: super::texel(scene),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::mirror::{FILMIC, declared, filmic, unfilmic};
+        use super::{FRAGMENT, Uniforms, meta};
+        use crate::shader::{baked, particles, skinned};
+        use glam::{Vec2, Vec3, Vec4};
+
+        fn taps(fragment: Vec2) -> [Vec2; 16] {
+            let corner = 4.0 * fragment - 1.5;
+            std::array::from_fn(|index| {
+                let [column, row] =
+                    [index % 4, index / 4].map(|step| f32::from(u8::try_from(step).unwrap()));
+                corner + Vec2::new(column, row)
+            })
+        }
+
+        fn prefilter(block: &[(Vec3, f32); 16]) -> Vec3 {
+            let sum: Vec4 = block
+                .iter()
+                .map(|&(color, glow)| (color * glow).extend(glow))
+                .sum();
+            let color = sum.truncate() / sum.w.max(0.001);
+            color.powf(2.2).map(unfilmic) * sum.w / 16.0
+        }
+
+        #[test]
+        fn the_shader_uses_glsl_100() {
+            assert!(FRAGMENT.starts_with("#version 100"));
+        }
+
+        #[test]
+        fn uniforms_carry_one_texel_of_the_scene() {
+            assert_eq!(size_of::<Uniforms>(), declared(FRAGMENT, &meta()));
+            assert!(FRAGMENT.contains("uniform highp vec2 texel;"));
+            assert_eq!(
+                Uniforms::new([1280, 720]).texel,
+                [1.0 / 1280.0, 1.0 / 720.0]
+            );
+            assert_eq!(meta().images, ["scene"]);
+            assert!(FRAGMENT.contains("uniform sampler2D scene;"));
+        }
+
+        #[test]
+        fn the_taps_read_each_scene_pixel_once() {
+            assert!(FRAGMENT.contains("highp vec2 corner = 4.0 * gl_FragCoord.xy - 1.5;"));
+            assert!(FRAGMENT.contains("for (int row = 0; row < 4; row++)"));
+            assert!(FRAGMENT.contains("for (int column = 0; column < 4; column++)"));
+            assert!(FRAGMENT.contains("(corner + vec2(float(column), float(row))) * texel"));
+            let mut reads = [[0_u8; 16]; 8];
+            for y in 0..2_u8 {
+                for x in 0..4_u8 {
+                    let fragment = Vec2::new(f32::from(x), f32::from(y)) + 0.5;
+                    for tap in taps(fragment) {
+                        assert!((tap.fract_gl() - 0.5).length() < 1e-6, "{tap}");
+                        let pixel = tap.floor().as_ivec2();
+                        let [column, row] =
+                            [pixel.x, pixel.y].map(|side| usize::try_from(side).unwrap());
+                        reads[row][column] += 1;
+                    }
+                }
+            }
+            assert_eq!(reads, [[1; 16]; 8]);
+        }
+
+        #[test]
+        fn the_inverse_curve_undoes_the_film_curve() {
+            assert!(FRAGMENT.contains("vec3 a = 2.51 - 2.43 * y;"));
+            assert!(FRAGMENT.contains("vec3 b = 0.03 - 0.59 * y;"));
+            assert!(FRAGMENT.contains("return (sqrt(b * b + 0.56 * y * a) - b) / (2.0 * a);"));
+            for shader in [baked::FRAGMENT, skinned::FRAGMENT, particles::FRAGMENT] {
+                assert!(shader.contains(FILMIC));
+            }
+            for step in 0..=700_u16 {
+                let light = f32::from(step) / 100.0;
+                let back = unfilmic(filmic(light));
+                assert!(
+                    (back - light).abs() < 1e-3 * (1.0 + light),
+                    "{light} {back}"
+                );
+            }
+        }
+
+        #[test]
+        fn the_display_gamma_matches_the_scene_shaders() {
+            assert!(FRAGMENT.contains("pow(color, vec3(2.2))"));
+            assert!(baked::FRAGMENT.contains("pow(filmic(shaded), vec3(0.4545))"));
+            assert!((2.2_f32 * 0.4545 - 1.0).abs() < 1e-3);
+        }
+
+        #[test]
+        fn only_glowing_pixels_feed_the_bloom() {
+            assert!(FRAGMENT.contains("sum += vec4(tap.rgb * tap.a, tap.a);"));
+            assert!(FRAGMENT.contains("vec3 color = sum.rgb / max(sum.a, 0.001);"));
+            assert!(FRAGMENT.contains("unfilmic(pow(color, vec3(2.2))) * sum.a / 16.0"));
+            let sunlit = (Vec3::ONE, 0.0);
+            assert_eq!(prefilter(&[sunlit; 16]), Vec3::ZERO);
+            let teal = Vec3::new(0.3, 1.0, 0.85) * 2.5;
+            let shown = teal.map(filmic).powf(0.4545);
+            let mut block = [sunlit; 16];
+            block[..8].fill((shown, 1.0));
+            let light = prefilter(&block);
+            assert!(light.distance(teal * 0.5) < 0.01, "{light}");
+        }
+    }
 }
 
 pub mod composite {
