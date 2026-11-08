@@ -47,7 +47,7 @@ pub const COAT_CUT: Drape = Drape {
     top: 0.16,
     bottom: 0.28,
     length: 0.64,
-    squash: 0.82,
+    squash: 0.95,
 };
 pub const COAT_TOP: f32 = 0.08;
 pub const COAT_TILT: f32 = 0.06;

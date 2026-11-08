@@ -483,7 +483,7 @@ fn coat(clay: &mut Sculpt) {
         stroke(Bone::Pelvis, ring(0.15, 0.02), LEATHER)
             .at(Vec3::new(0.0, 0.08, 0.0))
             .turned(Quat::from_rotation_x(-0.06))
-            .squashed(Vec3::new(1.0, 1.0, 0.8))
+            .squashed(Vec3::new(1.0, 1.0, 0.93))
             .blended(0.006),
     );
 }

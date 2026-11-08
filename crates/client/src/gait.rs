@@ -16,6 +16,7 @@ const WALK_ARC: f32 = 0.5;
 const RUN_ARC: f32 = 0.85;
 const CLEARANCE: f32 = 0.015;
 const RISE: f32 = 0.05;
+const HOLD: f32 = 0.03;
 const PLACE: f32 = 0.08;
 const HEEL_STRIKE: f32 = 0.45;
 const TOE_OFF: f32 = 1.2;
@@ -207,11 +208,13 @@ fn footing(phase: f32, pace: f32) -> Footing {
         let swing = (moment - duty) / (1.0 - duty);
         let start = rock(flat(front - travel), TOE, -TOE_OFF);
         let end = rock(flat(front), HEEL, HEEL_STRIKE);
-        let ahead = start.x + (end.x - start.x) * smoothstep(0.0, 1.0, swing);
+        let drift = cycle(pace) * (1.0 - duty);
+        let carry = smoothstep(HOLD, 1.0 - PLACE, swing);
+        let ahead = start.x + (end.x + drift - start.x) * carry - drift * swing;
         let pitch = if swing < 0.6 {
-            -TOE_OFF * (1.0 - smoothstep(0.0, 0.6, swing))
+            -TOE_OFF * (1.0 - smoothstep(HOLD, 0.6, swing))
         } else {
-            HEEL_STRIKE * smoothstep(0.6, 1.0, swing)
+            HEEL_STRIKE * smoothstep(0.6, 1.0 - PLACE, swing)
         };
         let rise = smoothstep(0.0, RISE, swing) * (1.0 - smoothstep(1.0 - PLACE, 1.0, swing));
         let arc = (PI * (swing / blend(WALK_ARC, RUN_ARC)).min(1.0)).sin();
@@ -273,18 +276,15 @@ mod tests {
         })
     }
 
-    fn lowest(soles: [Vec3; 2]) -> Vec3 {
-        if soles[1].y < soles[0].y {
-            soles[1]
-        } else {
-            soles[0]
-        }
+    fn lowest(soles: [Vec3; 2]) -> usize {
+        usize::from(soles[1].y < soles[0].y)
     }
 
-    fn strides(pace: f32, bone: Bone, lag: f32) -> impl Iterator<Item = (f32, [Vec3; 2])> {
+    fn strides(pace: f32, bone: Bone, lag: f32) -> impl Iterator<Item = (f32, [[Vec3; 2]; 2])> {
         (0..SAMPLES).map(move |sample| {
             let moment = (f32::from(sample) / f32::from(SAMPLES) + lag).fract();
-            (moment, soles(pace, sample, bone))
+            let pair = [sample, sample + 1].map(|sample| soles(pace, sample, bone));
+            (moment, pair)
         })
     }
 
@@ -292,10 +292,29 @@ mod tests {
     fn the_feet_never_sink_into_the_ground() {
         for pace in [0.0, 1.0] {
             for (bone, lag) in FEET {
-                for (moment, soles) in strides(pace, bone, lag) {
-                    let low = lowest(soles).y;
+                for (moment, [soles, _]) in strides(pace, bone, lag) {
+                    let low = soles[lowest(soles)].y;
                     assert!(low > -0.002, "pace {pace} {bone:?} at {moment}: {low}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn planted_feet_do_not_slide_along_the_walk() {
+        for pace in [0.0, 1.0] {
+            let step = cycle(pace) / f32::from(SAMPLES);
+            for (bone, lag) in FEET {
+                let (mut slid, mut ground) = (0.0, 0.0);
+                for (_, [soles, next]) in strides(pace, bone, lag) {
+                    let point = lowest(soles);
+                    if soles[point].y < 0.01 {
+                        slid += (next[point].z - soles[point].z).abs();
+                        ground += step;
+                    }
+                }
+                let share = slid / ground;
+                assert!(share < 0.01, "pace {pace} {bone:?}: {share}");
             }
         }
     }
@@ -314,9 +333,9 @@ mod tests {
         for pace in [0.0, 1.0] {
             let duty = duty(pace);
             for (bone, lag) in FEET {
-                for (moment, soles) in strides(pace, bone, lag) {
+                for (moment, [soles, _]) in strides(pace, bone, lag) {
                     let swing = (moment - duty) / (1.0 - duty);
-                    let low = lowest(soles).y;
+                    let low = soles[lowest(soles)].y;
                     if (0.1..0.9).contains(&swing) {
                         assert!(low > 0.01, "pace {pace} {bone:?} at {moment}: {low}");
                     }
