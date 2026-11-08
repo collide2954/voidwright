@@ -1,4 +1,4 @@
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use glam::{Mat3, Quat, Vec2, Vec3, Vec3Swizzles, Vec4};
 
@@ -19,6 +19,8 @@ const COWL_REACH: [f32; 2] = [0.05, 0.09];
 const HIP_DROP: f32 = 0.03;
 const BRACER: [Vec3; 2] = [Vec3::new(0.048, 0.0, 0.048), Vec3::new(0.036, -0.09, 0.036)];
 const SHELL: f32 = 0.022;
+const SASH_RADIUS: f32 = 0.009;
+const SASH_STEPS: u16 = 36;
 const BAND: f32 = 0.008;
 const STRAP: [Vec3; 3] = {
     let reach = SHELL / 2.0 + 0.002 + BAND / 2.0;
@@ -900,19 +902,47 @@ fn tail() -> Sculpt {
 
 fn chest() -> Sculpt {
     let mut clay = clay();
-    let strap = Quat::from_rotation_z(0.55);
+    let path = sash();
+    for (index, from) in path.iter().enumerate() {
+        let to = path[(index + 1) % path.len()];
+        clay.add(segment(Bone::Torso, *from, to, SASH_RADIUS, LEATHER).blended(0.004));
+    }
+    clay.part();
+    let front = (0..path.len())
+        .filter(|&index| path[index].z < 0.0)
+        .min_by(|&a, &b| path[a].x.abs().total_cmp(&path[b].x.abs()))
+        .expect("the sash crosses the chest");
+    let [before, after] = [front + path.len() - 1, front + 1].map(|index| path[index % path.len()]);
+    let along = (after - before).normalize();
+    let out = Vec3::NEG_Z.reject_from(along).normalize();
     clay.add(
-        stroke(Bone::Torso, ring(0.205, 0.011), LEATHER)
-            .at(Vec3::new(0.0, 0.24, 0.003))
-            .turned(strap)
-            .squashed(Vec3::new(1.0, 1.0, 0.62)),
-    );
-    clay.add(
-        stroke(Bone::Torso, block(0.02, 0.024, 0.007, 0.003), BRASS)
-            .at(Vec3::new(0.0, 0.24, -0.128))
-            .turned(strap),
+        stroke(Bone::Torso, block(0.019, 0.023, 0.004, 0.003), BRASS)
+            .at(path[front] + out * (SASH_RADIUS * 0.6))
+            .turned(Quat::from_mat3(&Mat3::from_cols(
+                out.cross(along),
+                along,
+                -out,
+            ))),
     );
     clay
+}
+
+fn sash() -> Vec<Vec3> {
+    let mut torso = clay();
+    trunk(&mut torso);
+    let frame = rest()[Bone::Torso.index()];
+    let (center, tilt) = (Vec3::new(0.0, 0.24, 0.003), Quat::from_rotation_z(0.55));
+    (0..SASH_STEPS)
+        .map(|step| {
+            let angle = TAU * f32::from(step) / f32::from(SASH_STEPS);
+            let out = tilt * Vec3::new(angle.cos(), 0.0, angle.sin());
+            let reach = (0..400_u16)
+                .map(|index| f32::from(index) * 0.001)
+                .find(|&reach| torso.distance(frame.transform_point3(center + out * reach)) > 0.0)
+                .unwrap_or(0.2);
+            center + out * (reach + SASH_RADIUS)
+        })
+        .collect()
 }
 
 fn belt() -> Sculpt {
@@ -1747,6 +1777,21 @@ mod tests {
             .expect("the figure has a waist");
         let [woven, knitted, grained, brushed] = front.surface;
         assert!(brushed > woven.max(knitted).max(grained), "{front:?}");
+    }
+
+    #[test]
+    fn the_chest_strap_lies_on_the_coat() {
+        let mut torso = super::clay();
+        super::trunk(&mut torso);
+        let strap = super::chest().mesh(0.005);
+        let gaps: Vec<f32> = strap
+            .vertices
+            .iter()
+            .map(|vertex| torso.distance(Vec3::from(vertex.position)))
+            .collect();
+        let deepest = gaps.iter().copied().fold(f32::INFINITY, f32::min);
+        let farthest = gaps.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(deepest > -0.006 && farthest < 0.026, "{deepest} {farthest}");
     }
 
     #[test]
