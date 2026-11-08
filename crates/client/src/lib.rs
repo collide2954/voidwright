@@ -10,6 +10,7 @@ mod gait;
 mod game;
 pub mod ground;
 mod input;
+pub mod inspect;
 mod launch;
 mod light;
 mod mesh;
