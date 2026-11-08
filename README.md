@@ -53,6 +53,8 @@ The client plays sound on the default output device. A capture without `--record
 | Path | Contents |
 | --- | --- |
 | `crates/core` | Game rules. No input or output. |
+| `crates/protocol` | Messages between the client and the server, and their binary encoding. |
+| `crates/server` | Game server. |
 | `crates/client` | Game client. |
 | `crates/client/assets/audio` | Recorded sound clips. `CREDITS.md` gives the author, source, and license of each clip. |
 | `docs/audio.md` | Design of the sound and the music. |
@@ -61,6 +63,7 @@ The client plays sound on the default output device. A capture without `--record
 | `docs/lore.md` | Lore of the game world. |
 | `docs/motion.md` | Reference values for the motion of figures. |
 | `docs/performance.md` | Performance target, method, and results. |
+| `docs/protocol.md` | Network protocol between the client and the server. |
 
 ## License
 
