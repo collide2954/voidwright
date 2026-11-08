@@ -15,6 +15,7 @@ const ITERATIONS: usize = 4;
 const RING: f32 = 0.6;
 const MARGIN: f32 = 0.015;
 const BAND: f32 = 0.07;
+const LEVER: f32 = 0.25;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Capsule {
@@ -126,8 +127,28 @@ impl Cloth {
                     for point in 1..3 {
                         self.points[strip][point] = clear(self.points[strip][point], leg, center);
                     }
+                    for segment in 0..2 {
+                        self.clear_segment(strip, segment, leg, center);
+                    }
                 }
             }
+        }
+    }
+
+    fn clear_segment(&mut self, strip: usize, segment: usize, leg: &Capsule, center: Vec3) {
+        let (from, to) = (self.points[strip][segment], self.points[strip][segment + 1]);
+        let along = nearest(from, to, leg.from, leg.to);
+        let touching = from.lerp(to, along);
+        let push = clear(touching, leg, center) - touching;
+        if push.length_squared() < 1e-12 {
+            return;
+        }
+        if segment == 0 {
+            self.points[strip][1] += push / along.max(LEVER);
+        } else {
+            let share = (1.0 - along).powi(2) + along.powi(2);
+            self.points[strip][1] += push * (1.0 - along) / share;
+            self.points[strip][2] += push * along / share;
         }
     }
 
@@ -214,6 +235,34 @@ pub fn strip_angle(strip: usize) -> f32 {
 fn joined(strip: usize) -> bool {
     let left = |strip: usize| strip_angle(strip).cos() < 0.0;
     left(strip) == left((strip + 1) % STRIPS)
+}
+
+fn nearest(from: Vec3, to: Vec3, other_from: Vec3, other_to: Vec3) -> f32 {
+    let (span, other) = (to - from, other_to - other_from);
+    let gap = from - other_from;
+    let (length, other_length) = (span.length_squared(), other.length_squared());
+    if length < 1e-9 {
+        return 0.0;
+    }
+    let (toward, other_toward) = (span.dot(gap), other.dot(gap));
+    if other_length < 1e-9 {
+        return (-toward / length).clamp(0.0, 1.0);
+    }
+    let both = span.dot(other);
+    let square = length * other_length - both * both;
+    let along = if square > 1e-9 {
+        ((both * other_toward - toward * other_length) / square).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let other_along = (both * along + other_toward) / other_length;
+    if other_along < 0.0 {
+        (-toward / length).clamp(0.0, 1.0)
+    } else if other_along > 1.0 {
+        ((both - toward) / length).clamp(0.0, 1.0)
+    } else {
+        along
+    }
 }
 
 fn clear(point: Vec3, leg: &Capsule, center: Vec3) -> Vec3 {
@@ -416,6 +465,26 @@ mod tests {
         let moved = cloth.points()[3][2];
         let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z).length();
         assert!(flat(moved) > flat(axis) + 0.08, "{moved} {axis}");
+    }
+
+    #[test]
+    fn a_knee_between_two_strip_points_pushes_the_strip_out() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let [_, knee, hem] = cloth.points()[5];
+        let middle = knee.lerp(hem, 0.5);
+        let outward = Vec3::new(middle.x, 0.0, middle.z).normalize();
+        let tip = middle + outward * 0.02;
+        let leg = Capsule {
+            from: Vec3::new(0.0, tip.y, 0.0),
+            to: tip,
+            radius: 0.06,
+        };
+        run(&mut cloth, Vec3::Y, &[leg], 2);
+        let [_, knee, hem] = cloth.points()[5];
+        let along = ((tip - knee).dot(hem - knee) / (hem - knee).length_squared()).clamp(0.0, 1.0);
+        let passing = knee.lerp(hem, along);
+        assert!(passing.distance(tip) > 0.07, "{passing} {tip}");
     }
 
     #[test]
