@@ -1,8 +1,10 @@
+mod options;
 mod playback;
 mod session;
 mod treadmill;
 mod view;
 
+pub use options::Options;
 pub use playback::Playback;
 pub use session::{Command, Session};
 pub use treadmill::Gait;

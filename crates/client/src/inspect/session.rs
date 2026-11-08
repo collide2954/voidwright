@@ -2,7 +2,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{Mat4, Vec3};
 
-use super::{Gait, Playback, View};
+use super::{Gait, Options, Playback, View};
 use crate::Pose;
 
 const HOME_YAW: f32 = 0.6;
@@ -37,16 +37,19 @@ pub struct Session {
 
 impl Session {
     #[must_use]
-    pub fn new(bounds: [Vec3; 2], aspect: f32) -> Self {
+    pub fn new(bounds: [Vec3; 2], aspect: f32, options: &Options) -> Self {
         let mut session = Self {
-            gait: Gait::default(),
-            playback: Playback::new(0.0),
+            gait: options.gait,
+            playback: Playback::new(options.time),
             view: View::new(Vec3::ZERO, 0.0, 0.0, 1.0),
             spinning: false,
             bounds,
             aspect,
         };
         session.reset();
+        if let Some([yaw, pitch, distance]) = options.orbit {
+            session.view = View::new(session.view.target(), yaw, pitch, distance);
+        }
         session
     }
 
@@ -142,15 +145,32 @@ impl Session {
 mod tests {
     use super::{Command, Session};
     use crate::gait::cycle;
-    use crate::inspect::Gait;
+    use crate::inspect::{Gait, Options};
     use crate::{Bone, skeleton};
     use glam::{Vec2, Vec3};
+    use std::f32::consts::FRAC_PI_2;
 
     const BOUNDS: [Vec3; 2] = [Vec3::new(-0.3, 0.0, -0.25), Vec3::new(0.3, 1.75, 0.25)];
     const ASPECT: f32 = 16.0 / 9.0;
 
     fn session() -> Session {
-        Session::new(BOUNDS, ASPECT)
+        Session::new(BOUNDS, ASPECT, &Options::default())
+    }
+
+    #[test]
+    fn options_set_the_gait_the_time_and_the_orbit() {
+        let options = Options {
+            gait: Gait::Run,
+            time: 1.5,
+            orbit: Some([FRAC_PI_2, 0.0, 4.0]),
+            ..Options::default()
+        };
+        let session = Session::new(BOUNDS, ASPECT, &options);
+        assert!(session.status().starts_with("run, 1x, playing, 1.500 s"));
+        assert!((session.view().distance() - 4.0).abs() < 1e-6);
+        assert!(looking(&session).distance(Vec3::X) < 1e-5);
+        let middle = (BOUNDS[0] + BOUNDS[1]) / 2.0;
+        assert!(session.view().target().distance(middle) < 1e-6);
     }
 
     fn looking(session: &Session) -> Vec3 {

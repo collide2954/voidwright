@@ -26,6 +26,13 @@ impl Gait {
     }
 
     #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        [Self::Idle, Self::Walk, Self::Run]
+            .into_iter()
+            .find(|gait| gait.name() == name)
+    }
+
+    #[must_use]
     pub const fn motion(self) -> f32 {
         match self {
             Self::Idle => 0.0,
