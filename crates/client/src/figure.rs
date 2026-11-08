@@ -296,16 +296,24 @@ mod tests {
         bones[bone.index()].transform_point3(Vec3::ZERO) - Vec3::Z * travelled
     }
 
+    fn contact(sample: u16, bone: Bone) -> Vec3 {
+        let (travelled, bones) = walked(sample);
+        let [heel, toe] = [Vec3::new(0.0, -0.06, 0.06), Vec3::new(0.0, -0.06, -0.13)]
+            .map(|point| bones[bone.index()].transform_point3(point) - Vec3::Z * travelled);
+        if toe.y < heel.y - 0.002 { toe } else { heel }
+    }
+
     #[test]
     fn planted_feet_stay_still_while_the_body_walks_on() {
         for bone in [Bone::LeftFoot, Bone::RightFoot] {
             let still = (0..SAMPLES)
                 .filter(|&sample| {
-                    let moved = world_ankle(sample + 1, bone) - world_ankle(sample, bone);
-                    moved.length() < 0.002
+                    let (now, next) = (contact(sample, bone), contact(sample + 1, bone));
+                    let moved = Vec3::new(next.x - now.x, 0.0, next.z - now.z);
+                    now.y < 0.02 && moved.length() < 0.002
                 })
                 .count();
-            assert!(still * 10 > usize::from(SAMPLES) * 4, "{bone:?} {still}");
+            assert!(still * 10 > usize::from(SAMPLES) * 5, "{bone:?} {still}");
         }
     }
 

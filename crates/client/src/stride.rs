@@ -142,10 +142,13 @@ mod tests {
     }
 
     #[test]
-    fn walking_carries_the_hips_ahead_of_the_feet() {
-        let mut stride = Stride::default();
-        walk(&mut stride, Vec2::ZERO, Vec2::Y, 120);
-        assert!(stride.pose(0.0).surge > 0.02);
+    fn steady_walking_stays_upright_and_running_leans_ahead() {
+        let mut walker = Stride::default();
+        walk(&mut walker, Vec2::ZERO, Vec2::Y, 180);
+        assert!(walker.pose(0.0).surge.abs() < 0.01);
+        let mut runner = Stride::default();
+        walk(&mut runner, Vec2::ZERO, Vec2::Y * 2.0, 180);
+        assert!(runner.pose(0.0).surge > 0.02);
     }
 
     #[test]

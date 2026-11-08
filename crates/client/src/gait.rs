@@ -5,27 +5,32 @@ use glam::Vec2;
 use crate::figure::{ANKLE, ANKLE_HEIGHT, HIP, THIGH};
 use crate::smoothstep;
 
-const WALK_CYCLE: f32 = 1.25;
+const WALK_CYCLE: f32 = 1.6;
 const RUN_CYCLE: f32 = 2.4;
-const WALK_DUTY: f32 = 0.58;
-const RUN_DUTY: f32 = 0.38;
-const WALK_LIFT: f32 = 0.08;
-const RUN_LIFT: f32 = 0.18;
-const HEEL_STRIKE: f32 = 0.3;
-const TOE_OFF: f32 = 0.55;
+const WALK_DUTY: f32 = 0.59;
+const RUN_DUTY: f32 = 0.35;
+const STANCE_FRONT: f32 = 0.38;
+const WALK_LIFT: f32 = 0.09;
+const RUN_LIFT: f32 = 0.2;
+const CLEARANCE: f32 = 0.015;
+const HEEL_STRIKE: f32 = 0.45;
+const TOE_OFF: f32 = 1.2;
+const HEEL_OFF: f32 = 0.5;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.997;
-const WALK_SURGE: f32 = 0.03;
-const RUN_SURGE: f32 = 0.09;
+const WALK_SURGE: f32 = 0.0;
+const RUN_SURGE: f32 = 0.04;
 const BANK_SWAY: f32 = 0.12;
 const RUN_DIP: f32 = 0.06;
-const WALK_ROLL: f32 = 0.04;
-const ARM_LAG: f32 = 0.3;
-const ARM_FORWARD: f32 = 0.06;
-const SWAY: f32 = 0.025;
+const WALK_LOWEST: f32 = 0.05;
+const RUN_LOWEST: f32 = 0.175;
+const WALK_ROLL: f32 = 0.07;
+const ROLL_LEAD: f32 = 0.82;
+const SWAY_LAG: f32 = 0.31;
+const ARM_LAG: f32 = 0.2;
+const SWAY: f32 = 0.02;
 const RELAXED_ELBOW: f32 = 0.15;
-const ELBOW_REACH: f32 = 0.25;
 const BREATH_RATE: f32 = 1.6;
 const BREATH_DEPTH: f32 = 0.03;
 const SHIFT_RATE: f32 = 0.55;
@@ -76,17 +81,18 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
 
 #[must_use]
 pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -> Pose {
-    let (sin, cos) = phase.sin_cos();
+    let cos = phase.cos();
     let blend = |walk: f32, run: f32| (walk + (run - walk) * pace) * motion;
-    let arm = blend(0.32, 0.55);
+    let (arm_mean, arm) = (blend(-0.14, -0.1), blend(0.28, 0.5));
     let swing = (phase - ARM_LAG).cos();
-    let elbow =
-        |forward: f32| RELAXED_ELBOW + blend(0.15, 1.0) + ELBOW_REACH * motion * forward.max(0.0);
+    let elbow = |forward: f32| {
+        RELAXED_ELBOW * (1.0 - motion) + blend(0.3, 1.3) + blend(0.52, 0.35) * (0.5 + 0.5 * forward)
+    };
     let rest = 1.0 - motion;
     let shift = dwell((time * SHIFT_RATE).sin() + 0.3 * (time * SHIFT_RATE * 2.7 + 1.1).sin());
     let free = [shift.max(0.0), (-shift).max(0.0)];
-    let roll = SHIFT_ROLL * shift * rest - WALK_ROLL * sin * motion;
-    let twist = -blend(0.12, 0.16) * cos;
+    let roll = SHIFT_ROLL * shift * rest - WALK_ROLL * (phase + ROLL_LEAD).sin() * motion;
+    let twist = -blend(0.105, 0.16) * cos;
     let surge = blend(WALK_SURGE, RUN_SURGE) + lean.surge;
     let walk = stride(phase, pace, twist, surge);
     let relaxed = |leg: usize| (RELAXED_THIGH * free[leg], RELAXED_KNEE * free[leg]);
@@ -102,10 +108,12 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     let curl = |hand: f32| 0.42 + 0.34 * dwell(drift(hand, 0.53));
     Pose {
         surge,
-        sway: -SWAY * sin * motion + SHIFT_SWAY * shift * rest + BANK_SWAY * lean.bank,
+        sway: -SWAY * (phase - SWAY_LAG).sin() * motion
+            + SHIFT_SWAY * shift * rest
+            + BANK_SWAY * lean.bank,
         bob: walk.bob * motion,
         twist,
-        lean: blend(0.035, 0.22) + 0.012 * (time * 0.9).sin() * rest,
+        lean: blend(0.0, 0.127) + 0.012 * (time * 0.9).sin() * rest,
         breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * rest,
         roll,
         counter: -COUNTER_ROLL * roll + lean.bank,
@@ -114,8 +122,8 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
         thighs: [left.0, right.0],
         knees: [left.1, right.1],
         arms: [
-            -arm * swing + ARM_FORWARD * motion + 0.04 * drift(0.0, 0.5) * rest,
-            arm * swing + ARM_FORWARD * motion + 0.04 * drift(1.0, 0.5) * rest,
+            arm_mean - arm * swing + 0.04 * drift(0.0, 0.5) * rest,
+            arm_mean + arm * swing + 0.04 * drift(1.0, 0.5) * rest,
         ],
         elbows: [
             elbow(-swing) + 0.08 * drift(0.0, 0.31) * rest,
@@ -146,17 +154,9 @@ fn stride(phase: f32, pace: f32, twist: f32, surge: f32) -> Walk {
     let strike = footing(0.0, pace).ankle;
     let contact = strike.y + (length * length - strike.x * strike.x).max(0.0).sqrt();
     let crest = ANKLE_HEIGHT + length;
-    let duty = WALK_DUTY + (RUN_DUTY - WALK_DUTY) * pace;
-    let half = phase.rem_euclid(PI);
-    let peak = PI * duty;
-    let rise = if half < peak {
-        half / peak
-    } else {
-        (PI - half) / (PI - peak)
-    };
-    let shape = 0.5 - 0.5 * (PI * rise).cos();
-    let walking = contact + (crest - contact) * shape;
-    let running = crest - RUN_DIP * shape;
+    let walking =
+        contact + (crest - contact) * (0.5 - 0.5 * (2.0 * (phase - WALK_LOWEST * TAU)).cos());
+    let running = crest - RUN_DIP * (0.5 + 0.5 * (2.0 * (phase - RUN_LOWEST * TAU)).cos());
     let height = walking + (running - walking) * pace;
     let legs = [0, 1].map(|index| {
         let foot = feet[index];
@@ -172,14 +172,15 @@ fn stride(phase: f32, pace: f32, twist: f32, surge: f32) -> Walk {
 fn footing(phase: f32, pace: f32) -> Footing {
     let duty = WALK_DUTY + (RUN_DUTY - WALK_DUTY) * pace;
     let lift = WALK_LIFT + (RUN_LIFT - WALK_LIFT) * pace;
-    let reach = cycle(pace) * duty / 2.0;
+    let travel = cycle(pace) * duty;
+    let front = travel * STANCE_FRONT;
     let flat = |ahead: f32| Vec2::new(ahead, ANKLE_HEIGHT);
     let moment = phase.rem_euclid(TAU) / TAU;
     if moment < duty {
         let stance = moment / duty;
-        let ahead = reach * (1.0 - 2.0 * stance);
-        let strike = HEEL_STRIKE * (1.0 - smoothstep(0.0, 0.25, stance));
-        let roll = TOE_OFF * smoothstep(0.55, 1.0, stance);
+        let ahead = front - travel * stance;
+        let strike = HEEL_STRIKE * (1.0 - smoothstep(0.0, 0.2, stance));
+        let roll = TOE_OFF * smoothstep(HEEL_OFF, 1.0, stance);
         let ankle = if roll > 0.0 {
             rock(flat(ahead), TOE, -roll)
         } else {
@@ -191,12 +192,24 @@ fn footing(phase: f32, pace: f32) -> Footing {
         }
     } else {
         let swing = (moment - duty) / (1.0 - duty);
-        let start = rock(flat(-reach), TOE, -TOE_OFF);
-        let end = rock(flat(reach), HEEL, HEEL_STRIKE);
-        let ankle = start.lerp(end, smoothstep(0.0, 1.0, swing))
-            + Vec2::new(0.0, lift * (PI * swing).sin());
-        let pitch = -TOE_OFF + (HEEL_STRIKE + TOE_OFF) * smoothstep(0.0, 0.7, swing);
-        Footing { ankle, pitch }
+        let start = rock(flat(front - travel), TOE, -TOE_OFF);
+        let end = rock(flat(front), HEEL, HEEL_STRIKE);
+        let low = ANKLE_HEIGHT + CLEARANCE;
+        let height = if swing < 0.5 {
+            start.y + (low - start.y) * smoothstep(0.0, 0.5, swing) + lift * (TAU * swing).sin()
+        } else {
+            low + (end.y - low) * smoothstep(0.5, 1.0, swing)
+        };
+        let ahead = start.x + (end.x - start.x) * smoothstep(0.0, 1.0, swing);
+        let pitch = if swing < 0.6 {
+            -TOE_OFF * (1.0 - smoothstep(0.0, 0.6, swing))
+        } else {
+            HEEL_STRIKE * smoothstep(0.6, 1.0, swing)
+        };
+        Footing {
+            ankle: Vec2::new(ahead, height),
+            pitch,
+        }
     }
 }
 
@@ -222,7 +235,7 @@ fn dwell(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Pose, footing, pose_at};
+    use super::{Pose, cycle, footing, pose_at};
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     const WALKING: f32 = 1.0;
@@ -237,6 +250,67 @@ mod tests {
                 f32::from(u16::try_from(step).unwrap()) * 0.05,
             )
         })
+    }
+
+    fn walk_cycle() -> impl Iterator<Item = (f32, Pose)> {
+        (0..120).map(|step| {
+            let phase = TAU * f32::from(u8::try_from(step).unwrap()) / 120.0;
+            (phase, pose_at(phase, WALKING, 0.0, 0.0))
+        })
+    }
+
+    #[test]
+    fn walking_takes_about_125_steps_a_minute() {
+        let steps = 2.0 * 60.0 * (1.0 / 0.6) / cycle(0.0);
+        assert!((120.0..=130.0).contains(&steps), "{steps}");
+    }
+
+    #[test]
+    fn feet_strike_toes_up_and_leave_heel_up() {
+        let strike = footing(0.0, 0.0).pitch;
+        assert!((0.42..=0.49).contains(&strike), "{strike}");
+        let toe_off = footing(TAU * 0.589, 0.0).pitch;
+        assert!((-1.25..=-1.15).contains(&toe_off), "{toe_off}");
+    }
+
+    #[test]
+    fn the_arms_swing_mostly_behind_the_body() {
+        let arms: Vec<f32> = walk_cycle().map(|(_, pose)| pose.arms[0]).collect();
+        let forward = arms.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let back = arms.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!((0.08..=0.2).contains(&forward), "{forward}");
+        assert!((-0.5..=-0.35).contains(&back), "{back}");
+        let elbows: Vec<f32> = walk_cycle().map(|(_, pose)| pose.elbows[0]).collect();
+        assert!(elbows.iter().all(|elbow| (0.25..=0.85).contains(elbow)));
+        let spread = elbows.iter().copied().fold(0.0, f32::max)
+            - elbows.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(spread > 0.35, "{spread}");
+    }
+
+    #[test]
+    fn the_trunk_stays_upright_when_walking_and_leans_when_running() {
+        assert!(pose_at(0.0, WALKING, 0.0, 0.0).lean.abs() < 0.02);
+        let running = pose_at(0.0, WALKING, 1.0, 0.0).lean;
+        assert!((0.1..=0.16).contains(&running), "{running}");
+    }
+
+    #[test]
+    fn the_swing_side_hip_drops_early_in_the_stride() {
+        let (phase, pose) = walk_cycle()
+            .filter(|(phase, _)| *phase < PI)
+            .min_by(|a, b| a.1.roll.total_cmp(&b.1.roll))
+            .unwrap();
+        let moment = phase / TAU;
+        assert!((0.08..=0.17).contains(&moment), "{moment}");
+        assert!((0.06..=0.08).contains(&-pose.roll));
+    }
+
+    #[test]
+    fn the_body_rises_and_falls_about_five_centimeters() {
+        let bobs: Vec<f32> = walk_cycle().map(|(_, pose)| pose.bob).collect();
+        let range = bobs.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - bobs.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!((0.035..=0.065).contains(&range), "{range}");
     }
 
     #[test]
@@ -362,7 +436,7 @@ mod tests {
         let walk = pose_at(0.0, WALKING, 0.0, 0.0);
         let run = pose_at(0.0, WALKING, 1.0, 0.0);
         assert!(run.lean > walk.lean);
-        assert!(footing(0.0, 1.0).ankle.x > footing(0.0, 0.0).ankle.x + 0.05);
+        assert!(cycle(1.0) > cycle(0.0) + 0.5);
     }
 
     #[test]
