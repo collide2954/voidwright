@@ -39,7 +39,7 @@ struct Layer {
 struct Treatment {
     body: Layer,
     brush: Option<Layer>,
-    gain: f32,
+    level: f32,
 }
 
 const MOSS: Treatment = Treatment {
@@ -55,7 +55,7 @@ const MOSS: Treatment = Treatment {
         pitch: 0.9,
         level: 0.2,
     }),
-    gain: 2.2,
+    level: -30.9,
 };
 
 const SOIL: Treatment = Treatment {
@@ -71,7 +71,7 @@ const SOIL: Treatment = Treatment {
         pitch: 0.94,
         level: 0.25,
     }),
-    gain: 1.9,
+    level: -27.3,
 };
 
 const ROCK: Treatment = Treatment {
@@ -82,7 +82,7 @@ const ROCK: Treatment = Treatment {
         level: 1.0,
     },
     brush: None,
-    gain: 0.9,
+    level: -28.2,
 };
 
 struct Take {
@@ -212,11 +212,22 @@ impl Footstep {
         let strength = strength.clamp(0.0, 1.0);
         let bright = 0.85 + 0.3 * strength;
         let loudness = (0.25 + 0.75 * strength * strength) * (0.925 + 0.075 * noise.sample());
-        Self {
+        let mut step = Self {
             body: Playhead::new(bank, treatment.body, body, tune, bright, rate),
             brush: brush.map(|(layer, take)| Playhead::new(bank, layer, take, tune, bright, rate)),
-            gain: loudness * treatment.gain,
-        }
+            gain: 1.0,
+        };
+        let energy = step.energy(bank) / rate;
+        let wanted = 10.0_f32.powf(treatment.level / 10.0);
+        step.gain = loudness * (wanted / energy.max(f32::MIN_POSITIVE)).sqrt();
+        step
+    }
+
+    fn energy(&self, bank: &Bank) -> f32 {
+        let mut copy = *self;
+        std::iter::from_fn(|| copy.sample(bank))
+            .map(|value| value * value)
+            .sum()
     }
 
     #[must_use]
@@ -368,6 +379,19 @@ mod tests {
             bright_moss < bright_soil * 0.5,
             "{bright_moss} {bright_soil}"
         );
+    }
+
+    #[test]
+    fn steps_on_the_same_ground_keep_an_even_level() {
+        let bank = Bank::new();
+        for underfoot in [Underfoot::Moss, Underfoot::Soil, Underfoot::Rock] {
+            let levels: Vec<f32> = (1..=36)
+                .map(|seed| 10.0 * energy(&render(&bank, underfoot, 0.75, seed)).log10())
+                .collect();
+            let low = levels.iter().copied().fold(f32::INFINITY, f32::min);
+            let high = levels.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            assert!(high - low < 2.0, "{underfoot:?}: {low} to {high} dB");
+        }
     }
 
     #[test]
