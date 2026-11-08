@@ -5,22 +5,27 @@ use glam::{Quat, Vec2, Vec3};
 use crate::figure::{Bone, rest};
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
-use crate::shape::Material;
+use crate::shape::{Material, Surface};
 use crate::sky::noise3;
 use crate::spline::smoothstep;
 
-const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06);
-const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05);
-const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05);
-const SCARF: Material = Material::matte(Vec3::new(0.5, 0.26, 0.12), 0.05);
-const LEATHER: Material = Material::matte(Vec3::new(0.24, 0.16, 0.1), 0.18);
-const WRAP: Material = Material::matte(Vec3::new(0.36, 0.32, 0.26), 0.04);
-const BOOT: Material = Material::matte(Vec3::new(0.15, 0.11, 0.08), 0.2);
+const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06).textured(Surface::Woven);
+const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05).textured(Surface::Woven);
+const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05).textured(Surface::Woven);
+const SCARF: Material =
+    Material::matte(Vec3::new(0.5, 0.26, 0.12), 0.05).textured(Surface::Knitted);
+const LEATHER: Material =
+    Material::matte(Vec3::new(0.24, 0.16, 0.1), 0.18).textured(Surface::Grained);
+const WRAP: Material = Material::matte(Vec3::new(0.36, 0.32, 0.26), 0.04).textured(Surface::Woven);
+const BOOT: Material = Material::matte(Vec3::new(0.15, 0.11, 0.08), 0.2).textured(Surface::Grained);
 const SOLE: Material = Material::matte(Vec3::new(0.05, 0.05, 0.05), 0.05);
-const PLATE: Material = Material::matte(Vec3::new(0.46, 0.44, 0.4), 0.4);
-const METAL: Material = Material::matte(Vec3::new(0.3, 0.32, 0.35), 0.65);
-const MASK: Material = Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.55);
-const BRASS: Material = Material::matte(Vec3::new(0.55, 0.42, 0.22), 0.7);
+const PLATE: Material = Material::matte(Vec3::new(0.46, 0.44, 0.4), 0.4).textured(Surface::Brushed);
+const METAL: Material =
+    Material::matte(Vec3::new(0.3, 0.32, 0.35), 0.65).textured(Surface::Brushed);
+const MASK: Material =
+    Material::matte(Vec3::new(0.13, 0.14, 0.15), 0.55).textured(Surface::Brushed);
+const BRASS: Material =
+    Material::matte(Vec3::new(0.55, 0.42, 0.22), 0.7).textured(Surface::Brushed);
 const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85));
 const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25));
 const DUST: Vec3 = Vec3::new(0.42, 0.36, 0.28);
@@ -925,6 +930,27 @@ mod tests {
                 .fold(f32::NEG_INFINITY, f32::max)
         };
         assert!(front(1.0) > front(-1.0) + 0.006);
+    }
+
+    #[test]
+    fn the_coat_is_woven_and_the_plates_are_brushed() {
+        let skirts = [Bone::LeftSkirt.index(), Bone::RightSkirt.index()];
+        let coat: Vec<&SkinnedVertex> = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| skirts.contains(&strongest(vertex)) && vertex.position[1] < 0.7)
+            .collect();
+        let woven = coat.iter().filter(|vertex| vertex.surface[0] > 0.9).count();
+        assert!(woven * 10 > coat.len() * 9);
+        let plate = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| {
+                strongest(vertex) == Bone::LeftUpperArm.index() && vertex.position[1] > 1.3
+            })
+            .filter(|vertex| vertex.surface[3] > 0.9)
+            .count();
+        assert!(plate > 50);
     }
 
     #[test]

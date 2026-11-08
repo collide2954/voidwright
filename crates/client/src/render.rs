@@ -1,10 +1,12 @@
 use glam::{Mat4, Vec3};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
-    PassAction, Pipeline, PipelineParams, RenderingBackend, ShaderMeta, ShaderSource,
-    TextureFormat, TextureParams, UniformsSource, VertexAttribute, VertexFormat,
+    FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderingBackend,
+    ShaderMeta, ShaderSource, TextureFormat, TextureId, TextureParams, TextureWrap, UniformsSource,
+    VertexAttribute, VertexFormat,
 };
 
+use crate::detail::{DETAIL_SIZE, paint};
 use crate::shader::{baked, lit, skinned};
 use crate::{
     Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection, pulse,
@@ -86,7 +88,11 @@ impl Renderer {
         terrain.append(&underside(ground, &painter, &VAEL));
         let terrain = upload(context, &terrain.vertices, &terrain.indices);
         let figure = voidwright();
-        let avatar = upload(context, &figure.vertices, &figure.indices);
+        let mut avatar = upload(context, &figure.vertices, &figure.indices);
+        let detail = paint();
+        avatar.bindings.images = [&detail.height, &detail.slope_u, &detail.slope_v]
+            .map(|bytes| detail_texture(context, bytes))
+            .to_vec();
         let ring = marker_ring();
         let marker = upload(context, &ring.vertices, &ring.indices);
         Self {
@@ -219,6 +225,25 @@ fn behind() -> PipelineParams {
 fn clear() -> PassAction {
     let [red, green, blue] = palette::VOID.to_array();
     PassAction::clear_color(red, green, blue, 1.0)
+}
+
+fn detail_texture(context: &mut dyn RenderingBackend, bytes: &[u8]) -> TextureId {
+    let texture = context.new_texture_from_data_and_format(
+        bytes,
+        TextureParams {
+            format: TextureFormat::RGBA8,
+            wrap: TextureWrap::Repeat,
+            min_filter: FilterMode::Linear,
+            mag_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Linear,
+            width: u32::from(DETAIL_SIZE),
+            height: u32::from(DETAIL_SIZE),
+            allocate_mipmaps: true,
+            ..TextureParams::default()
+        },
+    );
+    context.texture_generate_mipmaps(texture);
+    texture
 }
 
 fn upload<V>(context: &mut dyn RenderingBackend, vertices: &[V], indices: &[u32]) -> Model {

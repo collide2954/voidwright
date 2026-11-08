@@ -85,17 +85,17 @@ fn slub(across: f32, threads: i32, along: f32, seed: u32) -> f32 {
 }
 
 fn knitted(at: Vec2) -> f32 {
-    let stitches = at * Vec2::new(12.0, 10.0);
+    let stitches = at * Vec2::new(6.0, 5.0);
     let inside = stitches - stitches.floor();
     let offset = (inside.x - 0.5).abs();
     let leg = (offset - 0.32 * inside.y - 0.06).abs();
     let strand = (1.0 - (leg / 0.15).powi(2)).max(0.0).sqrt();
-    strand * (PI * inside.y).sin().sqrt() * (0.85 + 0.15 * noise(at, IVec2::splat(48), 41))
+    strand * (PI * inside.y).sin().sqrt() * (0.85 + 0.15 * noise(at, IVec2::splat(24), 41))
 }
 
 fn grained(at: Vec2) -> f32 {
-    let cells = 10;
-    let scaled = at * 10.0;
+    let cells = 20;
+    let scaled = at * 20.0;
     let base = scaled.floor().as_ivec2();
     let mut nearest = f32::MAX;
     let mut second = f32::MAX;
