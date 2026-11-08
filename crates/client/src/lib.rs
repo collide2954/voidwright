@@ -2,6 +2,7 @@ mod app;
 mod camera;
 mod clock;
 pub mod contour;
+pub mod detail;
 pub mod field;
 mod figure;
 mod gait;
