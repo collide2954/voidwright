@@ -267,8 +267,15 @@ mod tests {
                 "{dim} {bright}"
             );
             assert!(bright - dim > TWINKLE, "{dim} {bright}");
+        }
+    }
+
+    #[test]
+    fn every_star_takes_seconds_to_swing() {
+        for star in stars() {
+            let glints: Vec<f32> = times().map(|time| glint(star, time)).collect();
             for pair in glints.windows(2) {
-                assert!((pair[1] - pair[0]).abs() < 0.08, "{pair:?}");
+                assert!((pair[1] - pair[0]).abs() < 0.03, "{pair:?}");
             }
         }
     }
