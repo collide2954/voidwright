@@ -11,11 +11,12 @@ uniform mat4 view_projection;
 uniform vec3 eye;
 uniform float time;
 varying mediump vec3 color;
-const float TWINKLE = 0.45;
+varying mediump float glint;
+const float TWINKLE = 0.25;
 void main() {
     float beat = in_twinkle.x + in_twinkle.y * time;
-    float glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));
-    color = in_color * glint;
+    glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));
+    color = in_color;
     gl_Position = view_projection * vec4(in_position + eye, 1.0);
 }
 ";
@@ -23,11 +24,12 @@ void main() {
 pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 varying mediump vec3 color;
+varying mediump float glint;
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 void main() {
-    gl_FragColor = vec4(pow(filmic(color), vec3(0.4545)), 1.0);
+    gl_FragColor = vec4(pow(filmic(color), vec3(0.4545)) * glint, 1.0);
 }
 ";
 
@@ -82,11 +84,19 @@ mod tests {
     use miniquad::{UniformDesc, UniformType, VertexFormat};
     use std::f32::consts::TAU;
 
-    const TWINKLE: f32 = 0.45;
+    const TWINKLE: f32 = 0.25;
 
     fn glint([phase, rate]: [f32; 2], time: f32) -> f32 {
         let beat = phase + rate * time;
         1.0 + TWINKLE * 0.5 * (beat.sin() + (2.7 * beat + phase).sin())
+    }
+
+    fn filmic(x: f32) -> f32 {
+        ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+    }
+
+    fn screen(light: f32, glint: f32) -> f32 {
+        (filmic(light).powf(0.4545) * glint).min(1.0)
     }
 
     fn times() -> impl Iterator<Item = f32> {
@@ -185,9 +195,32 @@ mod tests {
         assert!(VERTEX.contains(&format!("const float TWINKLE = {TWINKLE:?};")));
         assert!(VERTEX.contains("float beat = in_twinkle.x + in_twinkle.y * time;"));
         assert!(VERTEX.contains(
-            "float glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));"
+            "glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));"
         ));
-        assert!(VERTEX.contains("color = in_color * glint;"));
+    }
+
+    #[test]
+    fn the_twinkle_scales_the_brightness_on_screen() {
+        for shader in [VERTEX, FRAGMENT] {
+            assert!(shader.contains("varying mediump float glint;"));
+        }
+        assert!(VERTEX.contains("color = in_color;"));
+        assert!(FRAGMENT.contains("(x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)"));
+        assert!(FRAGMENT.contains("pow(filmic(color), vec3(0.4545)) * glint"));
+    }
+
+    #[test]
+    fn even_the_brightest_star_dims_visibly() {
+        let brightest = sky()
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.twinkle[1] > 0.0)
+            .map(|vertex| Vec3::from(vertex.color).max_element())
+            .fold(0.0, f32::max);
+        assert!(brightest > 2.5, "{brightest}");
+        let steady = screen(brightest, 1.0);
+        assert!(steady - screen(brightest, 1.0 - TWINKLE) > 0.2);
+        assert!(screen(brightest, 1.0 + TWINKLE) <= 1.0);
     }
 
     #[test]
