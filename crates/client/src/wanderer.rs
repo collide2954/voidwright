@@ -327,8 +327,8 @@ fn trunk(clay: &mut Sculpt) {
             .blended(0.07),
     );
     clay.add(
-        stroke(Bone::Torso, egg(0.205, 0.085, 0.115), COAT)
-            .at(Vec3::new(0.0, 0.39, 0.012))
+        stroke(Bone::Torso, egg(0.17, 0.085, 0.115), COAT)
+            .at(Vec3::new(0.0, 0.4, 0.012))
             .wrinkled(0.005, cloth)
             .blended(0.06),
     );

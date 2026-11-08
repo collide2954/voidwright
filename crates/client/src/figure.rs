@@ -82,7 +82,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (
         Bone::LeftUpperArm,
         Some(Bone::Torso),
-        Vec3::new(-0.235, 0.42, 0.0),
+        Vec3::new(-SHOULDER.x, SHOULDER.y, 0.0),
     ),
     (
         Bone::LeftForearm,
@@ -92,7 +92,7 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (
         Bone::RightUpperArm,
         Some(Bone::Torso),
-        Vec3::new(0.235, 0.42, 0.0),
+        Vec3::new(SHOULDER.x, SHOULDER.y, 0.0),
     ),
     (
         Bone::RightForearm,
@@ -135,6 +135,7 @@ pub const HIP: Vec2 = Vec2::new(0.1, -0.02);
 pub const THIGH: f32 = 0.44;
 pub const ANKLE: f32 = 0.38;
 pub const ANKLE_HEIGHT: f32 = 0.06;
+const SHOULDER: Vec2 = Vec2::new(0.185, 0.44);
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
@@ -442,6 +443,22 @@ mod tests {
         for bone in [Bone::LeftFoot, Bone::RightFoot] {
             let ankle = bones[bone.index()].transform_point3(Vec3::ZERO);
             assert!((ankle.y - 0.06).abs() < 1e-4);
+        }
+    }
+
+    fn joint(bone: Bone) -> Vec3 {
+        rest()[bone.index()].transform_point3(Vec3::ZERO)
+    }
+
+    #[test]
+    fn the_shoulder_joints_sit_a_measured_width_apart_below_the_acromions() {
+        let [left, right] = [Bone::LeftUpperArm, Bone::RightUpperArm].map(joint);
+        assert!(
+            (0.35..=0.38).contains(&(right.x - left.x)),
+            "{left} {right}"
+        );
+        for shoulder in [left, right] {
+            assert!((shoulder.y - 1.4).abs() < 0.01, "{shoulder}");
         }
     }
 
