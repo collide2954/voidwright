@@ -1,9 +1,12 @@
 use glam::Vec3;
 
+use super::binaural::Binaural;
 use super::command::Command;
 use super::dsp::{Frame, OnePole, Smooth};
 use super::footstep::{Bank, Footstep};
 use super::lantern::Lantern;
+use super::music::Music;
+use super::reverb::{OPEN_ISLAND, Reverb};
 use super::ring::Reader;
 use super::space::{Listener, air, fade, pan};
 use super::wind::Wind;
@@ -15,6 +18,11 @@ const GLIDE: f32 = 0.02;
 const STEP_GAIN: f32 = 1.0;
 const SPEAKERS: f32 = 1.6;
 const HEADPHONES: f32 = 1.0;
+const MUSIC_SEED: u32 = 7;
+const STEP_SEND: f32 = 0.25;
+const LANTERN_SEND: f32 = 0.25;
+const MUSIC_SEND: f32 = 0.3;
+const RETURN: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -26,6 +34,8 @@ pub enum Mode {
 struct Voice {
     step: Footstep,
     gains: Frame,
+    azimuth: f32,
+    level: f32,
     air: OnePole,
 }
 
@@ -58,9 +68,11 @@ impl Limiter {
 pub struct Mixer {
     rate: f32,
     reader: Reader,
+    mode: Mode,
     gain: f32,
     listener: Listener,
     voices: [Option<Voice>; VOICES],
+    ears: Box<[Binaural]>,
     bank: Bank,
     last: Option<usize>,
     seed: u32,
@@ -68,6 +80,10 @@ pub struct Mixer {
     lantern: Lantern,
     lantern_at: Vec3,
     lantern_gains: [Smooth; 2],
+    lantern_level: Smooth,
+    lantern_ears: Binaural,
+    music: Music,
+    reverb: Reverb,
     limiter: Limiter,
 }
 
@@ -77,6 +93,7 @@ impl Mixer {
         Self {
             rate,
             reader,
+            mode,
             gain: match mode {
                 Mode::Speakers => SPEAKERS,
                 Mode::Headphones => HEADPHONES,
@@ -86,6 +103,7 @@ impl Mixer {
                 yaw: 0.0,
             },
             voices: [None; VOICES],
+            ears: (0..VOICES).map(|_| Binaural::new(rate)).collect(),
             bank: Bank::new(),
             last: None,
             seed: 1,
@@ -93,6 +111,10 @@ impl Mixer {
             lantern: Lantern::new(23, rate),
             lantern_at: Vec3::ZERO,
             lantern_gains: [Smooth::new(0.0, GLIDE, rate); 2],
+            lantern_level: Smooth::new(0.0, GLIDE, rate),
+            lantern_ears: Binaural::new(rate),
+            music: Music::new(MUSIC_SEED, rate),
+            reverb: Reverb::new(OPEN_ISLAND, rate),
             limiter: Limiter::new(rate),
         }
     }
@@ -106,29 +128,31 @@ impl Mixer {
                 strength,
             } => {
                 let distance = at.distance(self.listener.at);
-                let level = fade(distance) * STEP_GAIN;
+                let azimuth = self.listener.azimuth(at);
                 let step = Footstep::new(
                     &self.bank, underfoot, strength, self.seed, self.rate, self.last,
                 );
                 self.last = Some(step.take());
-                let voice = Voice {
-                    step,
-                    gains: pan(self.listener.azimuth(at)).map(|gain| gain * level),
-                    air: OnePole::low(air(distance), self.rate),
-                };
                 self.seed = self.seed.wrapping_add(1);
                 let slot = self
                     .voices
                     .iter()
                     .position(Option::is_none)
                     .unwrap_or(self.seed as usize % VOICES);
-                self.voices[slot] = Some(voice);
+                self.ears[slot].start(azimuth);
+                self.voices[slot] = Some(Voice {
+                    step,
+                    gains: pan(azimuth),
+                    azimuth,
+                    level: fade(distance) * STEP_GAIN,
+                    air: OnePole::low(air(distance), self.rate),
+                });
             }
             Command::Lantern { at, swing } => {
                 self.lantern_at = at;
                 self.lantern.swing(swing);
             }
-            Command::Discovery => {}
+            Command::Discovery => self.music.discover(),
         }
     }
 
@@ -138,30 +162,51 @@ impl Mixer {
                 self.apply(command);
             }
         }
-        let distance = self.lantern_at.distance(self.listener.at);
-        let gains = pan(self.listener.azimuth(self.lantern_at)).map(|gain| gain * fade(distance));
-        for (smooth, gain) in self.lantern_gains.iter_mut().zip(gains) {
-            smooth.set(gain);
+        let azimuth = self.listener.azimuth(self.lantern_at);
+        let level = fade(self.lantern_at.distance(self.listener.at));
+        for (smooth, gain) in self.lantern_gains.iter_mut().zip(pan(azimuth)) {
+            smooth.set(gain * level);
         }
+        self.lantern_level.set(level);
+        out.fill([0.0; 2]);
+        self.music.render(out);
         for frame in out.iter_mut() {
-            let mut mix = self.wind.sample();
-            let lantern = self.lantern.sample();
-            for (side, smooth) in mix.iter_mut().zip(&mut self.lantern_gains) {
-                *side += lantern * smooth.step();
-            }
-            for slot in &mut self.voices {
+            let music = *frame;
+            let wind = self.wind.sample();
+            let flame = self.lantern.sample();
+            let lantern = match self.mode {
+                Mode::Speakers => {
+                    let [left, right] = &mut self.lantern_gains;
+                    [flame * left.step(), flame * right.step()]
+                }
+                Mode::Headphones => self
+                    .lantern_ears
+                    .process(flame * self.lantern_level.step(), azimuth),
+            };
+            let mut steps = [0.0; 2];
+            for (slot, ears) in self.voices.iter_mut().zip(self.ears.iter_mut()) {
                 let Some(voice) = slot else {
                     continue;
                 };
-                match voice.step.sample(&self.bank) {
-                    Some(value) => {
-                        let value = voice.air.process(value);
-                        mix[0] += value * voice.gains[0];
-                        mix[1] += value * voice.gains[1];
-                    }
-                    None => *slot = None,
-                }
+                let Some(value) = voice.step.sample(&self.bank) else {
+                    *slot = None;
+                    continue;
+                };
+                let value = voice.air.process(value) * voice.level;
+                let [left, right] = match self.mode {
+                    Mode::Speakers => voice.gains.map(|gain| gain * value),
+                    Mode::Headphones => ears.process(value, voice.azimuth),
+                };
+                steps[0] += left;
+                steps[1] += right;
             }
+            let send = [0, 1].map(|side| {
+                steps[side] * STEP_SEND + lantern[side] * LANTERN_SEND + music[side] * MUSIC_SEND
+            });
+            let wet = self.reverb.process(send);
+            let mix = [0, 1].map(|side| {
+                music[side] + wind[side] + lantern[side] + steps[side] + wet[side] * RETURN
+            });
             *frame = self.limiter.process(mix.map(|value| value * self.gain));
         }
     }
@@ -178,8 +223,12 @@ mod tests {
     const RATE: f32 = 48_000.0;
 
     fn render(commands: &[Command], frames: usize) -> Vec<Frame> {
+        render_in(Mode::Speakers, commands, frames)
+    }
+
+    fn render_in(mode: Mode, commands: &[Command], frames: usize) -> Vec<Frame> {
         let (mut writer, reader) = ring(64);
-        let mut mixer = Mixer::new(RATE, Mode::Speakers, reader);
+        let mut mixer = Mixer::new(RATE, mode, reader);
         for command in commands {
             assert!(writer.push(command.pack()));
         }
@@ -188,6 +237,81 @@ mod tests {
             mixer.render(block);
         }
         out
+    }
+
+    fn window(frames: &[Frame], from: f32, to: f32) -> &[Frame] {
+        let at = |seconds: f32| {
+            (0..frames.len())
+                .find(|&index| f32::from(u16::try_from(index / 48).unwrap()) / 1_000.0 >= seconds)
+                .unwrap_or(frames.len())
+        };
+        &frames[at(from)..at(to)]
+    }
+
+    fn power(frames: &[Frame]) -> f32 {
+        frames.iter().map(|[l, r]| l * l + r * r).sum()
+    }
+
+    #[test]
+    fn the_music_bed_comes_in_after_a_few_seconds() {
+        let out = render(&[listener()], 48_000 * 14);
+        let early = power(window(&out, 1.0, 5.0));
+        let late = power(window(&out, 10.0, 14.0));
+        assert!(late > early * 4.0, "{early} {late}");
+    }
+
+    #[test]
+    fn a_discovery_brings_in_the_music() {
+        let quiet = render(&[listener()], 48_000 * 6);
+        let found = render(&[listener(), Command::Discovery], 48_000 * 6);
+        let [left, right] = energies(&found, &quiet);
+        assert!(
+            left + right > power(&quiet) * 0.5,
+            "{} {}",
+            left + right,
+            power(&quiet)
+        );
+    }
+
+    #[test]
+    fn a_step_leaves_a_short_tail_that_dies_away() {
+        let near = step(Vec3::new(0.3, 1.0, 0.0), 0.7);
+        let quiet = render(&[listener()], 48_000 * 4);
+        let stepped = render(&[listener(), near], 48_000 * 4);
+        let difference: Vec<Frame> = stepped
+            .iter()
+            .zip(&quiet)
+            .map(|(a, b)| [a[0] - b[0], a[1] - b[1]])
+            .collect();
+        let dry = power(window(&difference, 0.0, 0.6));
+        let tail = power(window(&difference, 0.45, 0.8));
+        let gone = power(window(&difference, 3.0, 4.0));
+        assert!(tail > dry * 1e-7, "{dry} {tail}");
+        assert!(tail < dry * 0.1, "{dry} {tail}");
+        assert!(gone < dry * 1e-12, "{dry} {gone}");
+    }
+
+    #[test]
+    fn headphones_let_the_near_ear_hear_a_step_first() {
+        let right = step(Vec3::new(1.0, 1.6, 0.0), 0.7);
+        let onset = |mode: Mode, ear: usize| {
+            let quiet = render_in(mode, &[listener()], 9_600);
+            let stepped = render_in(mode, &[listener(), right], 9_600);
+            let difference: Vec<f32> = stepped
+                .iter()
+                .zip(&quiet)
+                .map(|(a, b)| a[ear] - b[ear])
+                .collect();
+            let peak = difference
+                .iter()
+                .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+            difference
+                .iter()
+                .position(|value| value.abs() >= 0.2 * peak)
+                .unwrap()
+        };
+        let lag = onset(Mode::Headphones, 0) - onset(Mode::Headphones, 1);
+        assert!((25..=36).contains(&lag), "{lag}");
     }
 
     fn listener() -> Command {
