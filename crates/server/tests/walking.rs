@@ -92,3 +92,18 @@ fn players_beyond_the_view_are_not_in_the_update() {
     assert_eq!(counts, [2, 2, 1]);
     assert_eq!(sighting(&updates[2], b.id).tile, b.spawn);
 }
+
+#[test]
+fn invalid_walk_orders_are_refused_and_the_player_stays() {
+    let mut server = server(Config::default());
+    let (mut ash, welcome) = Client::join(&mut server, "Ash");
+    let targets = [Tile::new(0, 0), east(welcome.spawn, 100)];
+    for (count, target) in (2_u64..).zip(targets) {
+        ash.send(&ClientMessage::Walk(target));
+        settle(&mut server, |server| server.stats().messages == count);
+        server.tick();
+        let me = sighting(&ash.update(&mut server), welcome.id);
+        assert_eq!((me.tile, me.step), (welcome.spawn, None));
+    }
+    assert_eq!(server.stats().refused, 2);
+}

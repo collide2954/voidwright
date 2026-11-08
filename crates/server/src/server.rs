@@ -38,6 +38,7 @@ pub struct Stats {
     pub tick: u32,
     pub players: usize,
     pub messages: u64,
+    pub refused: u64,
     pub dropped: u64,
 }
 
@@ -305,8 +306,10 @@ impl Server {
 
     pub fn tick(&mut self) {
         for connection in &mut self.connections {
-            if let Some((id, target)) = connection.take_order() {
-                let _ = self.world.try_walk_to(id, target);
+            if let Some((id, target)) = connection.take_order()
+                && self.world.try_walk_to(id, target).is_err()
+            {
+                self.stats.refused += 1;
             }
         }
         self.world.tick();
