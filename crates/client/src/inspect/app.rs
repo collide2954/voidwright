@@ -86,11 +86,7 @@ impl Inspector {
             Some((last, then)) if last == gait && (0.0..=WARM_UP).contains(&(time - then)) => {
                 follow(self.coat.clone(), &self.session, then, time)
             }
-            _ => {
-                let start = (time - WARM_UP).max(0.0);
-                let (pose, placement) = self.session.walked(start);
-                follow(Coat::new(&pose, placement), &self.session, start, time)
-            }
+            _ => settled(&self.session, time),
         };
         self.dressed = Some((gait, time));
     }
@@ -113,6 +109,13 @@ impl Inspector {
             Err(error) => eprintln!("capture failed: {error}"),
         }
     }
+}
+
+#[must_use]
+pub fn settled(session: &Session, time: f32) -> Coat {
+    let start = (time - WARM_UP).max(0.0);
+    let (pose, placement) = session.walked(start);
+    follow(Coat::new(&pose, placement), session, start, time)
 }
 
 fn follow(mut coat: Coat, session: &Session, from: f32, to: f32) -> Coat {
@@ -222,8 +225,28 @@ impl EventHandler for Inspector {
 
 #[cfg(test)]
 mod tests {
-    use super::numbered;
+    use super::{WARM_UP, follow, numbered, settled};
+    use crate::Coat;
+    use crate::inspect::{Gait, Options, Session};
+    use std::hint::black_box;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_settled_coat_moves_through_the_warm_up_before_the_time() {
+        let options = Options {
+            gait: Gait::Walk,
+            ..Options::default()
+        };
+        let session = Session::new([], 1.0, &options);
+        for time in [3.0, 0.5] {
+            let time = black_box(time);
+            let start = (time - WARM_UP).max(0.0);
+            let (pose, placement) = session.walked(start);
+            let followed = follow(Coat::new(&pose, placement), &session, start, time);
+            assert_eq!(settled(&session, time), followed, "{time}");
+        }
+        assert_ne!(settled(&session, 3.0), settled(&session, 2.5));
+    }
 
     #[test]
     fn the_first_capture_takes_number_one() {
