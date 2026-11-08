@@ -5,6 +5,7 @@ use crate::palette::linear;
 const AMBER: Vec3 = Vec3::new(1.0, 0.6, 0.25);
 const LANTERN_POWER: f32 = 0.6;
 const LANTERN_REACH: f32 = 2.8;
+const FLICKER: [[f32; 3]; 3] = [[0.04, 1.9, 0.0], [0.025, 3.1, 1.3], [0.015, 5.3, 4.1]];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lamp {
@@ -15,13 +16,21 @@ pub struct Lamp {
 
 impl Lamp {
     #[must_use]
-    pub fn lantern(position: Vec3) -> Self {
+    pub fn lantern(position: Vec3, time: f32) -> Self {
         Self {
             position,
-            color: linear(AMBER) * LANTERN_POWER,
+            color: linear(AMBER) * LANTERN_POWER * flicker(time),
             reach: LANTERN_REACH,
         }
     }
+}
+
+fn flicker(time: f32) -> f32 {
+    let waves: f32 = FLICKER
+        .iter()
+        .map(|&[depth, rate, phase]| depth * rate.mul_add(time, phase).sin())
+        .sum();
+    1.0 + waves
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,9 +64,11 @@ impl Light {
 
 #[cfg(test)]
 mod tests {
-    use super::{Lamp, Light, VAEL};
+    use super::{Lamp, Light, VAEL, flicker};
     use crate::voidwright;
     use glam::Vec3;
+
+    const FRAME: f32 = 1.0 / 60.0;
 
     fn brightness(color: Vec3) -> f32 {
         color.element_sum()
@@ -65,6 +76,10 @@ mod tests {
 
     fn hue(color: Vec3) -> Vec3 {
         color / color.max_element()
+    }
+
+    fn frames(seconds: u16) -> impl Iterator<Item = f32> {
+        (0..seconds * 60).map(|frame| f32::from(frame) * FRAME)
     }
 
     #[test]
@@ -78,25 +93,59 @@ mod tests {
             .collect();
         let count = f32::from(u16::try_from(glass.len()).unwrap());
         let amber = glass.iter().sum::<Vec3>() / count;
-        let lamp = Lamp::lantern(Vec3::ZERO);
+        let lamp = Lamp::lantern(Vec3::ZERO, 0.0);
         assert!(hue(lamp.color).distance(hue(amber)) < 0.01, "{amber}");
     }
 
     #[test]
     fn the_lantern_light_reaches_two_to_three_meters() {
-        assert!((2.0..=3.0).contains(&Lamp::lantern(Vec3::ZERO).reach));
+        assert!((2.0..=3.0).contains(&Lamp::lantern(Vec3::ZERO, 0.0).reach));
     }
 
     #[test]
     fn the_lantern_light_sits_at_the_lantern() {
         let at = Vec3::new(28.6, 2.9, -28.2);
-        assert_eq!(Lamp::lantern(at).position, at);
+        assert_eq!(Lamp::lantern(at, 0.0).position, at);
     }
 
     #[test]
     fn the_lantern_light_is_weak_next_to_the_sun() {
-        let lamp = Lamp::lantern(Vec3::ZERO);
+        let lamp = Lamp::lantern(Vec3::ZERO, 0.0);
         assert!(brightness(lamp.color) < brightness(VAEL.sun) / 3.0);
+    }
+
+    #[test]
+    fn the_flicker_stays_in_a_small_band() {
+        for time in frames(120) {
+            assert!((0.9..=1.1).contains(&flicker(time)), "{time}");
+        }
+    }
+
+    #[test]
+    fn the_flicker_changes_slowly_from_frame_to_frame() {
+        for time in frames(120) {
+            let change = flicker(time + FRAME) - flicker(time);
+            assert!(change.abs() < 0.005, "{time}");
+        }
+    }
+
+    #[test]
+    fn the_flicker_moves_the_strength_in_a_few_seconds() {
+        let strengths: Vec<f32> = frames(10).map(flicker).collect();
+        let low = strengths.iter().copied().fold(f32::INFINITY, f32::min);
+        let high = strengths.iter().copied().fold(0.0, f32::max);
+        assert!(high - low > 0.05, "{low} {high}");
+    }
+
+    #[test]
+    fn the_flicker_changes_the_strength_but_not_the_color() {
+        let steady = Lamp::lantern(Vec3::ZERO, 0.0);
+        for time in [0.7, 3.1, 12.9] {
+            let lamp = Lamp::lantern(Vec3::ZERO, time);
+            assert!(hue(lamp.color).distance(hue(steady.color)) < 1e-5);
+            let ratio = brightness(lamp.color) / brightness(steady.color);
+            assert!((ratio - flicker(time) / flicker(0.0)).abs() < 1e-5);
+        }
     }
 
     #[test]
