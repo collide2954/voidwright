@@ -1,13 +1,17 @@
 use super::dsp::Frame;
 use glam::Vec2;
+use std::f32::consts::TAU;
 
 const HEAD: f32 = 0.0875;
 const SOUND: f32 = 343.0;
+const AHEAD: f32 = 20_000.0;
+const SIDE: f32 = 1_500.0;
 
 pub struct Binaural {
     rate: f32,
     history: Box<[f32]>,
     written: usize,
+    ears: Vec2,
 }
 
 impl Binaural {
@@ -22,6 +26,7 @@ impl Binaural {
             rate,
             history: vec![0.0; usize::from(length)].into_boxed_slice(),
             written: 0,
+            ears: Vec2::ZERO,
         }
     }
 
@@ -33,7 +38,10 @@ impl Binaural {
         let back = (Vec2::new(lag(far.x), lag(far.y)) * self.rate)
             .round()
             .as_ivec2();
-        [self.tap(back.x), self.tap(back.y)]
+        let heard = Vec2::new(self.tap(back.x), self.tap(back.y));
+        let shades = Vec2::new(shade(far.x, self.rate), shade(far.y, self.rate));
+        self.ears += (heard - self.ears) * shades;
+        self.ears.to_array()
     }
 
     fn tap(&self, back: i32) -> f32 {
@@ -46,10 +54,15 @@ fn lag(far: f32) -> f32 {
     HEAD / SOUND * (far.asin() + far)
 }
 
+fn shade(far: f32, rate: f32) -> f32 {
+    let cutoff = AHEAD * (SIDE / AHEAD).powf(far);
+    1.0 - (-TAU * cutoff / rate).exp()
+}
+
 #[cfg(test)]
 mod tests {
     use super::Binaural;
-    use crate::audio::dsp::{Frame, Noise};
+    use crate::audio::dsp::{Frame, Noise, Svf};
     use std::f32::consts::FRAC_PI_2;
 
     const RATE: f32 = 48_000.0;
@@ -69,6 +82,11 @@ mod tests {
 
     fn energy(values: impl Iterator<Item = f32>) -> f32 {
         values.map(|value| value * value).sum()
+    }
+
+    fn highs(values: impl Iterator<Item = f32>) -> f32 {
+        let mut filter = Svf::new(4_000.0, 0.707, RATE);
+        energy(values.map(|value| filter.process(value).high))
     }
 
     fn onset(heard: &[Frame], ear: usize) -> usize {
@@ -106,5 +124,14 @@ mod tests {
         let input = energy(sound.iter().copied());
         let left = energy(heard.iter().map(|frame| frame[0]));
         assert!(left > 0.5 * input, "{left} of {input}");
+    }
+
+    #[test]
+    fn the_far_ear_hears_much_less_of_the_highs() {
+        let mut noise = Noise::new(4);
+        let sound: Vec<f32> = (0..4 * LENGTH).map(|_| noise.sample()).collect();
+        let heard = listen(FRAC_PI_2, &sound);
+        let [left, right] = [0, 1].map(|ear| highs(heard.iter().map(|frame| frame[ear])));
+        assert!(left < 0.1 * right, "{left} against {right}");
     }
 }
