@@ -109,6 +109,13 @@ impl Side {
             Self::Right => Bone::RightFingers,
         }
     }
+
+    const fn foot(self) -> Bone {
+        match self {
+            Self::Left => Bone::LeftFoot,
+            Self::Right => Bone::RightFoot,
+        }
+    }
 }
 
 struct Piece {
@@ -308,7 +315,7 @@ fn leg(clay: &mut Sculpt, side: Side) {
     );
     let splay = Quat::from_rotation_y(-side.sign() * 0.14);
     let foot = |form: Form, material: Material, offset: Vec3, blend: f32| {
-        stroke(shin, form, material)
+        stroke(side.foot(), form, material)
             .at(splay * offset)
             .turned(splay)
             .blended(blend)
@@ -316,19 +323,19 @@ fn leg(clay: &mut Sculpt, side: Side) {
     clay.add(foot(
         block(0.043, 0.03, 0.095, 0.028),
         BOOT,
-        Vec3::new(0.0, -0.352, -0.042),
+        Vec3::new(0.0, -0.022, -0.042),
         0.03,
     ));
     clay.add(foot(
         egg(0.046, 0.034, 0.052),
         BOOT,
-        Vec3::new(0.0, -0.352, -0.1),
+        Vec3::new(0.0, -0.022, -0.1),
         0.02,
     ));
     clay.add(foot(
         block(0.049, 0.011, 0.108, 0.008),
         SOLE,
-        Vec3::new(0.0, -0.379, -0.045),
+        Vec3::new(0.0, -0.049, -0.045),
         0.004,
     ));
 }

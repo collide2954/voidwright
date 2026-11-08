@@ -33,6 +33,7 @@ pub struct Pose {
     pub elbows: [f32; 2],
     pub wrists: [f32; 2],
     pub curls: [f32; 2],
+    pub feet: [f32; 2],
 }
 
 #[must_use]
@@ -78,6 +79,7 @@ pub fn pose_at(phase: f32, motion: f32, pace: f32, time: f32) -> Pose {
         ],
         wrists: [0.0, 1.0].map(|hand| (0.12 + 0.08 * drift(hand, 0.6)) * rest + 0.1 * motion),
         curls: [0.0, 1.0].map(|hand| curl(hand) * rest + WALKING_CURL * motion),
+        feet: [0.0; 2],
     }
 }
 

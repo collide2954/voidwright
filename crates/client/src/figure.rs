@@ -28,9 +28,11 @@ pub enum Bone {
     RightHand,
     LeftFingers,
     RightFingers,
+    LeftFoot,
+    RightFoot,
 }
 
-pub const BONES: usize = 17;
+pub const BONES: usize = 19;
 
 const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
     (Bone::Pelvis, None, Vec3::new(0.0, 0.8, 0.0)),
@@ -106,7 +108,18 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); BONES] = [
         Some(Bone::RightHand),
         Vec3::new(0.0, -0.075, 0.0),
     ),
+    (
+        Bone::LeftFoot,
+        Some(Bone::LeftShin),
+        Vec3::new(0.0, -ANKLE, 0.0),
+    ),
+    (
+        Bone::RightFoot,
+        Some(Bone::RightShin),
+        Vec3::new(0.0, -ANKLE, 0.0),
+    ),
 ];
+pub const ANKLE: f32 = 0.33;
 const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
 const HEAD_LEVEL: f32 = 0.85;
@@ -161,6 +174,8 @@ impl Bone {
             Self::RightHand => Mat4::from_rotation_z(-pose.wrists[1]),
             Self::LeftFingers => Mat4::from_rotation_z(pose.curls[0]),
             Self::RightFingers => Mat4::from_rotation_z(-pose.curls[1]),
+            Self::LeftFoot => Mat4::from_rotation_x(pose.feet[0]),
+            Self::RightFoot => Mat4::from_rotation_x(pose.feet[1]),
         }
     }
 }
@@ -260,6 +275,30 @@ mod tests {
             let moved = curled[bone.index()].transform_point3(tip)
                 - open[bone.index()].transform_point3(tip);
             assert!(moved.x * inward > 0.02);
+        }
+    }
+
+    #[test]
+    fn raised_feet_lift_the_toes() {
+        let raised = skeleton(&Pose {
+            feet: [0.4, 0.4],
+            ..Pose::default()
+        });
+        let flat = skeleton(&Pose::default());
+        let toe = Vec3::new(0.0, -0.05, -0.15);
+        for bone in [Bone::LeftFoot, Bone::RightFoot] {
+            let lift = raised[bone.index()].transform_point3(toe)
+                - flat[bone.index()].transform_point3(toe);
+            assert!(lift.y > 0.04);
+        }
+    }
+
+    #[test]
+    fn the_ankles_sit_above_the_soles() {
+        let bones = rest();
+        for bone in [Bone::LeftFoot, Bone::RightFoot] {
+            let ankle = bones[bone.index()].transform_point3(Vec3::ZERO);
+            assert!((ankle.y - 0.06).abs() < 1e-4);
         }
     }
 
