@@ -69,6 +69,7 @@ fn weather(mesh: &mut SkinnedMesh) {
         let edge = smoothstep(25.0, 70.0, bend)
             * (0.35 + 0.65 * smoothstep(0.3, 0.7, noise3(at * 40.0, 16)));
         let (scuff, polish) = (edge * vertex.surface[2], edge * vertex.surface[3]);
+        let fray = edge * (vertex.surface[0] + vertex.surface[1]);
         let crease = smoothstep(10.0, 60.0, -bend);
         let base = Vec3::from(vertex.color) * mottle * tone;
         let grey = Vec3::splat(base.dot(Vec3::new(0.3, 0.59, 0.11)));
@@ -76,7 +77,7 @@ fn weather(mesh: &mut SkinnedMesh) {
         let (grime, dusting) = soil(at, Vec3::from(vertex.normal));
         let color = base
             .lerp(faded, 0.7 * bleach)
-            .lerp(grey.lerp(base, 0.6) * 1.7, 0.6 * scuff)
+            .lerp(grey.lerp(base, 0.6) * 1.7, 0.6 * scuff + 0.3 * fray)
             .lerp(base * 1.6 + 0.02, 0.6 * polish)
             * grime
             * (1.0 - 0.3 * crease)
@@ -1264,23 +1265,29 @@ mod tests {
 
     #[test]
     fn weather_scuffs_the_sharp_edges_of_leather_and_metal() {
-        let [cloth, leather, metal] = [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ];
-        let sharp_cloth = ball(0.01, cloth);
-        assert!((average(&sharp_cloth, gain) - 1.15).abs() < 0.01);
+        let [bare, leather, metal] = [[0.0; 4], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let sharp_bare = ball(0.01, bare);
         for kind in [leather, metal] {
             let (sharp, flat) = (ball(0.01, kind), ball(0.4, kind));
-            assert!(average(&sharp, luma) > average(&sharp_cloth, luma) * 1.1);
+            assert!(average(&sharp, luma) > average(&sharp_bare, luma) * 1.1);
             assert!(average(&sharp, gain) < average(&flat, gain) * 0.95);
         }
-        let flat_ratio = average(&ball(0.4, leather), luma) / average(&ball(0.4, cloth), luma);
+        let flat_ratio = average(&ball(0.4, leather), luma) / average(&ball(0.4, bare), luma);
         assert!((flat_ratio - 1.0).abs() < 0.02, "{flat_ratio}");
         let shine = |vertex: &SkinnedVertex| vertex.params[0];
         assert!(average(&ball(0.01, metal), shine) > average(&ball(0.4, metal), shine) + 0.05);
         assert!(average(&ball(0.01, leather), shine) < average(&ball(0.4, leather), shine) - 0.02);
+    }
+
+    #[test]
+    fn weather_frays_the_sharp_edges_of_cloth_a_little() {
+        let sharp_bare = average(&ball(0.01, [0.0; 4]), luma);
+        for kind in [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]] {
+            let lighter = average(&ball(0.01, kind), luma) / sharp_bare;
+            assert!(lighter > 1.04 && lighter < 1.25, "{lighter}");
+            let flat = average(&ball(0.4, kind), luma) / average(&ball(0.4, [0.0; 4]), luma);
+            assert!((flat - 1.0).abs() < 0.02, "{flat}");
+        }
     }
 
     fn row(height: f32) -> impl Iterator<Item = Vec3> {
