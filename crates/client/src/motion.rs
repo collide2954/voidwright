@@ -69,10 +69,17 @@ fn sample(
         return (at, Vec2::ZERO);
     }
     let progress = progress.clamp(0.0, 1.0);
-    let (eased, rate) = if before.is_none() {
-        ease_in(progress)
-    } else {
-        (progress, 1.0)
+    let (eased, rate) = match (before, after) {
+        (Some(_), Some(_)) => (progress, 1.0),
+        (None, Some(_)) => ease_in(progress),
+        (Some(_), None) => {
+            let (eased, rate) = ease_in(1.0 - progress);
+            (1.0 - eased, rate)
+        }
+        (None, None) => (
+            progress * progress * (3.0 - 2.0 * progress),
+            6.0 * progress * (1.0 - progress),
+        ),
     };
     let along = eased * count(steps);
     let index = (0..steps)
@@ -259,6 +266,25 @@ mod tests {
         }
         let cruise = speeds[speeds.len() - 1];
         assert!((cruise - 1.0).abs() < 0.05, "{cruise}");
+    }
+
+    #[test]
+    fn a_walk_slows_to_a_stop_on_its_destination() {
+        let trail = [Tile::new(0, 0), Tile::new(1, 0)];
+        let before = Some(Tile::new(-1, 0));
+        let slowing = speeds(before, &trail, None);
+        assert!((slowing[0] - 1.0).abs() < 0.05, "{slowing:?}");
+        let single = speeds(None, &trail, None);
+        assert!(single[0] < 0.1, "{single:?}");
+        for speeds in [slowing, single] {
+            for pair in speeds.windows(2) {
+                assert!((pair[1] - pair[0]).abs() < 0.25, "{speeds:?}");
+            }
+            assert!(speeds[speeds.len() - 1] < 0.1, "{speeds:?}");
+        }
+        let end = center(Tile::new(1, 0));
+        assert_eq!(position(before, &trail, None, 1.0), end);
+        assert_eq!(position(None, &trail, None, 1.0), end);
     }
 
     #[test]

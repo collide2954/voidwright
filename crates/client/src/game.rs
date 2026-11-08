@@ -201,6 +201,19 @@ mod tests {
     }
 
     #[test]
+    fn a_walk_starts_and_stops_without_a_kick() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        let target = Tile::new(start.x + 5, start.y + 2);
+        game.walk_to(target);
+        let points = walk_frames(&mut game, FRAMES * 8);
+        let push = hardest_push(&points);
+        assert!(push < 8.0, "{push}");
+        let end = points[points.len() - 1];
+        assert!(end.distance(center(target)) < 1e-5, "{end}");
+    }
+
+    #[test]
     fn a_bend_in_the_route_turns_gradually() {
         let mut game = Game::new(3);
         let start = game.world().player().tile();
