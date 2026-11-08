@@ -278,6 +278,7 @@ impl Renderer {
         context.texture_read_pixels(color, &mut pixels);
         context.delete_render_pass(pass);
         post.delete(context);
+        context.commit_frame();
         png::encode(
             CAPTURE_WIDTH,
             CAPTURE_HEIGHT,
