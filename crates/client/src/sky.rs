@@ -22,7 +22,7 @@ const HORIZON: Vec3 = Vec3::new(0.08, 0.05, 0.15);
 const NADIR: Vec3 = Vec3::new(0.015, 0.012, 0.04);
 const MAGENTA: Vec3 = Vec3::new(0.42, 0.1, 0.38);
 const TEAL: Vec3 = Vec3::new(0.05, 0.32, 0.36);
-const AMBER: Vec3 = Vec3::new(1.0, 0.62, 0.3);
+pub const AMBER: Vec3 = Vec3::new(1.0, 0.62, 0.3);
 const VAEL_CORE: Vec3 = Vec3::new(1.0, 0.78, 0.5);
 const VAEL_SIZE: f32 = 0.1;
 const STAR_TINTS: [Vec3; 3] = [
@@ -33,7 +33,7 @@ const STAR_TINTS: [Vec3; 3] = [
 const MOSS: Vec3 = Vec3::new(0.12, 0.35, 0.34);
 const STONE: Vec3 = Vec3::new(0.3, 0.24, 0.34);
 const HAZE: f32 = 0.55;
-const SKY_GAIN: f32 = 2.0;
+pub const SKY_GAIN: f32 = 2.0;
 const GLOW_GAIN: f32 = 3.0;
 
 #[repr(C)]
@@ -42,6 +42,7 @@ pub struct SkyVertex {
     pub position: [f32; 3],
     pub color: [f32; 3],
     pub twinkle: [f32; 2],
+    pub drift: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -51,7 +52,7 @@ pub struct Backdrop {
 }
 
 impl Backdrop {
-    fn add(&mut self, mesh: &Mesh, twinkle: impl Fn(usize) -> [f32; 2]) {
+    fn add(&mut self, mesh: &Mesh, drift: f32, twinkle: impl Fn(usize) -> [f32; 2]) {
         let offset = u32::try_from(self.vertices.len()).expect("a sky index fits in u32");
         self.vertices.extend(
             mesh.vertices
@@ -61,6 +62,7 @@ impl Backdrop {
                     position: vertex.position,
                     color: vertex.color,
                     twinkle: twinkle(index),
+                    drift,
                 }),
         );
         self.indices
@@ -71,11 +73,11 @@ impl Backdrop {
 #[must_use]
 pub fn sky() -> Backdrop {
     let mut backdrop = Backdrop::default();
-    backdrop.add(&dome(), |_| STILL);
-    backdrop.add(&vael(), |_| STILL);
+    backdrop.add(&dome(), 0.0, |_| STILL);
+    backdrop.add(&vael(), 0.0, |_| STILL);
     let twinkles = twinkles();
-    backdrop.add(&stars(), |vertex| twinkles[vertex / 4]);
-    backdrop.add(&fragments(), |_| STILL);
+    backdrop.add(&stars(), 0.0, |vertex| twinkles[vertex / 4]);
+    backdrop.add(&fragments(), 0.0, |_| STILL);
     backdrop
 }
 
@@ -97,17 +99,30 @@ pub fn noise3(point: Vec3, seed: u32) -> f32 {
 #[must_use]
 pub fn sky_color(direction: Vec3) -> Vec3 {
     let toward = direction.normalize_or_zero();
-    let gradient = if toward.y >= 0.0 {
+    gradient(toward) + nebula(toward) + AMBER * halo(toward)
+}
+
+#[must_use]
+pub fn gradient(toward: Vec3) -> Vec3 {
+    if toward.y >= 0.0 {
         HORIZON.lerp(ZENITH, toward.y)
     } else {
         HORIZON.lerp(NADIR, -toward.y)
-    };
+    }
+}
+
+#[must_use]
+pub fn nebula(toward: Vec3) -> Vec3 {
     let magenta = smoothstep(0.45, 0.75, cloud(toward * 2.0, 11));
     let teal =
         smoothstep(0.5, 0.8, cloud(toward * 3.0 + Vec3::splat(17.0), 23)) * (1.0 - magenta / 2.0);
+    MAGENTA * magenta * 0.6 + TEAL * teal * 0.5
+}
+
+#[must_use]
+pub fn halo(toward: Vec3) -> f32 {
     let glow = toward.dot(VAEL.toward_sun).max(0.0);
-    let halo = glow.powf(24.0) * 0.9 + glow.powf(4.0) * 0.12;
-    gradient + MAGENTA * magenta * 0.6 + TEAL * teal * 0.5 + AMBER * halo
+    glow.powf(24.0) * 0.9 + glow.powf(4.0) * 0.12
 }
 
 #[must_use]
@@ -302,8 +317,8 @@ fn lerp(from: f32, to: f32, weight: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FRAGMENTS, SKY_RADIUS, STAR_COUNT, TWINKLE_RATES, dome, fragments, noise3, sky, sky_color,
-        stars, vael,
+        AMBER, FRAGMENTS, HORIZON, NADIR, SKY_RADIUS, STAR_COUNT, TWINKLE_RATES, ZENITH, dome,
+        fragments, gradient, halo, nebula, noise3, sky, sky_color, stars, vael,
     };
     use crate::{VAEL, normal};
     use glam::Vec3;
@@ -331,6 +346,29 @@ mod tests {
         for (vertex, part) in backdrop.vertices.iter().zip(&parts.vertices) {
             assert_eq!(vertex.position, part.position);
             assert_eq!(vertex.color, part.color);
+        }
+    }
+
+    #[test]
+    fn the_sky_color_adds_the_nebula_and_the_glow_to_the_gradient() {
+        for direction in samples() {
+            let toward = direction.normalize();
+            let sum = gradient(toward) + nebula(toward) + AMBER * halo(toward);
+            assert!(sky_color(direction).distance(sum) < 1e-5);
+        }
+        assert!(gradient(Vec3::Y).distance(ZENITH) < 1e-6);
+        assert!(gradient(Vec3::X).distance(HORIZON) < 1e-6);
+        assert!(gradient(Vec3::NEG_Y).distance(NADIR) < 1e-6);
+        assert!((halo(VAEL.toward_sun) - 1.02).abs() < 1e-5);
+        assert!(halo(-VAEL.toward_sun).abs() < 1e-6);
+    }
+
+    #[test]
+    fn vael_the_stars_and_the_fragments_stay_in_place() {
+        let backdrop = sky();
+        let [_, vael, stars, fragments] = parts();
+        for index in vael.chain(stars).chain(fragments) {
+            assert_eq!(backdrop.vertices[index].drift, 0.0);
         }
     }
 

@@ -3,21 +3,37 @@ use miniquad::{
     ShaderMeta, UniformBlockLayout, UniformDesc, UniformType, VertexAttribute, VertexFormat,
 };
 
+use crate::VAEL;
+
 pub const VERTEX: &str = "#version 100
 attribute vec3 in_position;
 attribute vec3 in_color;
 attribute vec2 in_twinkle;
+attribute float in_drift;
 uniform mat4 view_projection;
 uniform vec3 eye;
 uniform float time;
+uniform vec3 toward_sun;
 varying mediump vec3 color;
 varying mediump float glint;
+const vec3 AMBER = vec3(1.0, 0.62, 0.3);
+const float GAIN = 2.0;
+const float GAMMA = 2.2;
 const float TWINKLE = 0.25;
+float halo(vec3 toward) {
+    float glow = max(dot(normalize(toward), toward_sun), 0.0);
+    return pow(glow, 24.0) * 0.9 + pow(glow, 4.0) * 0.12;
+}
 void main() {
+    float turn = in_drift * time;
+    vec2 around = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * in_position.xz;
+    vec3 placed = vec3(around.x, in_position.y, around.y);
+    vec3 rest = pow(in_color / GAIN, vec3(1.0 / GAMMA));
+    vec3 lit = max(rest + AMBER * (halo(placed) - halo(in_position)), 0.0);
     float beat = in_twinkle.x + in_twinkle.y * time;
     glint = 1.0 + TWINKLE * 0.5 * (sin(beat) + sin(2.7 * beat + in_twinkle.x));
-    color = in_color;
-    gl_Position = view_projection * vec4(in_position + eye, 1.0);
+    color = pow(lit, vec3(GAMMA)) * GAIN;
+    gl_Position = view_projection * vec4(placed + eye, 1.0);
 }
 ";
 
@@ -42,17 +58,19 @@ pub fn meta() -> ShaderMeta {
                 UniformDesc::new("view_projection", UniformType::Mat4),
                 UniformDesc::new("eye", UniformType::Float3),
                 UniformDesc::new("time", UniformType::Float1),
+                UniformDesc::new("toward_sun", UniformType::Float3),
             ],
         },
     }
 }
 
 #[must_use]
-pub fn attributes() -> [VertexAttribute; 3] {
+pub fn attributes() -> [VertexAttribute; 4] {
     [
         VertexAttribute::new("in_position", VertexFormat::Float3),
         VertexAttribute::new("in_color", VertexFormat::Float3),
         VertexAttribute::new("in_twinkle", VertexFormat::Float2),
+        VertexAttribute::new("in_drift", VertexFormat::Float1),
     ]
 }
 
@@ -62,6 +80,7 @@ pub struct Uniforms {
     pub view_projection: [f32; 16],
     pub eye: [f32; 3],
     pub time: f32,
+    pub toward_sun: [f32; 3],
 }
 
 impl Uniforms {
@@ -71,6 +90,7 @@ impl Uniforms {
             view_projection: view_projection.to_cols_array(),
             eye: eye.to_array(),
             time,
+            toward_sun: VAEL.toward_sun.to_array(),
         }
     }
 }
@@ -78,11 +98,44 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, attributes, meta};
+    use crate::VAEL;
+    use crate::palette::linear;
     use crate::shader::baked;
-    use crate::sky::{STAR_COUNT, SkyVertex, sky};
-    use glam::{Mat4, Vec3};
+    use crate::sky::{
+        AMBER, SKY_GAIN, SKY_RADIUS, STAR_COUNT, SkyVertex, gradient, halo, nebula, sky, sky_color,
+    };
+    use glam::{Mat2, Mat3, Mat4, Vec3, Vec3Swizzles};
     use miniquad::{UniformDesc, UniformType, VertexFormat};
     use std::f32::consts::TAU;
+
+    fn turned(position: Vec3, turn: f32) -> Vec3 {
+        let (sin, cos) = turn.sin_cos();
+        let around = Mat2::from_cols_array(&[cos, -sin, sin, cos]) * position.xz();
+        Vec3::new(around.x, position.y, around.y)
+    }
+
+    fn unlinear(color: Vec3) -> Vec3 {
+        color.powf(1.0 / 2.2)
+    }
+
+    fn shaded(vertex: &SkyVertex, time: f32) -> Vec3 {
+        let rest = Vec3::from(vertex.position);
+        let placed = turned(rest, vertex.drift * time);
+        let lit = (unlinear(Vec3::from(vertex.color) / SKY_GAIN)
+            + AMBER * (halo(placed.normalize()) - halo(rest.normalize())))
+        .max(Vec3::ZERO);
+        linear(lit) * SKY_GAIN
+    }
+
+    fn directions() -> impl Iterator<Item = Vec3> {
+        (0..240_u16).map(|index| {
+            let step = f32::from(index);
+            let height = step / 120.0 - 1.0;
+            let (sin, cos) = (step * 2.399).sin_cos();
+            let spread = (1.0 - height * height).max(0.0).sqrt();
+            Vec3::new(spread * cos, height, spread * sin)
+        })
+    }
 
     const TWINKLE: f32 = 0.25;
 
@@ -181,13 +234,82 @@ mod tests {
         let uniforms = Uniforms::new(view_projection, Vec3::new(1.0, 2.0, 3.0), 12.5);
         assert_eq!(uniforms.view_projection, view_projection.to_cols_array());
         assert_eq!(uniforms.eye, [1.0, 2.0, 3.0]);
-        assert!(VERTEX.contains("view_projection * vec4(in_position + eye, 1.0)"));
+        assert!(VERTEX.contains("view_projection * vec4(placed + eye, 1.0)"));
     }
 
     #[test]
-    fn uniforms_carry_the_game_time() {
+    fn uniforms_carry_the_game_time_and_the_direction_of_vael() {
         let uniforms = Uniforms::new(Mat4::IDENTITY, Vec3::ZERO, 12.5);
         assert_eq!(uniforms.time, 12.5);
+        assert_eq!(uniforms.toward_sun, VAEL.toward_sun.to_array());
+    }
+
+    #[test]
+    fn the_shader_turns_like_the_reference() {
+        assert!(VERTEX.contains("float turn = in_drift * time;"));
+        assert!(VERTEX.contains(
+            "vec2 around = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * in_position.xz;"
+        ));
+        assert!(VERTEX.contains("vec3 placed = vec3(around.x, in_position.y, around.y);"));
+    }
+
+    #[test]
+    fn a_turn_spins_about_the_vertical_axis() {
+        for turn in [0.0, 0.3, 1.0, -2.0, 4.0] {
+            for direction in directions() {
+                let point = direction * SKY_RADIUS;
+                let placed = turned(point, turn);
+                assert!(placed.distance(Mat3::from_rotation_y(turn) * point) < 1e-3);
+                assert_eq!(placed.y, point.y);
+            }
+        }
+    }
+
+    #[test]
+    fn the_shader_lights_like_the_reference() {
+        let amber = format!("vec3({:?}, {:?}, {:?})", AMBER.x, AMBER.y, AMBER.z);
+        assert!(VERTEX.contains(&format!("const vec3 AMBER = {amber};")));
+        assert!(VERTEX.contains(&format!("const float GAIN = {SKY_GAIN:?};")));
+        assert!(VERTEX.contains("const float GAMMA = 2.2;"));
+        assert!((linear(Vec3::splat(0.5)).x - 0.5_f32.powf(2.2)).abs() < 1e-6);
+        assert!(VERTEX.contains("float glow = max(dot(normalize(toward), toward_sun), 0.0);"));
+        assert!(VERTEX.contains("return pow(glow, 24.0) * 0.9 + pow(glow, 4.0) * 0.12;"));
+        assert!(VERTEX.contains("vec3 rest = pow(in_color / GAIN, vec3(1.0 / GAMMA));"));
+        assert!(
+            VERTEX.contains(
+                "vec3 lit = max(rest + AMBER * (halo(placed) - halo(in_position)), 0.0);"
+            )
+        );
+        assert!(VERTEX.contains("color = pow(lit, vec3(GAMMA)) * GAIN;"));
+    }
+
+    #[test]
+    fn a_still_point_keeps_its_color() {
+        for vertex in sky().vertices.iter().filter(|vertex| vertex.drift == 0.0) {
+            let color = Vec3::from(vertex.color);
+            for time in [0.0, 37.5, 600.0] {
+                let error = shaded(vertex, time).distance(color);
+                assert!(error <= 1e-4 * color.max_element().max(1.0), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_drifting_point_carries_its_nebula_while_the_glow_stays_with_vael() {
+        for direction in directions() {
+            let vertex = SkyVertex {
+                position: (direction * SKY_RADIUS).to_array(),
+                color: (linear(sky_color(direction)) * SKY_GAIN).to_array(),
+                twinkle: [0.0; 2],
+                drift: 0.003,
+            };
+            for time in [20.0, 300.0, 1200.0] {
+                let toward = turned(direction, vertex.drift * time).normalize();
+                let expected = gradient(toward) + nebula(direction) + AMBER * halo(toward);
+                let error = shaded(&vertex, time).distance(linear(expected) * SKY_GAIN);
+                assert!(error < 1e-4, "{direction} {time} {error}");
+            }
+        }
     }
 
     #[test]
@@ -204,7 +326,7 @@ mod tests {
         for shader in [VERTEX, FRAGMENT] {
             assert!(shader.contains("varying mediump float glint;"));
         }
-        assert!(VERTEX.contains("color = in_color;"));
+        assert!(!VERTEX.contains("* glint"));
         assert!(FRAGMENT.contains("(x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)"));
         assert!(FRAGMENT.contains("pow(filmic(color), vec3(0.4545)) * glint"));
     }
