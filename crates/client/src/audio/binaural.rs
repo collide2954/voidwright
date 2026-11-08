@@ -1,4 +1,4 @@
-use super::dsp::Frame;
+use super::dsp::{Frame, Smooth};
 use glam::Vec2;
 use std::f32::consts::TAU;
 
@@ -6,11 +6,15 @@ const HEAD: f32 = 0.0875;
 const SOUND: f32 = 343.0;
 const AHEAD: f32 = 20_000.0;
 const SIDE: f32 = 1_500.0;
+const GLIDE: f32 = 0.02;
 
 pub struct Binaural {
     rate: f32,
     history: Box<[f32]>,
     written: usize,
+    azimuth: u32,
+    delays: [Smooth; 2],
+    shades: [Smooth; 2],
     ears: Vec2,
 }
 
@@ -26,24 +30,43 @@ impl Binaural {
             rate,
             history: vec![0.0; usize::from(length)].into_boxed_slice(),
             written: 0,
+            azimuth: 0.0_f32.to_bits(),
+            delays: [Smooth::new(0.0, GLIDE, rate); 2],
+            shades: [Smooth::new(shade(0.0, rate), GLIDE, rate); 2],
             ears: Vec2::ZERO,
         }
     }
 
     pub fn process(&mut self, input: f32, azimuth: f32) -> Frame {
+        if azimuth.to_bits() != self.azimuth {
+            self.aim(azimuth);
+        }
         self.written = (self.written + 1) & (self.history.len() - 1);
         self.history[self.written] = input;
-        let side = azimuth.sin();
-        let far = Vec2::new(side, -side).max(Vec2::ZERO);
-        let delays = Vec2::new(lag(far.x), lag(far.y)) * self.rate;
+        let delays = Vec2::from_array(self.delays.each_mut().map(Smooth::step));
         let whole = delays.floor();
         let back = whole.as_ivec2();
         let newer = Vec2::new(self.tap(back.x), self.tap(back.y));
         let older = Vec2::new(self.tap(back.x + 1), self.tap(back.y + 1));
         let heard = newer + (older - newer) * (delays - whole);
-        let shades = Vec2::new(shade(far.x, self.rate), shade(far.y, self.rate));
+        let shades = Vec2::from_array(self.shades.each_mut().map(Smooth::step));
         self.ears += (heard - self.ears) * shades;
         self.ears.to_array()
+    }
+
+    fn aim(&mut self, azimuth: f32) {
+        self.azimuth = azimuth.to_bits();
+        let side = azimuth.sin();
+        for ((delay, filter), far) in self
+            .delays
+            .iter_mut()
+            .zip(&mut self.shades)
+            .zip([side, -side])
+        {
+            let far = far.max(0.0);
+            delay.set(lag(far) * self.rate);
+            filter.set(shade(far, self.rate));
+        }
     }
 
     fn tap(&self, back: i32) -> f32 {
@@ -70,6 +93,7 @@ mod tests {
     const RATE: f32 = 48_000.0;
     const SETTLE: usize = 9_600;
     const LENGTH: usize = 4_800;
+    const SWEEP: usize = 24_000;
 
     fn listen(azimuth: f32, sound: &[f32]) -> Vec<Frame> {
         let mut binaural = Binaural::new(RATE);
@@ -91,6 +115,22 @@ mod tests {
             .windows(2)
             .map(|pair| (pair[1] - pair[0]).abs())
             .fold(0.0, f32::max)
+    }
+
+    fn jumps(azimuth: impl Fn(usize) -> f32) -> [f32; 2] {
+        let mut phase = Phase::default();
+        let mut binaural = Binaural::new(RATE);
+        let mut plain = Vec::new();
+        let mut ears = [Vec::new(), Vec::new()];
+        for step in 0..SETTLE + SWEEP {
+            let value = sine(phase.advance(200.0, RATE));
+            plain.push(value);
+            for (ear, heard) in ears.iter_mut().zip(binaural.process(value, azimuth(step))) {
+                ear.push(heard);
+            }
+        }
+        let plain = largest_jump(&plain);
+        ears.map(|ear| largest_jump(&ear) / plain)
     }
 
     fn highs(values: impl Iterator<Item = f32>) -> f32 {
@@ -146,26 +186,19 @@ mod tests {
 
     #[test]
     fn a_sweep_across_the_front_does_not_click() {
-        let mut phase = Phase::default();
-        let mut tone = move || sine(phase.advance(200.0, RATE));
-        let mut binaural = Binaural::new(RATE);
-        for _ in 0..SETTLE {
-            binaural.process(tone(), -FRAC_PI_2);
+        let sweep = |step: usize| {
+            let done = u16::try_from(step.saturating_sub(SETTLE)).unwrap();
+            PI * (f32::from(done) / f32::from(u16::try_from(SWEEP - 1).unwrap()) - 0.5)
+        };
+        for jump in jumps(sweep) {
+            assert!(jump < 1.05, "{jump}");
         }
-        let steps = u16::try_from(5 * LENGTH).unwrap();
-        let (mut plain, mut ears) = (Vec::new(), [Vec::new(), Vec::new()]);
-        for step in 0..steps {
-            let azimuth = PI * (f32::from(step) / f32::from(steps - 1) - 0.5);
-            let value = tone();
-            plain.push(value);
-            for (ear, heard) in ears.iter_mut().zip(binaural.process(value, azimuth)) {
-                ear.push(heard);
-            }
-        }
-        let limit = 1.05 * largest_jump(&plain);
-        for ear in &ears {
-            let jump = largest_jump(ear);
-            assert!(jump <= limit, "{jump} against {limit}");
+    }
+
+    #[test]
+    fn a_sudden_turn_glides_without_a_click() {
+        for jump in jumps(|step| if step < SETTLE { -FRAC_PI_2 } else { FRAC_PI_2 }) {
+            assert!(jump < 1.1, "{jump}");
         }
     }
 }
