@@ -99,9 +99,47 @@ pub fn projection(aspect: f32) -> Mat4 {
     opengl::perspective(FIELD_OF_VIEW, aspect, NEAR, FAR)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lens {
+    view: Mat4,
+    projection: Mat4,
+    eye: Vec3,
+}
+
+impl Lens {
+    #[must_use]
+    pub const fn new(view: Mat4, projection: Mat4, eye: Vec3) -> Self {
+        Self {
+            view,
+            projection,
+            eye,
+        }
+    }
+
+    #[must_use]
+    pub fn orbit(camera: &OrbitCamera, aspect: f32) -> Self {
+        Self::new(camera.view(), projection(aspect), camera.eye())
+    }
+
+    #[must_use]
+    pub const fn view(&self) -> Mat4 {
+        self.view
+    }
+
+    #[must_use]
+    pub const fn projection(&self) -> Mat4 {
+        self.projection
+    }
+
+    #[must_use]
+    pub const fn eye(&self) -> Vec3 {
+        self.eye
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH, OrbitCamera, projection};
+    use super::{Lens, MAX_DISTANCE, MAX_PITCH, MIN_DISTANCE, MIN_PITCH, OrbitCamera, projection};
     use glam::{Vec2, Vec3};
 
     const ASPECT: f32 = 16.0 / 9.0;
@@ -167,6 +205,17 @@ mod tests {
         let camera = camera();
         let screen = (projection(ASPECT) * camera.view()).project_point3(camera.target);
         assert!(screen.truncate().length() < 1e-4);
+    }
+
+    #[test]
+    fn a_lens_of_the_orbit_sees_what_the_camera_sees() {
+        let camera = camera();
+        let lens = Lens::orbit(&camera, ASPECT);
+        assert!(lens.view().abs_diff_eq(camera.view(), 1e-5));
+        assert!(lens.projection().abs_diff_eq(projection(ASPECT), 1e-6));
+        assert!(lens.eye().distance(camera.eye()) < 1e-5);
+        let picture = (lens.projection() * lens.view()).project_point3(camera.target);
+        assert!(picture.truncate().length() < 1e-4);
     }
 
     #[test]

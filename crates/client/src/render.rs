@@ -12,8 +12,8 @@ use crate::shader::post::{LEVELS, composite, down, halo, prefilter, up};
 use crate::shader::{self, baked, caster, particles, post, skinned};
 use crate::shadow::{self, sun_view, to_texture};
 use crate::{
-    BONES, Game, Lamp, Painter, VAEL, aspect, cliff, flip_rows, palette, png, projection, pulse,
-    sky, top, underside, voidwright,
+    BONES, Game, Lamp, Lens, Painter, VAEL, aspect, cliff, flip_rows, palette, png, pulse, sky,
+    top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -258,51 +258,56 @@ impl Renderer {
                 Post::new(context, size)
             }
         };
-        self.frame(context, game, aspect(screen), &post, None);
+        let lens = Lens::orbit(game.camera(), aspect(screen));
+        self.frame(context, game, &lens, &post, None);
         self.post = Some(post);
         context.commit_frame();
     }
 
     #[must_use]
     pub fn capture(&self, context: &mut dyn RenderingBackend, game: &Game) -> Vec<u8> {
-        let post = Post::new(context, [CAPTURE_WIDTH, CAPTURE_HEIGHT]);
+        let size = [CAPTURE_WIDTH, CAPTURE_HEIGHT];
+        let lens = Lens::orbit(game.camera(), aspect(size.map(f32::from).into()));
+        let pixels = self.photograph(context, game, &lens, size);
+        png::encode(CAPTURE_WIDTH, CAPTURE_HEIGHT, &pixels)
+    }
+
+    #[must_use]
+    pub fn photograph(
+        &self,
+        context: &mut dyn RenderingBackend,
+        game: &Game,
+        lens: &Lens,
+        [width, height]: [u16; 2],
+    ) -> Vec<u8> {
+        let post = Post::new(context, [width, height]);
         let color = context.new_render_texture(TextureParams {
-            width: u32::from(CAPTURE_WIDTH),
-            height: u32::from(CAPTURE_HEIGHT),
+            width: u32::from(width),
+            height: u32::from(height),
             ..TextureParams::default()
         });
         let pass = context.new_render_pass(color, None);
-        self.frame(
-            context,
-            game,
-            f32::from(CAPTURE_WIDTH) / f32::from(CAPTURE_HEIGHT),
-            &post,
-            Some(pass),
-        );
-        let mut pixels = vec![0; usize::from(CAPTURE_WIDTH) * usize::from(CAPTURE_HEIGHT) * 4];
+        self.frame(context, game, lens, &post, Some(pass));
+        let mut pixels = vec![0; usize::from(width) * usize::from(height) * 4];
         context.texture_read_pixels(color, &mut pixels);
         context.delete_render_pass(pass);
         post.delete(context);
         context.commit_frame();
-        png::encode(
-            CAPTURE_WIDTH,
-            CAPTURE_HEIGHT,
-            &flip_rows(&pixels, CAPTURE_WIDTH, CAPTURE_HEIGHT),
-        )
+        flip_rows(&pixels, width, height)
     }
 
     fn frame(
         &self,
         context: &mut dyn RenderingBackend,
         game: &Game,
-        aspect: f32,
+        lens: &Lens,
         post: &Post,
         target: Option<RenderPass>,
     ) {
         let figure = Figure::new(game);
         self.cast(context, &figure);
         context.begin_pass(Some(post.scene_pass), clear());
-        self.scene(context, game, aspect, &figure);
+        self.scene(context, game, lens, &figure);
         context.end_render_pass();
         self.bloom(context, post);
         let images = [post.scene, post.halo.texture];
@@ -387,9 +392,14 @@ impl Renderer {
         context.end_render_pass();
     }
 
-    fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32, figure: &Figure) {
-        let camera = game.camera();
-        let view_projection = projection(aspect) * camera.view();
+    fn scene(
+        &self,
+        context: &mut dyn RenderingBackend,
+        game: &Game,
+        camera: &Lens,
+        figure: &Figure,
+    ) {
+        let view_projection = camera.projection() * camera.view();
         context.apply_pipeline(&self.backdrop);
         context.apply_bindings(&self.sky.bindings);
         context.apply_uniforms(UniformsSource::table(&shader::sky::Uniforms::new(

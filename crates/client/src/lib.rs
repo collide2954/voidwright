@@ -41,7 +41,7 @@ mod terrain;
 mod wanderer;
 
 pub use app::App;
-pub use camera::{OrbitCamera, Ray, projection};
+pub use camera::{Lens, OrbitCamera, Ray, projection};
 pub use clock::Ticker;
 pub use figure::{BONES, Bone, Coat, JOINTS, LANTERN_BONE, placement, pulse, rest, skeleton, skin};
 pub use gait::{Pose, pose_at};
