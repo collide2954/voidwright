@@ -17,6 +17,22 @@ use crate::spline::smoothstep;
 const COWL_REACH: [f32; 2] = [0.05, 0.09];
 const HIP_DROP: f32 = 0.03;
 const BRACER: [Vec3; 2] = [Vec3::new(0.048, 0.0, 0.048), Vec3::new(0.036, -0.09, 0.036)];
+const SHELL: f32 = 0.022;
+const BAND: f32 = 0.008;
+const STRAP: [Vec3; 3] = {
+    let reach = SHELL / 2.0 + 0.002 + BAND / 2.0;
+    let [top, hips] = [COAT_CUT[0], COAT_CUT[1]];
+    let share = 0.02 / (top.y - hips.y);
+    [
+        Vec3::new(top.x + reach, 0.02, top.z + reach),
+        Vec3::new(top.x + reach, 0.0, top.z + reach),
+        Vec3::new(
+            top.x + (hips.x - top.x) * share + reach,
+            -0.02,
+            top.z + (hips.z - top.z) * share + reach,
+        ),
+    ]
+};
 const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06).textured(Surface::Woven);
 const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05).textured(Surface::Woven);
 const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05).textured(Surface::Woven);
@@ -329,11 +345,11 @@ fn drape(mesh: &mut SkinnedMesh) {
 pub fn voidwright() -> SkinnedMesh {
     let pieces = [
         piece(body(), 0.014, 10_000),
-        draped(garments(), 0.009, 9_000),
+        draped(garments(), 0.009, 8_400),
         piece(face(), 0.005, 3_000),
         piece(chest(), 0.007, 1_100),
         tailed(tail(), 0.006, 600),
-        draped(belt(), 0.007, 800),
+        draped(belt(), 0.0035, 1_400),
         piece(pauldron(), 0.007, 2_500),
         piece(bracer(), 0.006, 1_200),
         piece(knee(), 0.007, 600),
@@ -700,24 +716,22 @@ fn hand(side: Side) -> Sculpt {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(&COAT_CUT, 0.022, Vec2::new(9.0, 0.05));
+        let panel = tube(&COAT_CUT, SHELL, Vec2::new(9.0, 0.05));
         clay.add(
-            stroke(Bone::Pelvis, panel, COAT)
+            waistband(panel, Vec3::ZERO, COAT)
                 .lined(LINING)
-                .at(COAT_TOP)
-                .turned(Quat::from_rotation_x(COAT_TILT))
                 .clipped(Vec3::X * -side.sign(), -0.01)
                 .wrinkled(0.003, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
         );
     }
-    clay.add(
-        stroke(Bone::Pelvis, ring(0.15, 0.02), LEATHER)
-            .at(Vec3::new(0.0, 0.08, 0.0))
-            .turned(Quat::from_rotation_x(-0.06))
-            .squashed(Vec3::new(1.0, 1.0, 1.0))
-            .blended(0.006),
-    );
+}
+
+fn waistband(form: Form, at: Vec3, material: Material) -> Stroke {
+    let tilt = Quat::from_rotation_x(COAT_TILT);
+    stroke(Bone::Pelvis, form, material)
+        .at(COAT_TOP + tilt * at)
+        .turned(tilt)
 }
 
 fn hood(clay: &mut Sculpt) {
@@ -902,10 +916,17 @@ fn chest() -> Sculpt {
 
 fn belt() -> Sculpt {
     let mut clay = clay();
-    clay.add(
-        stroke(Bone::Pelvis, block(0.03, 0.022, 0.008, 0.004), BRASS)
-            .at(Vec3::new(0.0, 0.08, -0.134)),
-    );
+    clay.add(waistband(
+        tube(&STRAP, BAND, Vec2::ZERO),
+        Vec3::ZERO,
+        LEATHER,
+    ));
+    clay.part();
+    let low = STRAP[1].z + (STRAP[2].z - STRAP[1].z) * 0.55;
+    let front = Vec3::new(0.0, 0.006, -low - BAND / 2.0 - 0.0035);
+    clay.add(waistband(block(0.024, 0.017, 0.003, 0.002), front, BRASS));
+    clay.add(waistband(block(0.015, 0.009, 0.01, 0.002), front, BRASS).carved());
+    clay.add(waistband(limb(0.02, 0.002, 0.002), front + Vec3::Y * 0.01, BRASS).blended(0.002));
     for side in Side::BOTH {
         clay.part();
         clay.add(
@@ -1654,6 +1675,40 @@ mod tests {
         for vertex in top {
             assert!(on_cloth(vertex) < 0.2, "{:?}", vertex.position);
         }
+    }
+
+    #[test]
+    fn the_belt_cinches_the_coat_and_shows_its_buckle() {
+        let (belt, garments) = (super::belt(), super::garments());
+        let waist = crate::figure::waist(crate::figure::rest()[Bone::Pelvis.index()]);
+        let last = |solid: &crate::sculpt::Sculpt, ray: &dyn Fn(f32) -> Vec3| {
+            (0..400_u16)
+                .map(|index| f32::from(index) * 0.001)
+                .rfind(|&reach| solid.distance(ray(reach)) < 0.0)
+        };
+        for step in 0..36_u16 {
+            let angle = (f32::from(step) * 10.0).to_radians();
+            let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+            if direction.z.abs() > 0.9 {
+                continue;
+            }
+            let ray = |reach: f32| waist.transform_point3(direction * reach - Vec3::Y * 0.005);
+            let leather = last(&belt, &ray).expect("the belt rings the waist");
+            let coat = last(&garments, &ray).expect("the coat rings the waist");
+            assert!(
+                (0.0..0.012).contains(&(leather - coat)),
+                "{step} {coat} {leather}"
+            );
+        }
+        let front = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.position[0].abs() < 0.015)
+            .filter(|vertex| (0.975..1.0).contains(&vertex.position[1]))
+            .min_by(|a, b| a.position[2].total_cmp(&b.position[2]))
+            .expect("the figure has a waist");
+        let [woven, knitted, grained, brushed] = front.surface;
+        assert!(brushed > woven.max(knitted).max(grained), "{front:?}");
     }
 
     #[test]
