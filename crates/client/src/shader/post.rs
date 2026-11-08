@@ -62,20 +62,33 @@ pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
 }
 
 pub mod composite {
-    use miniquad::{ShaderMeta, UniformBlockLayout};
+    use glam::Vec2;
+    use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 
     pub const VIGNETTE: f32 = 0.2;
+    pub const GRAIN: f32 = 0.025;
+    pub const GRAIN_RATE: f32 = 24.0;
+    pub const SPREAD: f32 = 512.0;
+    const STEPS: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
 
     pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform sampler2D scene;
+uniform highp vec2 seed;
 varying highp vec2 uv;
 const float VIGNETTE = 0.2;
+const float GRAIN = 0.025;
+float noise(highp vec2 pixel) {
+    highp vec3 p = fract(pixel.xyx * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
 void main() {
     highp vec2 centered = uv * 2.0 - 1.0;
     float corner = 0.5 * dot(centered, centered);
     float shade = 1.0 - VIGNETTE * corner * corner;
-    gl_FragColor = vec4(texture2D(scene, uv).rgb * shade, 1.0);
+    float grain = GRAIN * (noise(gl_FragCoord.xy + seed) - 0.5);
+    gl_FragColor = vec4(texture2D(scene, uv).rgb * shade + grain, 1.0);
 }
 ";
 
@@ -84,15 +97,134 @@ void main() {
         ShaderMeta {
             images: vec!["scene".to_owned()],
             uniforms: UniformBlockLayout {
-                uniforms: Vec::new(),
+                uniforms: vec![UniformDesc::new("seed", UniformType::Float2)],
             },
+        }
+    }
+
+    #[must_use]
+    pub fn seed(time: f32) -> [f32; 2] {
+        let frame = (time.max(0.0) * GRAIN_RATE).floor();
+        ((STEPS * frame).fract_gl() * SPREAD).floor().to_array()
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Uniforms {
+        pub seed: [f32; 2],
+    }
+
+    impl Uniforms {
+        #[must_use]
+        pub fn new(time: f32) -> Self {
+            Self { seed: seed(time) }
         }
     }
 
     #[cfg(test)]
     mod tests {
-        use super::{FRAGMENT, VIGNETTE, meta};
-        use glam::Vec2;
+        use super::{FRAGMENT, GRAIN, GRAIN_RATE, SPREAD, Uniforms, VIGNETTE, meta, seed};
+        use glam::{Vec2, Vec3};
+
+        fn noise(pixel: Vec2) -> f32 {
+            let mut p = (Vec3::new(pixel.x, pixel.y, pixel.x) * 0.1031).fract_gl();
+            p += p.dot(Vec3::new(p.y, p.z, p.x) + 33.33);
+            let value = (p.x + p.y) * p.z;
+            value - value.floor()
+        }
+
+        fn field(offset: Vec2) -> Vec<f32> {
+            (0..256_u16)
+                .flat_map(|y| (0..256_u16).map(move |x| Vec2::new(f32::from(x), f32::from(y))))
+                .map(|pixel| noise(pixel + Vec2::splat(0.5) + offset))
+                .collect()
+        }
+
+        fn correlation(a: &[f32], b: &[f32]) -> f32 {
+            let count = 65_536.0;
+            let mean = |values: &[f32]| values.iter().sum::<f32>() / count;
+            let (mean_a, mean_b) = (mean(a), mean(b));
+            let product: f32 = a
+                .iter()
+                .zip(b)
+                .map(|(x, y)| (x - mean_a) * (y - mean_b))
+                .sum();
+            let spread = |values: &[f32], middle: f32| {
+                values
+                    .iter()
+                    .map(|value| (value - middle).powi(2))
+                    .sum::<f32>()
+            };
+            product / (spread(a, mean_a) * spread(b, mean_b)).sqrt()
+        }
+
+        #[test]
+        fn the_grain_matches_the_rust_copy() {
+            assert!(FRAGMENT.contains("highp vec3 p = fract(pixel.xyx * 0.1031);"));
+            assert!(FRAGMENT.contains("p += dot(p, p.yzx + 33.33);"));
+            assert!(FRAGMENT.contains("return fract((p.x + p.y) * p.z);"));
+            assert!(FRAGMENT.contains("GRAIN * (noise(gl_FragCoord.xy + seed) - 0.5)"));
+            assert!(FRAGMENT.contains(&format!("const float GRAIN = {GRAIN:?};")));
+        }
+
+        #[test]
+        fn the_grain_is_even_and_fine() {
+            let values = field(Vec2::ZERO);
+            assert!(values.iter().all(|value| (0.0..1.0).contains(value)));
+            let mean = values.iter().sum::<f32>() / 65_536.0;
+            let variance = values
+                .iter()
+                .map(|value| (value - mean).powi(2))
+                .sum::<f32>()
+                / 65_536.0;
+            assert!((mean - 0.5).abs() < 0.01, "{mean}");
+            assert!((variance - 1.0 / 12.0).abs() < 0.005, "{variance}");
+            let shifted = field(Vec2::X);
+            assert!(correlation(&values, &shifted).abs() < 0.05);
+        }
+
+        #[test]
+        fn the_grain_stays_faint() {
+            assert!((0.01..=0.04).contains(&GRAIN));
+        }
+
+        #[test]
+        fn the_grain_changes_with_each_film_frame() {
+            assert!((GRAIN_RATE - 24.0).abs() < 1e-6);
+            let first = field(Vec2::from(seed(0.0)));
+            let second = field(Vec2::from(seed(1.5 / GRAIN_RATE)));
+            assert!(correlation(&first, &second).abs() < 0.05);
+        }
+
+        #[test]
+        fn the_same_game_time_gives_the_same_grain() {
+            for time in [0.0, 0.01, 1.5, 61.3, 3600.0] {
+                assert_eq!(seed(time), seed(time));
+                assert_eq!(seed(time), seed(time + 0.2 / GRAIN_RATE));
+            }
+        }
+
+        #[test]
+        fn the_seed_stays_small_for_precise_noise() {
+            for frame in 0..2_000_u16 {
+                let offset = seed(f32::from(frame) / GRAIN_RATE);
+                assert!(offset.iter().all(|side| (0.0..SPREAD).contains(side)));
+            }
+            const { assert!(SPREAD <= 1024.0) };
+        }
+
+        #[test]
+        fn uniforms_carry_the_seed_of_the_game_time() {
+            assert_eq!(Uniforms::new(2.5).seed, seed(2.5));
+            let declared: usize = meta()
+                .uniforms
+                .uniforms
+                .iter()
+                .map(|uniform| uniform.uniform_type.size() * uniform.array_count)
+                .sum();
+            assert_eq!(size_of::<Uniforms>(), declared);
+            assert!(FRAGMENT.contains("uniform highp vec2 seed;"));
+        }
 
         fn shade(uv: Vec2) -> f32 {
             let centered = uv * 2.0 - 1.0;
