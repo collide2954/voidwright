@@ -39,6 +39,11 @@ impl Walker {
         self.route.back().copied()
     }
 
+    #[must_use]
+    pub fn next_step(&self) -> Option<Tile> {
+        self.route.front().copied()
+    }
+
     pub fn follow(&mut self, route: Vec<Tile>) {
         self.route = route.into();
     }
@@ -111,6 +116,18 @@ mod tests {
         assert_eq!(walker.destination(), Some(east(2)));
         walker.advance(2);
         assert_eq!(walker.destination(), None);
+    }
+
+    #[test]
+    fn the_next_step_is_the_front_of_the_route() {
+        let mut walker = Walker::new(east(0));
+        assert_eq!(walker.next_step(), None);
+        walker.follow(vec![east(1), east(2)]);
+        assert_eq!(walker.next_step(), Some(east(1)));
+        walker.advance(1);
+        assert_eq!(walker.next_step(), Some(east(2)));
+        walker.advance(1);
+        assert_eq!(walker.next_step(), None);
     }
 
     #[test]
