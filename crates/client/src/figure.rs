@@ -31,7 +31,22 @@ pub enum Bone {
 
 pub const JOINTS: usize = 17;
 pub const LANTERN_BONE: usize = JOINTS + CLOTH_BONES;
-pub const BONES: usize = LANTERN_BONE + 1;
+pub const SCARF_BONE: usize = LANTERN_BONE + 1;
+pub const BONES: usize = SCARF_BONE + 2;
+pub const SCARF_TAIL: [Vec3; 3] = [
+    Vec3::new(-0.083, 0.458, -0.115),
+    Vec3::new(-0.07, 0.33, -0.131),
+    Vec3::new(-0.057, 0.202, -0.147),
+];
+const SCARF_SLACK: f32 = 0.15;
+const SCARF_FEEL: Feel = Feel {
+    drive: 1.0,
+    drag: 4.0,
+    inertia: 0.7,
+    spin: 0.7,
+};
+const CHEST: [Vec3; 2] = [Vec3::new(0.0, 0.12, 0.0), Vec3::new(0.0, 0.46, 0.0)];
+const CHEST_RADIUS: f32 = 0.085;
 pub const LANTERN_HOOK: Vec3 = Vec3::new(0.150_3, 0.561, 0.284_5);
 pub const LANTERN_DROP: f32 = 0.065;
 const LANTERN_SLACK: f32 = 0.08;
@@ -240,7 +255,7 @@ pub fn skin(pose: &Pose) -> [Mat4; BONES] {
     from_fn(|bone| {
         if bone < JOINTS {
             posed[bone] * rest[bone].inverse()
-        } else if bone == LANTERN_BONE {
+        } else if bone >= LANTERN_BONE {
             follow(Bone::Torso)
         } else {
             follow(Bone::Pelvis)
@@ -252,6 +267,7 @@ pub fn skin(pose: &Pose) -> [Mat4; BONES] {
 pub struct Coat {
     cloth: Cloth,
     lantern: Fabric<2>,
+    scarf: Fabric<3>,
 }
 
 impl Coat {
@@ -261,6 +277,7 @@ impl Coat {
         let mut coat = Self {
             cloth: Cloth::hanging(COAT_CUT),
             lantern: Fabric::strand(hanging, LANTERN_SLACK, LANTERN_FEEL),
+            scarf: Fabric::strand(SCARF_TAIL, SCARF_SLACK, SCARF_FEEL),
         };
         coat.update(pose, placement, 0.0);
         coat
@@ -291,6 +308,12 @@ impl Coat {
             radius: BEDROLL_RADIUS,
         };
         self.lantern.update(torso, &[bedroll], seconds);
+        let chest = Capsule {
+            from: torso.transform_point3(CHEST[0]),
+            to: torso.transform_point3(CHEST[1]),
+            radius: CHEST_RADIUS,
+        };
+        self.scarf.update(torso, &[chest], seconds);
     }
 
     #[must_use]
@@ -301,6 +324,8 @@ impl Coat {
         let coat = self.cloth.skins(waist(rest[pelvis]), waist(posed[pelvis]));
         skins[JOINTS..LANTERN_BONE].copy_from_slice(&coat);
         skins[LANTERN_BONE] = self.lantern.skins(rest[torso], posed[torso])[0];
+        let scarf = self.scarf.skins(rest[torso], posed[torso]);
+        skins[SCARF_BONE..BONES].copy_from_slice(&scarf);
         skins
     }
 
@@ -323,8 +348,8 @@ pub fn pulse(time: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bone, Coat, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK, placement, pulse, rest,
-        skeleton, skin,
+        Bone, Coat, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK, SCARF_BONE, SCARF_TAIL,
+        placement, pulse, rest, skeleton, skin,
     };
     use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
@@ -600,6 +625,46 @@ mod tests {
         let middle = lantern_middle();
         let swung = coat.skins(&pose)[LANTERN_BONE].transform_point3(middle);
         assert!(swung.z > middle.z + 0.005, "{swung} {middle}");
+    }
+
+    fn scarf_end() -> Vec3 {
+        rest()[Bone::Torso.index()].transform_point3(SCARF_TAIL[2])
+    }
+
+    #[test]
+    fn a_still_scarf_hangs_as_sculpted() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        let end = scarf_end();
+        let held = coat.skins(&pose)[SCARF_BONE + 1].transform_point3(end);
+        assert!(held.distance(end) < 0.005, "{held} {end}");
+    }
+
+    #[test]
+    fn the_scarf_tail_swings_back_when_the_figure_sets_off() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        for frame in 1..=8_u8 {
+            let ahead = Mat4::from_translation(Vec3::NEG_Z * 0.03 * f32::from(frame));
+            coat.update(&pose, ahead, 1.0 / 60.0);
+        }
+        let end = scarf_end();
+        let swung = coat.skins(&pose)[SCARF_BONE + 1].transform_point3(end);
+        assert!(swung.z > end.z + 0.005, "{swung} {end}");
+    }
+
+    #[test]
+    fn a_bare_skin_carries_the_scarf_with_the_torso() {
+        let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
+        for bone in SCARF_BONE..SCARF_BONE + 2 {
+            assert!(skins[bone].abs_diff_eq(skins[Bone::Torso.index()], 1e-6));
+        }
     }
 
     #[test]

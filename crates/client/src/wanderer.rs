@@ -2,10 +2,10 @@ use std::f32::consts::FRAC_PI_2;
 
 use glam::{Quat, Vec2, Vec3, Vec4};
 
-use crate::cloth::Cloth;
+use crate::cloth::{COAT_FEEL, Cloth, Fabric};
 use crate::figure::{
     ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FINGER, FOREARM, JOINTS, LANTERN_BONE,
-    LANTERN_HOOK, THIGH, UPPER_ARM, rest, waist,
+    LANTERN_HOOK, SCARF_BONE, SCARF_TAIL, THIGH, UPPER_ARM, rest, waist,
 };
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
@@ -187,6 +187,7 @@ enum Fit {
     Rigid,
     Draped,
     Hung,
+    Tail,
 }
 
 struct Piece {
@@ -227,10 +228,33 @@ fn index(bone: usize) -> f32 {
     f32::from(u8::try_from(bone).unwrap_or(u8::MAX))
 }
 
+const fn tailed(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
+    Piece {
+        sculpt,
+        cell,
+        budget,
+        fit: Fit::Tail,
+    }
+}
+
 fn hang(mesh: &mut SkinnedMesh) {
     for vertex in &mut mesh.vertices {
         vertex.bones = [index(LANTERN_BONE); 4];
         vertex.weights = [1.0, 0.0, 0.0, 0.0];
+    }
+}
+
+fn trail(mesh: &mut SkinnedMesh) {
+    let strand = Fabric::strand(SCARF_TAIL, 0.0, COAT_FEEL);
+    let torso = Bone::Torso.index();
+    let back = rest()[torso].inverse();
+    for vertex in &mut mesh.vertices {
+        let local = back.transform_point3(Vec3::from(vertex.position));
+        let [(first, near), (second, far)] = strand
+            .along(local)
+            .map(|(slot, share)| (slot.map_or(torso, |slot| SCARF_BONE + slot), share));
+        vertex.bones = [index(first), index(second), index(torso), index(torso)];
+        vertex.weights = [near, far, 0.0, 0.0];
     }
 }
 
@@ -269,7 +293,8 @@ pub fn voidwright() -> SkinnedMesh {
         piece(body(), 0.014, 10_000),
         draped(garments(), 0.009, 9_000),
         piece(face(), 0.005, 3_000),
-        piece(chest(), 0.007, 1_500),
+        piece(chest(), 0.007, 1_100),
+        tailed(tail(), 0.006, 600),
         draped(belt(), 0.007, 800),
         piece(pauldron(), 0.007, 2_500),
         piece(bracer(), 0.006, 1_200),
@@ -288,6 +313,7 @@ pub fn voidwright() -> SkinnedMesh {
         match piece.fit {
             Fit::Draped => drape(&mut mesh),
             Fit::Hung => hang(&mut mesh),
+            Fit::Tail => trail(&mut mesh),
             Fit::Rigid => {}
         }
         figure.append(&mesh);
@@ -798,14 +824,18 @@ fn face() -> Sculpt {
     clay
 }
 
-fn chest() -> Sculpt {
+fn tail() -> Sculpt {
     let mut clay = clay();
     clay.add(
         stroke(Bone::Torso, block(0.036, 0.13, 0.011, 0.009), SCARF)
-            .at(Vec3::new(-0.07, 0.33, -0.131))
+            .at(SCARF_TAIL[1])
             .turned(Quat::from_rotation_z(0.1) * Quat::from_rotation_x(0.12)),
     );
-    clay.part();
+    clay
+}
+
+fn chest() -> Sculpt {
+    let mut clay = clay();
     let strap = Quat::from_rotation_z(0.55);
     clay.add(
         stroke(Bone::Torso, ring(0.205, 0.011), LEATHER)
@@ -1423,6 +1453,26 @@ mod tests {
                 .iter()
                 .any(|vertex| { glows(vertex) && vertex.color[0] > 0.9 && vertex.color[2] < 0.2 })
         );
+    }
+
+    #[test]
+    fn the_scarf_tail_follows_its_strand_below_the_knot() {
+        use crate::figure::{SCARF_BONE, rest};
+        let back = rest()[Bone::Torso.index()].inverse();
+        let tail: Vec<&SkinnedVertex> = FIGURE
+            .vertices
+            .iter()
+            .filter(|vertex| {
+                let local = back.transform_point3(Vec3::from(vertex.position));
+                let [woven, knitted, grained, brushed] = vertex.surface;
+                let wool = knitted > woven.max(grained).max(brushed);
+                wool && local.y < 0.3 && local.z < -0.1
+            })
+            .collect();
+        assert_ne!(tail.len(), 0);
+        for vertex in tail {
+            assert!((SCARF_BONE..SCARF_BONE + 2).contains(&strongest(vertex)));
+        }
     }
 
     #[test]
