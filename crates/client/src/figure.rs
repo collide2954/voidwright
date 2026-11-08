@@ -45,9 +45,9 @@ const BEDROLL: [Vec3; 2] = [Vec3::new(0.13, 0.42, 0.17), Vec3::new(-0.13, 0.42, 
 const BEDROLL_RADIUS: f32 = 0.042;
 pub const COAT_CUT: Drape = Drape {
     top: 0.16,
-    bottom: 0.28,
+    bottom: 0.30,
     length: 0.64,
-    squash: 0.95,
+    squash: 1.0,
 };
 pub const COAT_TOP: f32 = 0.08;
 pub const COAT_TILT: f32 = 0.06;

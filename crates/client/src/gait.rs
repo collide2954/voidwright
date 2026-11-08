@@ -26,7 +26,8 @@ const RUN_HEEL_OFF: f32 = 0.5;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.997;
-const SPAN: f32 = (THIGH + ANKLE) * 0.9999;
+const SPAN: f32 = (THIGH + ANKLE) * 0.998;
+const SLACK: f32 = 0.04;
 const WALK_SURGE: f32 = 0.0;
 const RUN_SURGE: f32 = 0.04;
 const BANK_SWAY: f32 = 0.12;
@@ -154,6 +155,7 @@ struct Walk {
 struct Footing {
     ankle: Vec2,
     pitch: f32,
+    slack: f32,
 }
 
 fn stride(phase: f32, pace: f32, turn: f32, roll: f32, sway: f32, surge: f32) -> Walk {
@@ -184,7 +186,7 @@ fn stride(phase: f32, pace: f32, turn: f32, roll: f32, sway: f32, surge: f32) ->
         let hip = height + HIP.x * (side * sin - sin.abs()) + HIP.y * (cos - 1.0);
         let drop = (hip - foot.ankle.y) / (1.0 - tilt * tilt).sqrt();
         let ahead = (foot.ankle.x - surge - (across + drop * tilt) * twist.sin()) / twist.cos();
-        let (thigh, knee) = reach(ahead, drop);
+        let (thigh, knee) = reach(ahead, drop, foot.slack);
         (thigh, knee, foot.pitch)
     });
     Walk {
@@ -218,6 +220,7 @@ fn footing(phase: f32, pace: f32) -> Footing {
         Footing {
             ankle,
             pitch: strike - roll,
+            slack: 0.0,
         }
     } else {
         let swing = (moment - duty) / (1.0 - duty);
@@ -238,6 +241,7 @@ fn footing(phase: f32, pace: f32) -> Footing {
         Footing {
             ankle: Vec2::new(ahead, clearance - low),
             pitch,
+            slack: SLACK * smoothstep(0.0, 0.25, swing) * (1.0 - smoothstep(0.8, 1.0, swing)),
         }
     }
 }
@@ -250,8 +254,11 @@ fn rock(flat: Vec2, pivot: Vec2, pitch: f32) -> Vec2 {
     flat + pivot - pitched(pivot, pitch)
 }
 
-fn reach(ahead: f32, drop: f32) -> (f32, f32) {
-    let drop = drop.min((SPAN * SPAN - ahead * ahead).max(0.0).sqrt());
+fn reach(ahead: f32, drop: f32, slack: f32) -> (f32, f32) {
+    let soft = SPAN - slack;
+    let over = (ahead.hypot(drop) - soft).max(0.0);
+    let span = soft + slack * (1.0 - (-over / slack.max(f32::EPSILON)).exp());
+    let drop = drop.min((span * span - ahead * ahead).max(0.0).sqrt());
     let distance = ahead.hypot(drop).clamp(0.05, SPAN);
     let cosine = |near: f32, far: f32, across: f32| {
         ((near * near + far * far - across * across) / (2.0 * near * far)).clamp(-1.0, 1.0)
@@ -346,6 +353,26 @@ mod tests {
     }
 
     #[test]
+    fn the_swinging_knee_eases_into_heel_strike() {
+        for pace in [0.0, 1.0] {
+            let knee = |sample: u16| {
+                let moment = f32::from(sample) / f32::from(SAMPLES);
+                pose_at(TAU * moment, WALKING, pace, 0.0).knees[0].to_degrees()
+            };
+            let late = (0..SAMPLES).filter(|&sample| {
+                let moment = f32::from(sample) / f32::from(SAMPLES);
+                moment - duty(pace) > 0.5 * (1.0 - duty(pace))
+            });
+            for sample in late {
+                let turn = (knee((sample + SAMPLES / 100).min(SAMPLES)) - knee(sample)).abs();
+                assert!(turn < 10.0, "pace {pace} at {sample}: {turn}");
+            }
+            let strike = (knee(SAMPLES) - knee(SAMPLES - SAMPLES / 200)).abs();
+            assert!(strike < 3.0, "pace {pace} at strike: {strike}");
+        }
+    }
+
+    #[test]
     fn running_bends_the_planted_knee_40_to_45_degrees() {
         let deepest = (0..SAMPLES)
             .map(|sample| f32::from(sample) / f32::from(SAMPLES))
@@ -376,7 +403,7 @@ mod tests {
 
     #[test]
     fn a_leg_too_short_for_its_foot_lifts_the_foot_in_place() {
-        let (thigh, knee) = reach(0.4, 0.8);
+        let (thigh, knee) = reach(0.4, 0.8, 0.0);
         let ahead = THIGH * thigh.sin() + ANKLE * (thigh - knee).sin();
         let drop = THIGH * thigh.cos() + ANKLE * (thigh - knee).cos();
         assert!((ahead - 0.4).abs() < 1e-4, "{ahead}");
