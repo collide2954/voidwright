@@ -2,10 +2,12 @@ use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3};
 use voidwright_core::{Island, Map, PlayerId, TICK, Tile, Walker, World};
+use voidwright_protocol::{Update, Welcome};
 
 use crate::figure::Coat;
 use crate::ground::Ground;
 use crate::motion::Course;
+use crate::online::Online;
 use crate::{
     BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, to_ground, to_world,
 };
@@ -48,15 +50,28 @@ pub struct Game {
     stride: Stride,
     coat: Coat,
     time: f32,
+    online: Option<Online>,
 }
 
 impl Game {
     #[must_use]
     pub fn new(seed: u64) -> Self {
         let island = Island::generate(seed, ISLAND_RADIUS);
-        let ground = Ground::new(&island.map);
         let mut world = World::new(island.map);
         let me = world.join(island.center).expect("a new world has room");
+        Self::start(world, me, None)
+    }
+
+    #[must_use]
+    pub fn online(welcome: &Welcome) -> Self {
+        let island = Island::generate(welcome.seed, ISLAND_RADIUS);
+        let mut world = World::new(island.map);
+        world.sync(welcome.id, welcome.spawn, None);
+        Self::start(world, welcome.id, Some(Online::default()))
+    }
+
+    fn start(world: World, me: PlayerId, online: Option<Online>) -> Self {
+        let ground = Ground::new(world.map());
         let mut game = Self {
             world,
             me,
@@ -67,6 +82,7 @@ impl Game {
             stride: Stride::default(),
             coat: Coat::new(&Pose::default(), Mat4::IDENTITY),
             time: 0.0,
+            online,
         };
         game.camera.target = game.player_position() + FOCUS;
         game.coat = Coat::new(&game.pose(), game.placement());
@@ -124,10 +140,14 @@ impl Game {
 
     pub fn update(&mut self, delta: Duration) {
         let before = to_ground(self.player_position());
-        for _ in 0..self.ticker.advance(delta) {
-            let player = Local::new(&self.world, self.me).player();
-            self.course.advance(player.trail());
-            self.world.tick();
+        if let Some(online) = &mut self.online {
+            online.wait(delta);
+        } else {
+            for _ in 0..self.ticker.advance(delta) {
+                let player = Local::new(&self.world, self.me).player();
+                self.course.advance(player.trail());
+                self.world.tick();
+            }
         }
         self.course.update(delta.div_duration_f32(TICK));
         let after = self.player_position();
@@ -147,19 +167,40 @@ impl Game {
 
     pub fn walk_to(&mut self, tile: Tile) {
         let from = self.world().player().next_step();
-        self.world.walk_to(self.me, tile);
+        if let Some(online) = &mut self.online {
+            if self.world.try_walk_to(self.me, tile).is_err() {
+                return;
+            }
+            online.order(tile);
+        } else {
+            self.world.walk_to(self.me, tile);
+        }
+        let progress = self.alpha();
         let player = Local::new(&self.world, self.me).player();
-        self.course.reroute(
-            player.trail(),
-            from,
-            player.next_step(),
-            self.ticker.alpha(),
-        );
+        self.course
+            .reroute(player.trail(), from, player.next_step(), progress);
+    }
+
+    pub fn apply(&mut self, update: &Update) {
+        if let Some(online) = &mut self.online {
+            online.apply(update, &mut self.world, self.me, &mut self.course);
+        }
+    }
+
+    pub fn take_orders(&mut self) -> Vec<Tile> {
+        self.online
+            .as_mut()
+            .map(Online::take_orders)
+            .unwrap_or_default()
     }
 
     #[must_use]
     pub fn marker(&self) -> Option<Vec3> {
-        self.world().player().destination().map(|tile| {
+        let goal = match &self.online {
+            Some(online) => online.goal(),
+            None => self.world().player().destination(),
+        };
+        goal.map(|tile| {
             let below = center(tile);
             to_world(below, self.ground.height_at(below))
         })
@@ -170,8 +211,14 @@ impl Game {
         let player = self.world().player();
         let below = self
             .course
-            .position(player.trail(), player.next_step(), self.ticker.alpha());
+            .position(player.trail(), player.next_step(), self.alpha());
         to_world(below, self.ground.height_at(below))
+    }
+
+    fn alpha(&self) -> f32 {
+        self.online
+            .as_ref()
+            .map_or_else(|| self.ticker.alpha(), Online::alpha)
     }
 }
 
@@ -181,7 +228,8 @@ mod tests {
     use crate::cloth::{COLUMNS, PANELS, ROWS, particle};
     use crate::{center, pick, to_ground};
     use glam::{Vec2, Vec3};
-    use voidwright_core::{TICK, Tile};
+    use voidwright_core::{Direction, ISLAND_RADIUS, Island, PlayerId, TICK, Tile};
+    use voidwright_protocol::{Sighting, Update, Welcome};
 
     const ASPECT: f32 = 16.0 / 9.0;
     const CLICK: Vec2 = Vec2::new(0.2, -0.1);
@@ -372,5 +420,95 @@ mod tests {
         game.update(TICK / 2);
         let halfway = from.lerp(to, 0.5);
         assert!(to_ground(game.player_position()).distance(halfway) < 1e-3);
+    }
+
+    const ME: u16 = 5;
+
+    fn welcome() -> Welcome {
+        let spawn = Island::generate(3, ISLAND_RADIUS).center;
+        Welcome {
+            id: PlayerId::new(ME),
+            seed: 3,
+            spawn,
+        }
+    }
+
+    fn east(dx: i32) -> Tile {
+        let spawn = welcome().spawn;
+        Tile::new(spawn.x + dx, spawn.y)
+    }
+
+    fn update(tick: u32, players: &[(u16, Tile, Option<Direction>)]) -> Update {
+        let players = players
+            .iter()
+            .map(|&(id, tile, step)| Sighting {
+                id: PlayerId::new(id),
+                tile,
+                step,
+            })
+            .collect();
+        Update { tick, players }
+    }
+
+    #[test]
+    fn an_online_game_starts_on_the_spawn_tile_of_the_welcome() {
+        let game = Game::online(&welcome());
+        assert_eq!(game.world().player().tile(), welcome().spawn);
+    }
+
+    #[test]
+    fn an_online_player_moves_only_when_the_server_says_so() {
+        let mut game = Game::online(&welcome());
+        game.walk_to(east(3));
+        for _ in 0..3 {
+            game.update(TICK);
+        }
+        assert_eq!(game.world().player().tile(), east(0));
+        game.apply(&update(1, &[(ME, east(1), Some(Direction::East))]));
+        assert_eq!(game.world().player().trail(), [east(0), east(1)]);
+    }
+
+    #[test]
+    fn an_online_walk_order_goes_to_the_server() {
+        let mut game = Game::online(&welcome());
+        game.walk_to(east(2));
+        assert_eq!(game.take_orders(), [east(2)]);
+        assert_eq!(game.take_orders(), []);
+    }
+
+    #[test]
+    fn an_online_walk_order_to_the_void_stays_home() {
+        let mut game = Game::online(&welcome());
+        game.walk_to(Tile::new(0, 0));
+        assert_eq!(game.take_orders(), []);
+        assert_eq!(game.marker(), None);
+    }
+
+    #[test]
+    fn the_online_marker_stays_until_the_server_reports_arrival() {
+        let mut game = Game::online(&welcome());
+        game.walk_to(east(1));
+        game.apply(&update(1, &[(ME, east(0), Some(Direction::East))]));
+        assert!(game.marker().is_some());
+        game.apply(&update(2, &[(ME, east(1), None)]));
+        assert_eq!(game.marker(), None);
+    }
+
+    #[test]
+    fn an_online_step_moves_smoothly_until_the_next_update() {
+        let mut game = Game::online(&welcome());
+        game.apply(&update(1, &[(ME, east(1), Some(Direction::East))]));
+        game.update(TICK);
+        game.apply(&update(2, &[(ME, east(2), Some(Direction::East))]));
+        game.update(TICK / 2);
+        let halfway = center(east(1)).lerp(center(east(2)), 0.5);
+        assert!(to_ground(game.player_position()).distance(halfway) < 1e-3);
+    }
+
+    #[test]
+    fn an_offline_game_sends_no_orders() {
+        let mut game = Game::new(3);
+        game.walk_to(east(2));
+        assert_eq!(game.take_orders(), []);
     }
 }

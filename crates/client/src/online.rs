@@ -3,10 +3,12 @@ use std::io::{self, ErrorKind};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
-use voidwright_core::Tile;
+use voidwright_core::{PlayerId, TICK, Tile, Walker, World};
 use voidwright_protocol::{
     ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Update, Welcome,
 };
+
+use crate::motion::Course;
 
 const PATIENCE: Duration = Duration::from_secs(5);
 const READS: usize = 64;
@@ -136,6 +138,59 @@ fn open(address: &str) -> Result<TcpStream, Failure> {
         }
     }
     Err(Failure::Io(failure))
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Online {
+    phase: Duration,
+    goal: Option<Tile>,
+    orders: Vec<Tile>,
+}
+
+impl Online {
+    #[must_use]
+    pub fn alpha(&self) -> f32 {
+        self.phase.div_duration_f32(TICK).min(1.0)
+    }
+
+    pub fn wait(&mut self, delta: Duration) {
+        self.phase = (self.phase + delta).min(TICK);
+    }
+
+    #[must_use]
+    pub const fn goal(&self) -> Option<Tile> {
+        self.goal
+    }
+
+    pub fn order(&mut self, tile: Tile) {
+        self.orders.push(tile);
+        self.goal = Some(tile);
+    }
+
+    pub fn take_orders(&mut self) -> Vec<Tile> {
+        std::mem::take(&mut self.orders)
+    }
+
+    pub fn apply(&mut self, update: &Update, world: &mut World, me: PlayerId, course: &mut Course) {
+        let progress = self.alpha();
+        if let Some(mine) = update.players.iter().find(|sighting| sighting.id == me) {
+            let next = mine.step.map(|step| mine.tile.step(step));
+            if let Some(walker) = world.player(me) {
+                follow(course, walker, mine.tile, progress);
+            }
+            world.sync(me, mine.tile, next);
+            if Some(mine.tile) == self.goal {
+                self.goal = None;
+            }
+        }
+        self.phase = Duration::ZERO;
+    }
+}
+
+fn follow(course: &mut Course, walker: &Walker, tile: Tile, progress: f32) {
+    let entered = (tile != walker.tile()).then_some(tile);
+    course.reroute(walker.trail(), walker.next_step(), entered, progress);
+    course.advance(walker.trail());
 }
 
 #[cfg(test)]
