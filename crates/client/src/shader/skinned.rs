@@ -70,7 +70,7 @@ varying highp vec3 rest;
 varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
 varying mediump vec3 toward_lantern;
-const float TILES = 12.0;
+const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
 const vec4 STRENGTH = vec4(0.55, 0.75, 0.6, 0.85);
@@ -83,13 +83,17 @@ vec3 slope(highp vec2 at, vec4 kinds) {
     float along = dot(texture2D(detail_v, at) - 0.5, kinds);
     return vec3(across, along, height);
 }
+float tiling(vec4 kinds) {
+    vec4 chosen = step(max(max(kinds.x, kinds.y), max(kinds.z, kinds.w)), kinds);
+    return dot(chosen, TILES) / dot(chosen, vec4(1.0));
+}
 void main() {
     vec3 resting = normalize(rest_normal);
     vec3 facing = normalize(normal);
     vec3 view = normalize(toward_eye);
     vec3 weights = pow(abs(resting), vec3(4.0));
     weights /= dot(weights, vec3(1.0));
-    highp vec3 scaled = rest * TILES;
+    highp vec3 scaled = rest * tiling(surface);
     vec4 kinds = surface * STRENGTH;
     vec3 side = slope(scaled.zy, kinds);
     vec3 top = slope(scaled.xz, kinds);
@@ -181,7 +185,7 @@ mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Vec3, Vec4};
     use miniquad::{UniformDesc, UniformType};
 
     fn declared(name: &str) -> UniformDesc {
@@ -305,6 +309,45 @@ mod tests {
             let strength = lamplight(dark().lantern, point, Vec3::Y);
             assert!(strength.is_finite() && strength.abs() < 1e-6, "{point}");
         }
+    }
+
+    const TILES: Vec4 = Vec4::new(16.0, 8.0, 13.0, 5.0);
+
+    fn tiling(kinds: Vec4) -> f32 {
+        let chosen = Vec4::select(
+            kinds.cmpge(Vec4::splat(kinds.max_element())),
+            Vec4::ONE,
+            Vec4::ZERO,
+        );
+        chosen.dot(TILES) / chosen.element_sum()
+    }
+
+    #[test]
+    fn the_shader_picks_the_tiles_like_the_reference() {
+        let [woven, knitted, grained, brushed] = TILES.to_array();
+        assert!(FRAGMENT.contains(&format!(
+            "const vec4 TILES = vec4({woven:?}, {knitted:?}, {grained:?}, {brushed:?});"
+        )));
+        assert!(FRAGMENT.contains(
+            "vec4 chosen = step(max(max(kinds.x, kinds.y), max(kinds.z, kinds.w)), kinds);"
+        ));
+        assert!(FRAGMENT.contains("return dot(chosen, TILES) / dot(chosen, vec4(1.0));"));
+        assert!(FRAGMENT.contains("highp vec3 scaled = rest * tiling(surface);"));
+    }
+
+    #[test]
+    fn each_surface_kind_tiles_at_its_own_scale() {
+        let [woven, knitted, grained, brushed] = [Vec4::X, Vec4::Y, Vec4::Z, Vec4::W].map(tiling);
+        assert_eq!([woven, knitted, grained, brushed], TILES.to_array());
+        assert!(woven > grained && grained > knitted && knitted > brushed);
+    }
+
+    #[test]
+    fn a_blend_of_kinds_tiles_at_the_scale_of_the_strongest() {
+        assert!((tiling(Vec4::new(0.6, 0.0, 0.4, 0.0)) - TILES.x).abs() < 1e-6);
+        assert!((tiling(Vec4::new(0.0, 0.0, 0.45, 0.55) * 1.3) - TILES.w).abs() < 1e-6);
+        let smooth = tiling(Vec4::ZERO);
+        assert!(smooth.is_finite() && smooth > 0.0);
     }
 
     #[test]
