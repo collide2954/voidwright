@@ -15,7 +15,7 @@ const SCENE: [u16; 2] = [800, 450];
 const SEED: u64 = 1;
 const SETTLED: f32 = 2.0;
 const STRIDES: f32 = 3.0;
-const BODY_DISTANCE: f32 = 2.7;
+const BODY_DISTANCE: f32 = 2.85;
 const SWATCH: Camera = Camera::new([640, 320]).orbit(0.0, 0.12, 0.42);
 const CLOSE: Camera = Camera::new(SQUARE).orbit(0.0, 0.1, 0.27);
 const SURFACES: [Surface; 4] = [
@@ -113,20 +113,28 @@ fn wanderer_views() -> Vec<Entry> {
                 .orbit(0.45, 0.12, 0.6),
         ),
         Entry::new(
-            "wanderer-hands",
-            "The gloved hands and the armband, close, from the front.",
+            "wanderer-hand-left",
+            "The left glove, close, from the outside.",
             idle,
-            Camera::new(WIDE)
-                .at(Focus::Origin, Vec3::new(0.0, 0.78, 0.0))
-                .orbit(0.0, 0.05, 0.6),
+            Camera::new(SQUARE)
+                .at(Focus::Bone(Bone::LeftHand), Vec3::new(0.0, -0.05, 0.0))
+                .orbit(0.9, 0.15, 0.5),
+        ),
+        Entry::new(
+            "wanderer-hand-right",
+            "The right glove and the teal armband, close, from the outside.",
+            idle,
+            Camera::new(SQUARE)
+                .at(Focus::Bone(Bone::RightHand), Vec3::new(0.0, -0.05, 0.0))
+                .orbit(-0.9, 0.15, 0.5),
         ),
         Entry::new(
             "wanderer-boots",
             "The boots and the leg wraps, close.",
             idle,
             Camera::new(WIDE)
-                .at(Focus::Origin, Vec3::new(0.0, 0.13, 0.03))
-                .orbit(0.5, 0.3, 0.55),
+                .at(Focus::Origin, Vec3::new(0.0, 0.11, 0.04))
+                .orbit(0.5, 0.3, 0.7),
         ),
     ]
 }
@@ -140,7 +148,7 @@ fn world_views() -> Vec<Entry> {
             None,
             Camera::new(SCENE)
                 .at(Focus::Player, Vec3::new(0.0, -3.0, 0.0))
-                .orbit(0.7, 0.5, 75.0),
+                .orbit(0.7, 0.5, 62.0),
         ),
         world(
             "island-ground",
@@ -173,9 +181,9 @@ fn world_views() -> Vec<Entry> {
             Camera::new(SCENE)
                 .at(
                     Focus::Player,
-                    Vec3::new(vael.sin() * 60.0, 22.0, vael.cos() * 60.0),
+                    Vec3::new(vael.sin() * 60.0, 26.0, vael.cos() * 60.0),
                 )
-                .orbit(vael + PI, -0.25, 60.0),
+                .orbit(vael + PI, -0.35, 60.0),
         ),
         world(
             "sky-nebula",
@@ -193,7 +201,7 @@ fn world_views() -> Vec<Entry> {
 
 fn body(yaw: f32) -> Camera {
     Camera::new(PORTRAIT)
-        .at(Focus::Origin, Vec3::new(0.0, 0.89, 0.0))
+        .at(Focus::Origin, Vec3::new(0.0, 0.87, 0.0))
         .orbit(yaw, 0.08, BODY_DISTANCE)
 }
 
