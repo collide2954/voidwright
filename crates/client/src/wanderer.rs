@@ -4,8 +4,8 @@ use glam::{Quat, Vec2, Vec3};
 
 use crate::cloth::Cloth;
 use crate::figure::{
-    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FOREARM, JOINTS, LANTERN_BONE, LANTERN_HOOK, THIGH,
-    UPPER_ARM, rest, waist,
+    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FINGER, FOREARM, JOINTS, LANTERN_BONE,
+    LANTERN_HOOK, THIGH, UPPER_ARM, rest, waist,
 };
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
@@ -209,6 +209,8 @@ pub fn voidwright() -> SkinnedMesh {
         piece(knee(), 0.007, 600),
         piece(wraps(Side::Left), 0.006, 1_200),
         piece(wraps(Side::Right), 0.006, 1_200),
+        piece(hand(Side::Left), 0.0045, 1_100),
+        piece(hand(Side::Right), 0.0045, 1_100),
         piece(rod(), 0.005, 200),
         hung(lantern(), 0.005, 700),
     ];
@@ -417,7 +419,6 @@ fn leg(clay: &mut Sculpt, side: Side) {
 
 fn arm(clay: &mut Sculpt, side: Side) {
     let (upper, fore) = (side.upper_arm(), side.forearm());
-    let inward = -side.sign();
     let sleeve = Vec3::new(10.0, 22.0, 10.0);
     clay.add(
         stroke(upper, egg(0.066, 0.064, 0.062), COAT)
@@ -445,23 +446,52 @@ fn arm(clay: &mut Sculpt, side: Side) {
             .wrinkled(0.003, sleeve)
             .blended(0.015),
     );
+}
+
+fn hand(side: Side) -> Sculpt {
+    let mut clay = clay();
     let (hand, fingers) = (side.hand(), side.fingers());
+    let inward = -side.sign();
     clay.add(
-        stroke(hand, block(0.019, 0.04, 0.034, 0.016), LEATHER)
-            .at(Vec3::new(0.0, -0.04, -0.002))
-            .blended(0.016),
+        stroke(hand, limb(0.04, 0.029, 0.026), LEATHER)
+            .at(Vec3::new(0.0, 0.02, 0.0))
+            .squashed(Vec3::new(0.72, 1.0, 1.0)),
     );
     clay.add(
-        stroke(fingers, egg(0.016, 0.036, 0.031), LEATHER)
-            .at(Vec3::new(0.0, -0.026, -0.003))
-            .blended(0.014),
+        stroke(hand, egg(0.017, 0.035, 0.034), LEATHER)
+            .at(Vec3::new(0.0, -0.03, -0.002))
+            .blended(0.012),
     );
     clay.add(
-        stroke(hand, limb(0.04, 0.0125, 0.011), LEATHER)
-            .at(Vec3::new(inward * 0.012, -0.015, -0.024))
-            .turned(toward(Vec3::new(inward * 0.2, -1.0, -0.7)))
+        stroke(hand, block(0.014, 0.03, 0.042, 0.012), LEATHER)
+            .at(Vec3::new(0.0, -0.06, -0.002))
+            .blended(0.012),
+    );
+    clay.add(
+        stroke(hand, egg(0.014, 0.026, 0.016), LEATHER)
+            .at(Vec3::new(inward * 0.008, -0.035, -0.024))
             .blended(0.01),
     );
+    let base = Vec3::new(inward * 0.006, -0.03, -0.03);
+    let knuckle = base + Vec3::new(inward * 0.35, -0.8, -0.5).normalize() * 0.04;
+    clay.add(segment(hand, base, knuckle, 0.012, LEATHER).blended(0.006));
+    let tip = knuckle + Vec3::new(inward * 0.45, -0.85, -0.15).normalize() * 0.03;
+    clay.add(segment(hand, knuckle, tip, 0.0105, LEATHER).blended(0.003));
+    let curl = Vec3::new(inward * 0.3, -0.95, 0.0).normalize();
+    for (across, reach) in [
+        (-0.029, 0.86_f32),
+        (-0.0095, 1.0),
+        (0.0095, 0.94),
+        (0.028, 0.74),
+    ] {
+        let radius = 0.0095 * reach.sqrt();
+        let root = Vec3::new(0.0, 0.004, across);
+        let middle = root - Vec3::Y * FINGER * reach * 0.5;
+        let end = middle + curl * (FINGER * reach * 0.5 - radius);
+        clay.add(segment(fingers, root, middle, radius, LEATHER).blended(0.003));
+        clay.add(segment(fingers, middle, end, radius * 0.92, LEATHER).blended(0.003));
+    }
+    clay
 }
 
 fn coat(clay: &mut Sculpt) {
@@ -1056,6 +1086,25 @@ mod tests {
             let toe = reach(&|z| z < front + 0.04);
             let heel = reach(&|z| z > back - 0.04);
             assert!(toe > heel + 0.01);
+        }
+    }
+
+    #[test]
+    fn the_hands_are_human_sized_and_reach_the_middle_of_the_thighs() {
+        let bones = crate::figure::rest();
+        for (hand, fingers) in [
+            (Bone::LeftHand, Bone::LeftFingers),
+            (Bone::RightHand, Bone::RightFingers),
+        ] {
+            let wrist = bones[hand.index()].transform_point3(Vec3::ZERO).y;
+            let tip = FIGURE
+                .vertices
+                .iter()
+                .filter(|vertex| [hand.index(), fingers.index()].contains(&strongest(vertex)))
+                .map(|vertex| vertex.position[1])
+                .fold(f32::INFINITY, f32::min);
+            assert!((tip - 0.66).abs() < 0.03, "{hand:?} {tip}");
+            assert!((wrist - tip - 0.19).abs() < 0.015, "{hand:?} {wrist} {tip}");
         }
     }
 

@@ -112,12 +112,12 @@ const SKELETON: [(Bone, Option<Bone>, Vec3); JOINTS] = [
     (
         Bone::LeftFingers,
         Some(Bone::LeftHand),
-        Vec3::new(0.0, -0.075, 0.0),
+        Vec3::new(0.0, -PALM, 0.0),
     ),
     (
         Bone::RightFingers,
         Some(Bone::RightHand),
-        Vec3::new(0.0, -0.075, 0.0),
+        Vec3::new(0.0, -PALM, 0.0),
     ),
     (
         Bone::LeftFoot,
@@ -137,6 +137,8 @@ pub const ANKLE: f32 = 0.38;
 pub const ANKLE_HEIGHT: f32 = 0.06;
 pub const UPPER_ARM: f32 = 0.29;
 pub const FOREARM: f32 = 0.26;
+pub const PALM: f32 = 0.09;
+pub const FINGER: f32 = 0.105;
 const SHOULDER: Vec2 = Vec2::new(0.185, 0.44);
 const LEG: f32 = THIGH + ANKLE + ANKLE_HEIGHT;
 const ARM_SPLAY: f32 = 0.1;
