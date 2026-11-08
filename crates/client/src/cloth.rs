@@ -14,10 +14,6 @@ const STEP: f32 = 1.0 / 240.0;
 const MOST_STEPS: u8 = 16;
 const SETTLING: u16 = 480;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
-const DRAG: f32 = 6.0;
-const DRIVE: f32 = 0.7;
-const INERTIA: f32 = 0.5;
-const SPIN: f32 = 0.5;
 const GIVE: f32 = 0.25;
 const CONTACT: f32 = 0.35;
 const FRICTION: f32 = 0.3;
@@ -28,6 +24,20 @@ const WEAVE: f32 = 0.8;
 const SHEAR: f32 = 0.4;
 const BEND: f32 = 3.0;
 const CURVE: f32 = 10.0;
+pub const COAT_FEEL: Feel = Feel {
+    drive: 0.7,
+    drag: 6.0,
+    inertia: 0.5,
+    spin: 0.5,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Feel {
+    pub drive: f32,
+    pub drag: f32,
+    pub inertia: f32,
+    pub spin: f32,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Capsule {
@@ -102,20 +112,35 @@ struct Link {
     stiffness: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Layout<const N: usize> {
+    pinned: [bool; N],
+    tether: [usize; N],
+    slack: [f32; N],
+    down: [(usize, usize); N],
+    across: [Option<(usize, usize)>; N],
+    bones: [Option<usize>; N],
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct Cloth {
+pub struct Fabric<const N: usize> {
+    feel: Feel,
     squash: f32,
-    rest: [Vec3; PARTICLES],
-    settled: [Vec3; PARTICLES],
-    points: [Vec3; PARTICLES],
-    previous: [Vec3; PARTICLES],
+    layout: Layout<N>,
+    rest: [Vec3; N],
+    settled: [Vec3; N],
+    points: [Vec3; N],
+    previous: [Vec3; N],
     links: Vec<Link>,
+    edges: Vec<(usize, usize)>,
     then: Frame,
     history: [Frame; 2],
     legs: Vec<Capsule>,
     clock: f32,
     started: bool,
 }
+
+pub type Cloth = Fabric<PARTICLES>;
 
 #[must_use]
 pub const fn particle(panel: usize, column: usize, row: usize) -> usize {
@@ -146,14 +171,18 @@ fn cells() -> impl Iterator<Item = (usize, usize, usize)> {
     })
 }
 
-const fn free(index: usize) -> f32 {
-    if index.is_multiple_of(ROWS) { 0.0 } else { 1.0 }
-}
-
 impl Cloth {
     #[must_use]
     pub fn hanging(drape: Drape) -> Self {
         let mut rest = [Vec3::ZERO; PARTICLES];
+        let mut layout = Layout {
+            pinned: [false; PARTICLES],
+            tether: [0; PARTICLES],
+            slack: [0.0; PARTICLES],
+            down: [(0, 0); PARTICLES],
+            across: [None; PARTICLES],
+            bones: [None; PARTICLES],
+        };
         for (panel, column, row) in cells() {
             let (sin, cos) = angle(panel, count(column)).sin_cos();
             let around = |radius: f32| Vec3::new(radius * cos, 0.0, radius * drape.squash * sin);
@@ -163,15 +192,93 @@ impl Cloth {
                 .max(0.0)
                 .sqrt();
             let hem = anchor + flare - Vec3::Y * drop;
-            rest[particle(panel, column, row)] = anchor.lerp(hem, DEPTHS[row]);
+            let index = particle(panel, column, row);
+            let at = |column: usize, row: usize| particle(panel, column, row);
+            rest[index] = anchor.lerp(hem, DEPTHS[row]);
+            layout.pinned[index] = row == 0;
+            layout.tether[index] = at(column, 0);
+            layout.slack[index] = SLACK[row];
+            layout.down[index] = (
+                at(column, row.saturating_sub(1)),
+                at(column, (row + 1).min(ROWS - 1)),
+            );
+            layout.across[index] = Some((
+                at(column.saturating_sub(1), row),
+                at((column + 1).min(COLUMNS - 1), row),
+            ));
+            layout.bones[index] = bone(panel, column, row);
         }
+        let edges = cells()
+            .filter(|&(_, _, row)| row + 1 < ROWS)
+            .map(|(panel, column, row)| {
+                (
+                    particle(panel, column, row),
+                    particle(panel, column, row + 1),
+                )
+            })
+            .collect();
+        Self::new(
+            COAT_FEEL,
+            drape.squash,
+            layout,
+            rest,
+            grid_links(&rest),
+            edges,
+        )
+    }
+
+    #[must_use]
+    pub fn weights(&self, point: Vec3) -> [(Option<usize>, f32); 4] {
+        let panel = usize::from(point.x < 0.0);
+        let start = if panel == 0 { -FRAC_PI_2 } else { FRAC_PI_2 };
+        let turn = (point.z / self.squash).atan2(point.x);
+        let turn = if panel == 0 {
+            turn
+        } else {
+            turn.rem_euclid(TAU)
+        };
+        let last = count(COLUMNS - 1);
+        let place = ((turn - start - EDGE) / (PI - 2.0 * EDGE) * last).clamp(0.0, last);
+        let column = (0..COLUMNS - 1)
+            .rev()
+            .find(|&column| count(column) <= place)
+            .unwrap_or(0);
+        let across = place - count(column);
+        let hem = -self.rest[particle(panel, column, ROWS - 1)].y;
+        let depth = (-point.y / hem).clamp(0.0, 1.0);
+        let row = (0..ROWS - 1)
+            .rev()
+            .find(|&row| DEPTHS[row] <= depth)
+            .unwrap_or(0);
+        let down = ((depth - DEPTHS[row]) / (DEPTHS[row + 1] - DEPTHS[row])).clamp(0.0, 1.0);
+        [
+            (bone(panel, column, row), (1.0 - across) * (1.0 - down)),
+            (bone(panel, column + 1, row), across * (1.0 - down)),
+            (bone(panel, column, row + 1), (1.0 - across) * down),
+            (bone(panel, column + 1, row + 1), across * down),
+        ]
+    }
+}
+
+impl<const N: usize> Fabric<N> {
+    fn new(
+        feel: Feel,
+        squash: f32,
+        layout: Layout<N>,
+        rest: [Vec3; N],
+        links: Vec<Link>,
+        edges: Vec<(usize, usize)>,
+    ) -> Self {
         Self {
-            squash: drape.squash,
+            feel,
+            squash,
+            layout,
             rest,
             settled: rest,
             points: rest,
             previous: rest,
-            links: links(&rest),
+            links,
+            edges,
             then: Frame::ORIGIN,
             history: [Frame::ORIGIN; 2],
             legs: Vec::new(),
@@ -181,22 +288,22 @@ impl Cloth {
     }
 
     #[must_use]
-    pub const fn rest(&self) -> &[Vec3; PARTICLES] {
+    pub const fn rest(&self) -> &[Vec3; N] {
         &self.rest
     }
 
     #[must_use]
-    pub const fn settled(&self) -> &[Vec3; PARTICLES] {
+    pub const fn settled(&self) -> &[Vec3; N] {
         &self.settled
     }
 
     #[must_use]
-    pub const fn points(&self) -> &[Vec3; PARTICLES] {
+    pub const fn points(&self) -> &[Vec3; N] {
         &self.points
     }
 
-    pub fn update(&mut self, waist: Mat4, legs: &[Capsule], seconds: f32) {
-        let now = Frame::of(waist);
+    pub fn update(&mut self, frame: Mat4, legs: &[Capsule], seconds: f32) {
+        let now = Frame::of(frame);
         if !self.started || self.legs.len() != legs.len() {
             self.legs = legs.to_vec();
         }
@@ -238,23 +345,26 @@ impl Cloth {
     }
 
     fn step(&mut self, frame: Frame, legs: &[Capsule]) {
+        let feel = self.feel;
         let [one, two] = self.history;
         self.history = [frame, one];
         let back = frame.rotation.inverse();
-        let surge = back * (frame.translation - 2.0 * one.translation + two.translation) * INERTIA;
+        let surge =
+            back * (frame.translation - 2.0 * one.translation + two.translation) * feel.inertia;
         let turning = turn(one.rotation, frame.rotation);
-        let twist = (turning - turn(two.rotation, one.rotation)) * SPIN;
-        let spin = turning * SPIN;
+        let twist = (turning - turn(two.rotation, one.rotation)) * feel.spin;
+        let spin = turning * feel.spin;
         let fall = back * GRAVITY * STEP * STEP;
-        let keep = (-DRAG * STEP).exp();
-        let pull = springy(DRIVE);
+        let keep = (-feel.drag * STEP).exp();
+        let pull = springy(feel.drive);
         let particles = self
             .points
             .iter_mut()
             .zip(&mut self.previous)
-            .zip(&self.rest);
-        for (index, ((point, before), rest)) in particles.enumerate() {
-            if free(index) == 0.0 {
+            .zip(&self.rest)
+            .zip(&self.layout.pinned);
+        for (((point, before), rest), &pinned) in particles {
+            if pinned {
                 *point = *rest;
                 *before = *rest;
                 continue;
@@ -273,11 +383,15 @@ impl Cloth {
         self.collide(legs);
     }
 
+    fn free(&self, index: usize) -> f32 {
+        if self.layout.pinned[index] { 0.0 } else { 1.0 }
+    }
+
     fn hold(&mut self) {
         for link in &self.links {
             let gap = self.points[link.second] - self.points[link.first];
             let length = gap.length();
-            let (first, second) = (free(link.first), free(link.second));
+            let (first, second) = (self.free(link.first), self.free(link.second));
             if length < 1e-6 || first + second <= 0.0 {
                 continue;
             }
@@ -285,29 +399,28 @@ impl Cloth {
             self.points[link.first] += shift * first;
             self.points[link.second] -= shift * second;
         }
-        for (index, point) in self.points.iter_mut().enumerate() {
-            let row = index % ROWS;
-            if row == 0 {
+        for index in 0..N {
+            if self.layout.pinned[index] {
                 continue;
             }
-            let (anchor, rest) = (self.rest[index - row], self.rest[index]);
+            let (anchor, rest) = (self.rest[self.layout.tether[index]], self.rest[index]);
             let tether = rest.distance(anchor);
-            let reach = *point - anchor;
+            let reach = self.points[index] - anchor;
             if reach.length() > tether {
-                *point = anchor + reach.normalize() * tether;
+                self.points[index] = anchor + reach.normalize() * tether;
             }
-            let away = *point - rest;
-            let beyond = away.length() - SLACK[row];
+            let away = self.points[index] - rest;
+            let beyond = away.length() - self.layout.slack[index];
             if beyond > 0.0 {
-                *point -= away.normalize() * beyond * GIVE;
+                self.points[index] -= away.normalize() * beyond * GIVE;
             }
         }
     }
 
     fn collide(&mut self, legs: &[Capsule]) {
         for leg in legs {
-            for index in 0..PARTICLES {
-                if free(index) == 0.0 {
+            for index in 0..N {
+                if self.layout.pinned[index] {
                     continue;
                 }
                 let point = self.points[index];
@@ -317,10 +430,8 @@ impl Cloth {
                     self.rub(index, push);
                 }
             }
-            for index in 0..PARTICLES {
-                if index % ROWS + 1 < ROWS {
-                    self.clear_segment(index, leg);
-                }
+            for edge in 0..self.edges.len() {
+                self.clear_segment(self.edges[edge], leg);
             }
         }
     }
@@ -332,8 +443,7 @@ impl Cloth {
         self.previous[index] += sliding * FRICTION;
     }
 
-    fn clear_segment(&mut self, upper: usize, leg: &Capsule) {
-        let lower = upper + 1;
+    fn clear_segment(&mut self, (upper, lower): (usize, usize), leg: &Capsule) {
         let (from, to) = (self.points[upper], self.points[lower]);
         let along = nearest(from, to, leg.from, leg.to);
         let touching = from.lerp(to, along);
@@ -341,7 +451,7 @@ impl Cloth {
         if push.length_squared() < 1e-12 {
             return;
         }
-        if free(upper) == 0.0 {
+        if self.layout.pinned[upper] {
             self.points[lower] += push / along.max(LEVER);
         } else {
             let share = (1.0 - along).powi(2) + along.powi(2);
@@ -351,17 +461,17 @@ impl Cloth {
     }
 
     #[must_use]
-    pub fn skins(&self, rest_waist: Mat4, waist: Mat4) -> [Mat4; CLOTH_BONES] {
-        let back = rest_waist.inverse();
-        let mut skins = [Mat4::IDENTITY; CLOTH_BONES];
-        for (panel, column, row) in cells() {
-            let Some(slot) = bone(panel, column, row) else {
+    pub fn skins(&self, rest_frame: Mat4, frame: Mat4) -> Vec<Mat4> {
+        let back = rest_frame.inverse();
+        let count = self.layout.bones.iter().flatten().count();
+        let mut skins = vec![Mat4::IDENTITY; count];
+        for index in 0..N {
+            let Some(slot) = self.layout.bones[index] else {
                 continue;
             };
-            let index = particle(panel, column, row);
-            let turn = basis(&self.points, panel, column, row)
-                * basis(&self.settled, panel, column, row).transpose();
-            skins[slot] = waist
+            let turn =
+                self.basis(&self.points, index) * self.basis(&self.settled, index).transpose();
+            skins[slot] = frame
                 * Mat4::from_translation(self.points[index])
                 * Mat4::from_mat3(turn)
                 * Mat4::from_translation(-self.settled[index])
@@ -370,40 +480,18 @@ impl Cloth {
         skins
     }
 
-    #[must_use]
-    pub fn weights(&self, point: Vec3) -> [(Option<usize>, f32); 4] {
-        let panel = usize::from(point.x < 0.0);
-        let start = if panel == 0 { -FRAC_PI_2 } else { FRAC_PI_2 };
-        let turn = (point.z / self.squash).atan2(point.x);
-        let turn = if panel == 0 {
-            turn
-        } else {
-            turn.rem_euclid(TAU)
-        };
-        let last = count(COLUMNS - 1);
-        let place = ((turn - start - EDGE) / (PI - 2.0 * EDGE) * last).clamp(0.0, last);
-        let column = (0..COLUMNS - 1)
-            .rev()
-            .find(|&column| count(column) <= place)
-            .unwrap_or(0);
-        let across = place - count(column);
-        let hem = -self.rest[particle(panel, column, ROWS - 1)].y;
-        let depth = (-point.y / hem).clamp(0.0, 1.0);
-        let row = (0..ROWS - 1)
-            .rev()
-            .find(|&row| DEPTHS[row] <= depth)
-            .unwrap_or(0);
-        let down = ((depth - DEPTHS[row]) / (DEPTHS[row + 1] - DEPTHS[row])).clamp(0.0, 1.0);
-        [
-            (bone(panel, column, row), (1.0 - across) * (1.0 - down)),
-            (bone(panel, column + 1, row), across * (1.0 - down)),
-            (bone(panel, column, row + 1), (1.0 - across) * down),
-            (bone(panel, column + 1, row + 1), across * down),
-        ]
+    fn basis(&self, points: &[Vec3; N], index: usize) -> Mat3 {
+        let (above, below) = self.layout.down[index];
+        let down = points[below] - points[above];
+        let across =
+            self.layout.across[index].map_or(Vec3::X, |(left, right)| points[right] - points[left]);
+        let first = down.normalize_or(Vec3::NEG_Y);
+        let second = (across - first * across.dot(first)).normalize_or(Vec3::X);
+        Mat3::from_cols(first, second, first.cross(second))
     }
 }
 
-fn links(rest: &[Vec3; PARTICLES]) -> Vec<Link> {
+fn grid_links(rest: &[Vec3; PARTICLES]) -> Vec<Link> {
     let mut links = Vec::new();
     let mut join = |first: usize, second: usize, stiffness: f32| {
         links.push(Link {
@@ -443,15 +531,6 @@ fn turn(from: Quat, to: Quat) -> Vec3 {
     let change = from.inverse() * to;
     let change = if change.w < 0.0 { -change } else { change };
     change.to_scaled_axis()
-}
-
-fn basis(points: &[Vec3; PARTICLES], panel: usize, column: usize, row: usize) -> Mat3 {
-    let at = |column: usize, row: usize| points[particle(panel, column, row)];
-    let down = at(column, (row + 1).min(ROWS - 1)) - at(column, row.saturating_sub(1));
-    let across = at((column + 1).min(COLUMNS - 1), row) - at(column.saturating_sub(1), row);
-    let first = down.normalize_or(Vec3::NEG_Y);
-    let second = (across - first * across.dot(first)).normalize_or(Vec3::X);
-    Mat3::from_cols(first, second, first.cross(second))
 }
 
 fn nearest(from: Vec3, to: Vec3, other_from: Vec3, other_to: Vec3) -> f32 {
