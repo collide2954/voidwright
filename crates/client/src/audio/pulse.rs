@@ -8,6 +8,7 @@ use crate::spline::smoothstep;
 const TEMPO: f32 = 72.0;
 const ENTRY: f32 = 6.0;
 const FILTER_Q: f32 = 0.6;
+const SLOW: u16 = 8;
 
 const BAR: f32 = 4.0;
 const FIRST: f32 = 3.0;
@@ -55,8 +56,6 @@ const DUB: [f32; 2] = [0.02, 1.0];
 const DUB_AT: f32 = 0.36;
 const DUB_LEVEL: f32 = 0.6;
 const THROB_FLOOR: f32 = 0.47;
-const THROB_CUTOFF: f32 = 160.0;
-const THROB_Q: f32 = 0.7;
 const DUCK: [f32; 2] = [0.06, 2.0];
 const DUCK_FLOOR: f32 = 0.6;
 
@@ -87,6 +86,7 @@ const CHARACTER: Character = Character {
 pub struct Pulse {
     time: Time,
     countdown: usize,
+    slow: u16,
     character: Character,
     dice: Dice,
     clock: Clock,
@@ -115,6 +115,7 @@ impl Pulse {
         Self {
             time,
             countdown: 0,
+            slow: 0,
             character,
             dice,
             clock: Clock::new(time),
@@ -139,7 +140,7 @@ impl Pulse {
             let block = &mut out[start..end];
             self.drone.render(block);
             self.pad.render(block);
-            self.throb.render(block, self.time.rate);
+            self.throb.render(block);
             self.ostinato.render(block);
             self.countdown -= end - start;
             start = end;
@@ -159,13 +160,17 @@ impl Pulse {
         if reaches(beat, DUB_AT) {
             self.throb.echo(drive);
         }
+        if self.slow == 0 {
+            self.drone.steer(drive, time);
+            self.pad.steer(drive, time);
+        }
+        self.slow = (self.slow + 1) % SLOW;
         let character = self.character;
         let entry = self.entry.toward(true);
         let bed = entry * character.bed;
         let depth = character.duck * lift(DUCK_FLOOR, drive);
         let dip = 1.0 - depth * self.duck.next(time);
-        self.drone
-            .control(bed * (1.0 + DRONE_LIFT * drive), drive, time);
+        self.drone.control(bed * (1.0 + DRONE_LIFT * drive));
         self.pad.control(
             self.build.chord(self.clock.phase),
             bed * dip * (1.0 + PAD_LIFT * drive),
@@ -321,6 +326,7 @@ struct Hum {
     sway: Phase,
     speed: f32,
     level: f32,
+    swing: f32,
 }
 
 impl Drone {
@@ -332,18 +338,25 @@ impl Drone {
                 sway: turned(dice.unit()),
                 speed: dice.within(DRONE_SWAYS[index]).recip(),
                 level: DRONE_LEVELS[index],
+                swing: 1.0,
             }),
             filter: Svf::new(DRONE_CUTOFF, FILTER_Q, time.rate),
         }
     }
 
-    fn control(&mut self, level: f32, drive: f32, time: Time) {
+    fn steer(&mut self, drive: f32, time: Time) {
+        let rate = time.control / f32::from(SLOW);
         for hum in &mut self.hums {
-            let sway = sine(hum.sway.advance(hum.speed, time.control));
-            hum.gain.aim(level * hum.level * (0.8 + 0.2 * sway));
+            hum.swing = 0.8 + 0.2 * sine(hum.sway.advance(hum.speed, rate));
         }
         let cutoff = DRONE_CUTOFF * (1.0 + DRONE_OPEN * drive);
         self.filter.set(cutoff, FILTER_Q, time.rate);
+    }
+
+    fn control(&mut self, level: f32) {
+        for hum in &mut self.hums {
+            hum.gain.aim(level * hum.level * hum.swing);
+        }
     }
 
     fn render(&mut self, out: &mut [Frame]) {
@@ -375,9 +388,10 @@ struct Voice {
     wait: f32,
     fade: Fade,
     pitch: f32,
-    detunes: [f32; 2],
+    ratios: [f32; 2],
     drift: Phase,
     speed: f32,
+    sway: f32,
 }
 
 impl Pad {
@@ -400,16 +414,31 @@ impl Pad {
                         ..Fade::new(VOICE_FADES, time)
                     },
                     pitch,
-                    detunes: [
+                    ratios: [
                         polarity * dice.within(DETUNE),
                         -polarity * dice.within(TWIN),
-                    ],
+                    ]
+                    .map(|cents| (cents / 1200.0).exp2()),
                     drift: turned(dice.unit()),
                     speed: dice.within(DRIFT).recip(),
+                    sway: 1.0,
                 }
             }),
             filters: [Svf::new(PAD_CUTOFF, FILTER_Q, time.rate); 2],
             chord: 0,
+        }
+    }
+
+    fn steer(&mut self, drive: f32, time: Time) {
+        let rate = time.control / f32::from(SLOW);
+        for voice in &mut self.voices {
+            let cents = DRIFT_CENTS * sine(voice.drift.advance(voice.speed, rate));
+            voice.sway = (cents / 1200.0).exp2();
+            voice.tune(time);
+        }
+        let cutoff = PAD_CUTOFF * (1.0 + PAD_OPEN * drive);
+        for filter in &mut self.filters {
+            filter.set(cutoff, FILTER_Q, time.rate);
         }
     }
 
@@ -424,19 +453,19 @@ impl Pad {
         for voice in &mut self.voices {
             voice.control(level * VOICE_LEVEL, THICK * drive, time);
         }
-        let cutoff = PAD_CUTOFF * (1.0 + PAD_OPEN * drive);
-        for filter in &mut self.filters {
-            filter.set(cutoff, FILTER_Q, time.rate);
-        }
     }
 
     fn render(&mut self, out: &mut [Frame]) {
+        let thick = !self.voices.iter().all(|voice| voice.gains[1].silent());
         for frame in out {
             let mut mix = [0.0_f32; 2];
             for voice in &mut self.voices {
                 let [main, twin] = &mut voice.saws;
                 let [near, far] = &mut voice.gains;
-                let sound = main.next() * near.next() + twin.next() * far.next();
+                let mut sound = main.next() * near.next();
+                if thick {
+                    sound += twin.next() * far.next();
+                }
                 mix[0] += sound * voice.pan[0];
                 mix[1] += sound * voice.pan[1];
             }
@@ -447,6 +476,12 @@ impl Pad {
 }
 
 impl Voice {
+    fn tune(&mut self, time: Time) {
+        for (saw, ratio) in self.saws.iter_mut().zip(self.ratios) {
+            saw.tune(self.pitch * ratio * self.sway, time.rate);
+        }
+    }
+
     fn control(&mut self, level: f32, thick: f32, time: Time) {
         if self.note != self.want {
             if self.wait > 0.0 {
@@ -454,14 +489,11 @@ impl Voice {
             } else if self.fade.level <= 0.0 {
                 self.note = self.want;
                 self.pitch = hertz(self.note);
+                self.tune(time);
             }
         }
         let moving = self.note != self.want && self.wait <= 0.0;
         let shape = self.fade.toward(!moving);
-        let drift = DRIFT_CENTS * sine(self.drift.advance(self.speed, time.control));
-        for (saw, detune) in self.saws.iter_mut().zip(self.detunes) {
-            saw.tune(self.pitch * ((detune + drift) / 1200.0).exp2(), time.rate);
-        }
         let [main, twin] = &mut self.gains;
         main.aim(level * shape);
         twin.aim(level * shape * thick);
@@ -469,27 +501,26 @@ impl Voice {
 }
 
 struct Throb {
-    phase: Phase,
-    frequency: f32,
+    turn: [f32; 2],
+    spin: [f32; 2],
     gain: Ramp,
     lub: Hit,
     dub: Hit,
     bend: f32,
     settle: f32,
-    filter: Svf,
 }
 
 impl Throb {
     fn new(dice: &mut Dice, time: Time) -> Self {
+        let (sin, cos) = (TAU * dice.unit()).sin_cos();
         Self {
-            phase: turned(dice.unit()),
-            frequency: hertz(THROB_NOTE),
+            turn: [cos, sin],
+            spin: [1.0, 0.0],
             gain: Ramp::default(),
             lub: Hit::new(LUB, time),
             dub: Hit::new(DUB, time),
             bend: 0.0,
             settle: decay(BEND_SETTLE, time.control),
-            filter: Svf::new(THROB_CUTOFF, THROB_Q, time.rate),
         }
     }
 
@@ -506,20 +537,33 @@ impl Throb {
     fn control(&mut self, level: f32, time: Time) {
         let envelope = self.lub.next(time) + self.dub.next(time);
         self.bend *= self.settle;
-        self.frequency = hertz(THROB_NOTE) * (self.bend / 12.0).exp2();
         self.gain.aim(level * envelope);
-    }
-
-    fn render(&mut self, out: &mut [Frame], rate: f32) {
         if self.gain.silent() {
             return;
         }
+        let frequency = hertz(THROB_NOTE) * (self.bend / 12.0).exp2();
+        let (sin, cos) = (TAU * frequency / time.rate).sin_cos();
+        self.spin = [cos, sin];
+        // Set the length of the turn back to 1. Rounding errors change it a little at each step.
+        let [cos, sin] = self.turn;
+        let size = 1.5 - f32::midpoint(cos * cos, sin * sin);
+        self.turn = [cos * size, sin * size];
+    }
+
+    fn render(&mut self, out: &mut [Frame]) {
+        if self.gain.silent() {
+            return;
+        }
+        let [step_cos, step_sin] = self.spin;
         for frame in out {
-            let (sin, cos) = (TAU * self.phase.advance(self.frequency, rate)).sin_cos();
-            let tone = sin + OCTAVE * 2.0 * sin * cos;
-            let low = self.filter.process(tone * self.gain.next()).low;
-            frame[0] += low;
-            frame[1] += low;
+            let [cos, sin] = self.turn;
+            self.turn = [
+                cos * step_cos - sin * step_sin,
+                sin * step_cos + cos * step_sin,
+            ];
+            let value = (sin + OCTAVE * 2.0 * sin * cos) * self.gain.next();
+            frame[0] += value;
+            frame[1] += value;
         }
     }
 }
@@ -554,6 +598,9 @@ impl Ostinato {
     fn control(&mut self, level: f32, time: Time) {
         let envelope = self.hit.next(time);
         self.gain.aim(level * envelope);
+        if self.gain.silent() {
+            return;
+        }
         let cutoff = FIGURE_CUTOFF * (1.0 + FIGURE_OPEN * envelope);
         self.filter.set(cutoff, FIGURE_Q, time.rate);
     }
