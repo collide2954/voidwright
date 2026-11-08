@@ -6,4 +6,5 @@ pub mod mixer;
 pub mod ring;
 pub mod soundscape;
 pub mod space;
+pub mod wave;
 pub mod wind;
