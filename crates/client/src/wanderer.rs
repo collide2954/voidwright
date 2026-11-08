@@ -135,7 +135,8 @@ const fn piece(sculpt: Sculpt, cell: f32, budget: usize) -> Piece {
 #[must_use]
 pub fn voidwright() -> SkinnedMesh {
     let pieces = [
-        piece(body(), 0.014, 14_000),
+        piece(body(), 0.014, 10_000),
+        piece(garments(), 0.009, 9_000),
         piece(face(), 0.005, 3_000),
         piece(chest(), 0.007, 1_500),
         piece(belt(), 0.007, 800),
@@ -213,6 +214,14 @@ fn on_egg(radii: Vec3, direction: Vec3) -> Vec3 {
     direction / (direction / radii).length()
 }
 
+fn garments() -> Sculpt {
+    let mut clay = clay();
+    coat(&mut clay);
+    clay.part();
+    hood(&mut clay);
+    clay
+}
+
 fn body() -> Sculpt {
     let mut clay = clay();
     trunk(&mut clay);
@@ -223,10 +232,6 @@ fn body() -> Sculpt {
         clay.part();
         arm(&mut clay, side);
     }
-    clay.part();
-    coat(&mut clay);
-    clay.part();
-    hood(&mut clay);
     clay.part();
     head(&mut clay);
     clay.part();
@@ -288,7 +293,7 @@ fn leg(clay: &mut Sculpt, side: Side) {
     let (thigh, shin) = (side.thigh(), side.shin());
     let trousers = Vec3::new(10.0, 16.0, 10.0);
     clay.add(
-        stroke(thigh, limb(THIGH, 0.076, 0.058), CLOTH)
+        stroke(thigh, limb(THIGH, 0.07, 0.053), CLOTH)
             .wrinkled(0.005, trousers)
             .blended(0.03),
     );
@@ -345,29 +350,29 @@ fn arm(clay: &mut Sculpt, side: Side) {
     let inward = -side.sign();
     let sleeve = Vec3::new(10.0, 22.0, 10.0);
     clay.add(
-        stroke(upper, egg(0.076, 0.072, 0.07), COAT)
-            .at(Vec3::new(side.sign() * 0.006, 0.0, 0.0))
-            .wrinkled(0.004, sleeve),
+        stroke(upper, egg(0.066, 0.064, 0.062), COAT)
+            .at(Vec3::new(side.sign() * 0.004, -0.005, 0.0))
+            .wrinkled(0.003, sleeve),
     );
     clay.add(
-        stroke(upper, limb(0.27, 0.064, 0.05), COAT)
-            .wrinkled(0.005, sleeve)
+        stroke(upper, limb(0.27, 0.055, 0.045), COAT)
+            .wrinkled(0.004, sleeve)
             .blended(0.03),
     );
     clay.add(
-        stroke(fore, egg(0.058, 0.04, 0.058), COAT)
-            .at(Vec3::new(0.0, 0.0, 0.006))
+        stroke(fore, egg(0.05, 0.036, 0.05), COAT)
+            .at(Vec3::new(0.0, 0.0, 0.005))
             .blended(0.02),
     );
     clay.add(
-        stroke(fore, limb(0.16, 0.054, 0.044), COAT)
-            .wrinkled(0.005, sleeve)
+        stroke(fore, limb(0.16, 0.046, 0.039), COAT)
+            .wrinkled(0.004, sleeve)
             .blended(0.025),
     );
     clay.add(
-        stroke(fore, egg(0.058, 0.03, 0.058), COAT)
+        stroke(fore, egg(0.05, 0.026, 0.05), COAT)
             .at(Vec3::new(0.0, -0.14, 0.0))
-            .wrinkled(0.004, sleeve)
+            .wrinkled(0.003, sleeve)
             .blended(0.015),
     );
     let (hand, fingers) = (side.hand(), side.fingers());
@@ -391,7 +396,7 @@ fn arm(clay: &mut Sculpt, side: Side) {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(0.64, Vec2::new(0.15, 0.26), 0.04, Vec2::new(9.0, 0.07));
+        let panel = tube(0.64, Vec2::new(0.15, 0.26), 0.022, Vec2::new(9.0, 0.07));
         clay.add(
             stroke(side.skirt(), panel, COAT)
                 .lined(LINING)
@@ -399,7 +404,7 @@ fn coat(clay: &mut Sculpt) {
                 .turned(Quat::from_rotation_x(0.06))
                 .squashed(Vec3::new(1.0, 1.0, 0.82))
                 .clipped(Vec3::X * -side.sign(), -0.01)
-                .wrinkled(0.007, Vec3::new(14.0, 3.0, 14.0))
+                .wrinkled(0.003, Vec3::new(14.0, 3.0, 14.0))
                 .blended(0.02),
         );
     }
@@ -417,26 +422,26 @@ fn hood(clay: &mut Sculpt) {
     clay.add(
         stroke(Bone::Head, egg(0.132, 0.145, 0.15), COAT)
             .at(Vec3::new(0.0, 0.15, 0.005))
-            .wrinkled(0.006, fabric),
+            .wrinkled(0.003, fabric),
     );
     clay.add(
         stroke(Bone::Head, egg(0.118, 0.12, 0.1), COAT)
             .at(Vec3::new(0.0, 0.06, 0.07))
-            .wrinkled(0.006, fabric)
+            .wrinkled(0.003, fabric)
             .blended(0.05),
     );
     clay.add(
         stroke(Bone::Head, limb(0.11, 0.075, 0.04), COAT)
             .at(Vec3::new(0.012, 0.2, 0.07))
             .turned(toward(Vec3::new(0.1, -0.8, 0.8)))
-            .wrinkled(0.005, fabric)
+            .wrinkled(0.003, fabric)
             .blended(0.06),
     );
     clay.add(
-        stroke(Bone::Head, egg(0.1, 0.118, 0.118), LINING)
+        stroke(Bone::Head, egg(0.113, 0.128, 0.13), LINING)
             .at(Vec3::new(0.0, 0.148, -0.003))
             .carved()
-            .blended(0.01),
+            .blended(0.008),
     );
     clay.add(
         stroke(Bone::Head, egg(0.086, 0.104, 0.12), COAT)
@@ -594,10 +599,10 @@ fn pauldron() -> Sculpt {
     let mut clay = clay();
     let arm = Bone::LeftUpperArm;
     let tilt = Quat::from_rotation_z(0.3);
-    let (center, radii) = (Vec3::new(-0.015, 0.035, 0.0), Vec3::new(0.1, 0.07, 0.092));
+    let (center, radii) = (Vec3::new(-0.012, 0.03, 0.0), Vec3::new(0.092, 0.064, 0.085));
     clay.add(stroke(arm, Form::Egg(radii), PLATE).at(center).turned(tilt));
     clay.add(
-        stroke(arm, egg(0.087, 0.06, 0.08), METAL)
+        stroke(arm, egg(0.08, 0.054, 0.073), METAL)
             .at(Vec3::new(-0.006, 0.01, 0.0))
             .turned(tilt)
             .carved()
@@ -635,15 +640,15 @@ fn bracer() -> Sculpt {
     clay.add(
         stroke(
             arm,
-            tube(0.085, Vec2::new(0.06, 0.057), 0.012, Vec2::ZERO),
+            tube(0.085, Vec2::new(0.052, 0.049), 0.011, Vec2::ZERO),
             PLATE,
         )
         .at(Vec3::new(0.0, -0.03, 0.0)),
     );
     clay.part();
-    clay.add(stroke(arm, ring(0.062, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.1, 0.0)));
+    clay.add(stroke(arm, ring(0.054, 0.0045), TEAL_LIGHT).at(Vec3::new(0.0, -0.1, 0.0)));
     clay.part();
-    clay.add(stroke(arm, ring(0.062, 0.005), METAL).at(Vec3::new(0.0, -0.035, 0.0)));
+    clay.add(stroke(arm, ring(0.055, 0.005), METAL).at(Vec3::new(0.0, -0.035, 0.0)));
     clay
 }
 
@@ -937,6 +942,31 @@ mod tests {
                 .fold(f32::NEG_INFINITY, f32::max)
         };
         assert!(front(1.0) > front(-1.0) + 0.006);
+    }
+
+    fn thickness(sculpt: &crate::sculpt::Sculpt, from: glam::Vec3, step: glam::Vec3) -> f32 {
+        let mut run = 0.0_f32;
+        let mut longest = 0.0_f32;
+        for index in 0..400 {
+            let point = from + step * f32::from(u16::try_from(index).unwrap());
+            if sculpt.distance(point) < 0.0 {
+                run += step.length();
+                longest = longest.max(run);
+            } else {
+                run = 0.0;
+            }
+        }
+        longest
+    }
+
+    #[test]
+    fn the_coat_and_hood_are_thin_cloth() {
+        let garments = super::garments();
+        let side = glam::Vec3::X * 0.001;
+        let coat = thickness(&garments, glam::Vec3::new(0.1, 0.6, 0.0), side);
+        let hood = thickness(&garments, glam::Vec3::new(0.0, 1.62, 0.0), side);
+        assert!((0.012..0.03).contains(&coat), "coat {coat}");
+        assert!((0.012..0.03).contains(&hood), "hood {hood}");
     }
 
     #[test]
