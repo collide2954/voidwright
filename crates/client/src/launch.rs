@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -8,6 +8,7 @@ pub struct Launch {
     pub orbit: Option<[f32; 3]>,
     pub walk: Option<[i32; 2]>,
     pub benchmark: Option<f32>,
+    pub record: Option<u16>,
 }
 
 impl Launch {
@@ -22,6 +23,7 @@ impl Launch {
                 "--orbit" => launch.orbit = values(&mut args),
                 "--walk" => launch.walk = values(&mut args),
                 "--benchmark" => launch.benchmark = values(&mut args).map(|[seconds]| seconds),
+                "--record" => launch.record = values(&mut args).map(|[frames]| frames),
                 _ => {}
             }
         }
@@ -38,6 +40,17 @@ fn values<T: FromStr, const N: usize>(args: &mut impl Iterator<Item = String>) -
 }
 
 #[must_use]
+pub fn frame(base: &Path, index: u16) -> PathBuf {
+    let stem = base
+        .file_stem()
+        .map_or_else(Default::default, |stem| stem.to_string_lossy());
+    let extension = base
+        .extension()
+        .map_or_else(Default::default, |extension| extension.to_string_lossy());
+    base.with_file_name(format!("{stem}-{index:03}.{extension}"))
+}
+
+#[must_use]
 pub fn flip_rows(pixels: &[u8], width: u16, height: u16) -> Vec<u8> {
     let row = usize::from(width) * 4;
     pixels
@@ -51,7 +64,7 @@ pub fn flip_rows(pixels: &[u8], width: u16, height: u16) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launch, flip_rows};
+    use super::{Launch, flip_rows, frame};
     use std::path::PathBuf;
 
     fn parse(args: &[&str]) -> Launch {
@@ -100,6 +113,18 @@ mod tests {
     #[test]
     fn capture_at_takes_a_delay_in_seconds() {
         assert_eq!(parse(&["--capture-at", "1.5"]).capture_at, Some(1.5));
+    }
+
+    #[test]
+    fn record_takes_a_number_of_frames() {
+        assert_eq!(parse(&["--record", "90"]).record, Some(90));
+        assert_eq!(parse(&["--record", "many"]), Launch::default());
+    }
+
+    #[test]
+    fn recorded_frames_are_numbered_beside_the_capture_file() {
+        let base = PathBuf::from("clips").join("walk.png");
+        assert_eq!(frame(&base, 7), PathBuf::from("clips").join("walk-007.png"));
     }
 
     #[test]

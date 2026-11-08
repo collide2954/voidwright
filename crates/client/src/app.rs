@@ -7,6 +7,7 @@ use miniquad::{EventHandler, KeyCode, KeyMods, MouseButton, RenderingBackend, da
 
 use voidwright_core::Tile;
 
+use crate::launch::frame;
 use crate::{
     Controls, FrameStats, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for,
 };
@@ -14,6 +15,13 @@ use crate::{
 const SEED: u64 = 1;
 const WARMUP: f64 = 1.0;
 const BENCHMARK_TURN: f32 = 0.3;
+const RECORD_STEP: f64 = 1.0 / 30.0;
+
+struct Recording {
+    base: PathBuf,
+    next: u16,
+    frames: u16,
+}
 
 struct Benchmark {
     start: f64,
@@ -31,6 +39,7 @@ pub struct App {
     capture: Option<PathBuf>,
     capture_at: f32,
     benchmark: Option<Benchmark>,
+    recording: Option<Recording>,
 }
 
 impl App {
@@ -46,6 +55,15 @@ impl App {
         }
         let renderer = Renderer::new(context.as_mut(), &game);
         let now = date::now();
+        let recording = launch
+            .capture
+            .clone()
+            .zip(launch.record)
+            .map(|(base, frames)| Recording {
+                base,
+                next: 0,
+                frames,
+            });
         Self {
             context,
             renderer,
@@ -53,7 +71,8 @@ impl App {
             controls: Controls::default(),
             drag: None,
             last_frame: now,
-            capture: launch.capture,
+            recording,
+            capture: launch.capture.filter(|_| launch.record.is_none()),
             capture_at: launch.capture_at.unwrap_or(0.0),
             benchmark: launch.benchmark.map(|seconds| Benchmark {
                 start: now + WARMUP,
@@ -105,7 +124,12 @@ fn screen_size() -> Vec2 {
 impl EventHandler for App {
     fn update(&mut self) {
         let now = date::now();
-        let delta = Duration::from_secs_f64((now - self.last_frame).max(0.0));
+        let real = (now - self.last_frame).max(0.0);
+        let delta = Duration::from_secs_f64(if self.recording.is_some() {
+            RECORD_STEP
+        } else {
+            real
+        });
         self.last_frame = now;
         let turn = self.controls.rotation(delta.as_secs_f32());
         self.game.camera_mut().rotate(turn.x, turn.y);
@@ -114,6 +138,19 @@ impl EventHandler for App {
     }
 
     fn draw(&mut self) {
+        if self.game.time() >= self.capture_at
+            && let Some(recording) = &mut self.recording
+        {
+            let png = self.renderer.capture(self.context.as_mut(), &self.game);
+            if let Err(error) = std::fs::write(frame(&recording.base, recording.next), png) {
+                eprintln!("capture failed: {error}");
+            }
+            recording.next += 1;
+            if recording.next >= recording.frames {
+                window::quit();
+            }
+            return;
+        }
         if self.game.time() >= self.capture_at
             && let Some(path) = self.capture.take()
         {
