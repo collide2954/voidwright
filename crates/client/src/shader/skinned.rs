@@ -63,10 +63,10 @@ varying mediump float fog;
 varying highp vec3 rest;
 varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
-const float TILES = 20.0;
-const float BUMP = 1.2;
-const float CAVITY = 0.25;
-const vec4 STRENGTH = vec4(0.25, 0.5, 0.35, 0.7);
+const float TILES = 12.0;
+const float BUMP = 1.6;
+const float CAVITY = 0.35;
+const vec4 STRENGTH = vec4(0.55, 0.75, 0.6, 0.85);
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
