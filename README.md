@@ -2,7 +2,7 @@
 
 Voidwright is an online role-playing game for many players. The game world is a broken ring structure in the void. Players move on a grid of tiles.
 
-The game is not complete. The offline prototype is playable: one player walks on one floating island.
+The game is not complete. The offline prototype is playable: one player walks on one floating island. In the first online mode, several players walk on the island of one server.
 
 ## Requirements
 
@@ -36,8 +36,27 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | `--capture-at <seconds>` | The capture waits for this game time. |
 | `--record <frames>` | With `--capture`, the game moves 1/30 s for each frame and saves this number of frames. Each file name gets a frame number. The sound of the recording goes to a WAV file with the name of the capture file. |
 | `--headphones` | The sound uses the headphones mix. The default mix is for speakers. |
+| `--connect <address>` | The client joins the server at this address. Without this option, the client plays offline. |
+| `--name <name>` | With `--connect`, the player has this name. The default is `Wanderer`. A name has 1 to 12 letters, digits, spaces, hyphens, or underscores. |
 
 The client plays sound on the default output device. A capture without `--record` and a frame rate measurement play no sound.
+
+## Server
+
+| Task | Command |
+| --- | --- |
+| Start the server | `cargo run --release -p voidwright-server` |
+| Join the server | `cargo run --release -p voidwright-client -- --connect 127.0.0.1:8643 --name Ash` |
+| Measure the tick with 200 simulated players | `cargo run --release -p voidwright-server --example crowd -- 200` |
+
+To play together, start the server. Then start one client for each player, with `--connect` and a different name.
+
+| Option | Effect |
+| --- | --- |
+| `--bind <address>` | The server listens on this address. The default is `127.0.0.1:8643`. Use `0.0.0.0:8643` to accept players from other computers. |
+| `--seed <number>` | The seed of the island. The default is 1. The offline game uses the same island. |
+
+The server writes a line when a player joins or leaves, and every 100 ticks a line with the number of players and the slowest tick. [protocol.md](docs/protocol.md) gives the messages and the limits.
 
 ## Controls
 
