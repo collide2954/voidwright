@@ -78,7 +78,7 @@ vec3 filmic(vec3 x) {
 void main() {
     float falloff = max(1.0 - dot(spot, spot), 0.0);
     vec3 shaded = mix(glow, fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)) * falloff * falloff * strength, 1.0);
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0) * falloff * falloff * strength;
 }
 ";
 
@@ -315,6 +315,13 @@ mod tests {
         let uniforms = uniforms();
         assert_eq!(uniforms.island, [28.5, -28.5, 20.0]);
         assert_eq!(uniforms.rhythms.map(|rhythm| rhythm[3]), [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn each_speck_marks_its_own_light_in_the_alpha() {
+        assert!(FRAGMENT.contains(
+            "gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0) * falloff * falloff * strength;"
+        ));
     }
 
     #[test]
