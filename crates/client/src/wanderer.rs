@@ -427,7 +427,7 @@ fn hood(clay: &mut Sculpt) {
     clay.add(
         stroke(Bone::Head, egg(0.118, 0.12, 0.1), COAT)
             .at(Vec3::new(0.0, 0.06, 0.07))
-            .wrinkled(0.003, fabric)
+            .wrinkled(0.004, Vec3::new(20.0, 4.0, 20.0))
             .blended(0.05),
     );
     clay.add(
@@ -448,6 +448,14 @@ fn hood(clay: &mut Sculpt) {
             .at(Vec3::new(0.0, 0.135, -0.142))
             .carved()
             .blended(0.025),
+    );
+    clay.add(
+        stroke(Bone::Head, ring(0.092, 0.011), COAT)
+            .at(Vec3::new(0.0, 0.135, -0.112))
+            .turned(Quat::from_rotation_x(FRAC_PI_2))
+            .squashed(Vec3::new(0.9, 1.0, 1.09))
+            .wrinkled(0.002, fabric)
+            .blended(0.01),
     );
 }
 
