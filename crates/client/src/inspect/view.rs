@@ -23,12 +23,14 @@ pub struct View {
 impl View {
     #[must_use]
     pub fn new(target: Vec3, yaw: f32, pitch: f32, distance: f32) -> Self {
-        Self {
+        let mut view = Self {
             target,
-            yaw: yaw.rem_euclid(TAU),
-            pitch: pitch.clamp(-FRAC_PI_2, FRAC_PI_2),
+            yaw: 0.0,
+            pitch: 0.0,
             distance: distance.clamp(MIN_DISTANCE, MAX_DISTANCE),
-        }
+        };
+        view.look(yaw, pitch);
+        view
     }
 
     #[must_use]
@@ -46,9 +48,20 @@ impl View {
         self.distance = (self.distance * step.powf(-notches)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
+    pub fn look(&mut self, yaw: f32, pitch: f32) {
+        self.yaw = yaw.rem_euclid(TAU);
+        self.pitch = pitch.clamp(-FRAC_PI_2, FRAC_PI_2);
+    }
+
     pub fn turn(&mut self, pixels: Vec2) {
-        self.yaw = (self.yaw - pixels.x * TURN_PER_PIXEL).rem_euclid(TAU);
-        self.pitch = (self.pitch + pixels.y * TURN_PER_PIXEL).clamp(-FRAC_PI_2, FRAC_PI_2);
+        self.look(
+            self.yaw - pixels.x * TURN_PER_PIXEL,
+            self.pitch + pixels.y * TURN_PER_PIXEL,
+        );
+    }
+
+    pub fn spin(&mut self, angle: f32) {
+        self.look(self.yaw + angle, self.pitch);
     }
 
     pub fn pan(&mut self, pixels: Vec2, height: f32) {
@@ -88,6 +101,7 @@ impl View {
 mod tests {
     use super::View;
     use glam::{BVec3, Vec2, Vec3};
+    use std::f32::consts::FRAC_PI_2;
 
     const TARGET: Vec3 = Vec3::new(0.0, 0.9, 0.0);
     const ASPECT: f32 = 16.0 / 9.0;
@@ -237,6 +251,33 @@ mod tests {
         view.frame(LOW, HIGH, ASPECT);
         assert!(view.target().distance((LOW + HIGH) / 2.0) < 1e-6);
         assert!((view.eye() - view.target()).normalize().distance(direction) < 1e-5);
+    }
+
+    #[test]
+    fn a_look_sets_the_angles_and_keeps_the_target_and_the_distance() {
+        let mut view = view();
+        view.pan(Vec2::new(30.0, 20.0), 720.0);
+        let target = view.target();
+        for (yaw, pitch, offset) in [
+            (0.0, 0.0, Vec3::Z),
+            (FRAC_PI_2, 0.0, Vec3::X),
+            (0.0, FRAC_PI_2, Vec3::Y),
+        ] {
+            view.look(yaw, pitch);
+            assert!(view.eye().distance(target + offset * 3.0) < 1e-4);
+        }
+    }
+
+    #[test]
+    fn a_spin_circles_the_target_at_the_same_height() {
+        let mut view = View::new(TARGET, 0.0, 0.3, 3.0);
+        let flat = |eye: Vec3| Vec2::new(eye.x - TARGET.x, eye.z - TARGET.z);
+        let before = view.eye();
+        view.spin(FRAC_PI_2);
+        let after = view.eye();
+        assert!((after.y - before.y).abs() < 1e-5);
+        assert!(flat(after).dot(flat(before)).abs() < 1e-4);
+        assert!((flat(after).length() - flat(before).length()).abs() < 1e-4);
     }
 
     #[test]
