@@ -11,6 +11,7 @@ pub mod reverb;
 pub mod ring;
 pub mod soundscape;
 pub mod space;
+mod voice;
 pub mod wave;
 pub mod wind;
 
