@@ -85,14 +85,21 @@ impl Cloth {
         let seconds = seconds.min(STEP * f32::from(MOST_STEPS));
         let steps = (seconds / STEP).ceil().clamp(1.0, f32::from(MOST_STEPS));
         let step = seconds / steps;
+        let center = waist.transform_point3(Vec3::ZERO);
         let mut left = seconds;
         while left > step * 0.5 {
-            self.step(&targets, legs, step);
+            self.step(&targets, center, legs, step);
             left -= step;
         }
     }
 
-    fn step(&mut self, targets: &[[Vec3; 3]; STRIPS], legs: &[Capsule], seconds: f32) {
+    fn step(
+        &mut self,
+        targets: &[[Vec3; 3]; STRIPS],
+        center: Vec3,
+        legs: &[Capsule],
+        seconds: f32,
+    ) {
         let keep = (-DRAG * seconds).exp();
         let pull = (SHAPE * seconds).min(1.0);
         let strips = self.points.iter_mut().zip(&mut self.previous).zip(targets);
@@ -117,7 +124,7 @@ impl Cloth {
                 }
                 for leg in legs {
                     for point in 1..3 {
-                        self.points[strip][point] = clear(self.points[strip][point], leg);
+                        self.points[strip][point] = clear(self.points[strip][point], leg, center);
                     }
                 }
             }
@@ -209,22 +216,30 @@ fn joined(strip: usize) -> bool {
     left(strip) == left((strip + 1) % STRIPS)
 }
 
-fn clear(point: Vec3, leg: &Capsule) -> Vec3 {
+fn clear(point: Vec3, leg: &Capsule, center: Vec3) -> Vec3 {
     let axis = leg.to - leg.from;
     let along = ((point - leg.from).dot(axis) / axis.length_squared().max(1e-9)).clamp(0.0, 1.0);
     let closest = leg.from + axis * along;
-    let offset = point - closest;
     let reach = leg.radius + MARGIN;
-    let distance = offset.length();
-    if distance >= reach {
+    if point.distance_squared(closest) >= reach * reach {
         return point;
     }
-    let away = if distance > 1e-6 {
-        offset / distance
+    let outward = Vec3::new(point.x - center.x, 0.0, point.z - center.z).normalize_or(Vec3::NEG_Z);
+    let direction = if along > 0.0 && along < 1.0 {
+        axis.normalize_or_zero()
     } else {
-        Vec3::new(offset.x, 0.0, offset.z).normalize_or(Vec3::Z)
+        Vec3::ZERO
     };
-    closest + away * reach
+    let across = |vector: Vec3| vector - direction * vector.dot(direction);
+    let (offset, push) = (across(point - closest), across(outward));
+    let square = push.length_squared();
+    if square < 1e-6 {
+        return closest + offset.normalize_or(outward) * reach;
+    }
+    let half = offset.dot(push);
+    let gap = offset.length_squared() - reach * reach;
+    let distance = (-half + (half * half - square * gap).max(0.0).sqrt()) / square;
+    point + outward * distance
 }
 
 #[cfg(test)]
@@ -383,6 +398,24 @@ mod tests {
                 assert!(flat > 0.075 || (at.y - hem.y).abs() > 0.3);
             }
         }
+    }
+
+    #[test]
+    fn a_leg_that_overtakes_the_cloth_still_pushes_it_outward() {
+        let mut cloth = Cloth::hanging(COAT);
+        run(&mut cloth, Vec3::Y, &[], 60);
+        let hem = cloth.points()[3][2];
+        let outward = Vec3::new(hem.x, 0.0, hem.z).normalize();
+        let axis = hem + outward * 0.03;
+        let leg = Capsule {
+            from: axis + Vec3::Y * 0.3,
+            to: axis - Vec3::Y * 0.3,
+            radius: 0.08,
+        };
+        run(&mut cloth, Vec3::Y, &[leg], 1);
+        let moved = cloth.points()[3][2];
+        let flat = |at: Vec3| Vec3::new(at.x, 0.0, at.z).length();
+        assert!(flat(moved) > flat(axis) + 0.08, "{moved} {axis}");
     }
 
     #[test]
