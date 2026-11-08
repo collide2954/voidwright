@@ -32,7 +32,19 @@ pub enum Bone {
 pub const JOINTS: usize = 17;
 pub const LANTERN_BONE: usize = JOINTS + CLOTH_BONES;
 pub const SCARF_BONE: usize = LANTERN_BONE + 1;
-pub const BONES: usize = SCARF_BONE + 2;
+pub const HOOD_BONE: usize = SCARF_BONE + 2;
+pub const BONES: usize = HOOD_BONE + 1;
+pub const HOOD_TAIL: [Vec3; 2] = [
+    Vec3::new(0.01, 0.19, 0.06),
+    Vec3::new(0.0188, 0.1196, 0.1304),
+];
+const HOOD_SLACK: f32 = 0.06;
+const HOOD_FEEL: Feel = Feel {
+    drive: 2.0,
+    drag: 10.0,
+    inertia: 0.6,
+    spin: 0.6,
+};
 pub const SCARF_TAIL: [Vec3; 3] = [
     Vec3::new(-0.083, 0.458, -0.115),
     Vec3::new(-0.07, 0.33, -0.131),
@@ -255,6 +267,8 @@ pub fn skin(pose: &Pose) -> [Mat4; BONES] {
     from_fn(|bone| {
         if bone < JOINTS {
             posed[bone] * rest[bone].inverse()
+        } else if bone == HOOD_BONE {
+            follow(Bone::Head)
         } else if bone >= LANTERN_BONE {
             follow(Bone::Torso)
         } else {
@@ -268,6 +282,7 @@ pub struct Coat {
     cloth: Cloth,
     lantern: Fabric<2>,
     scarf: Fabric<3>,
+    hood: Fabric<2>,
 }
 
 impl Coat {
@@ -278,6 +293,7 @@ impl Coat {
             cloth: Cloth::hanging(COAT_CUT),
             lantern: Fabric::strand(hanging, LANTERN_SLACK, LANTERN_FEEL),
             scarf: Fabric::strand(SCARF_TAIL, SCARF_SLACK, SCARF_FEEL),
+            hood: Fabric::strand(HOOD_TAIL, HOOD_SLACK, HOOD_FEEL),
         };
         coat.update(pose, placement, 0.0);
         coat
@@ -314,6 +330,8 @@ impl Coat {
             radius: CHEST_RADIUS,
         };
         self.scarf.update(torso, &[chest], seconds);
+        self.hood
+            .update(placement * bones[Bone::Head.index()], &[], seconds);
     }
 
     #[must_use]
@@ -325,7 +343,9 @@ impl Coat {
         skins[JOINTS..LANTERN_BONE].copy_from_slice(&coat);
         skins[LANTERN_BONE] = self.lantern.skins(rest[torso], posed[torso])[0];
         let scarf = self.scarf.skins(rest[torso], posed[torso]);
-        skins[SCARF_BONE..BONES].copy_from_slice(&scarf);
+        skins[SCARF_BONE..HOOD_BONE].copy_from_slice(&scarf);
+        let head = Bone::Head.index();
+        skins[HOOD_BONE] = self.hood.skins(rest[head], posed[head])[0];
         skins
     }
 
@@ -348,8 +368,8 @@ pub fn pulse(time: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bone, Coat, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK, SCARF_BONE, SCARF_TAIL,
-        placement, pulse, rest, skeleton, skin,
+        Bone, Coat, HOOD_BONE, HOOD_TAIL, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK,
+        SCARF_BONE, SCARF_TAIL, placement, pulse, rest, skeleton, skin,
     };
     use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
@@ -657,6 +677,50 @@ mod tests {
         let end = scarf_end();
         let swung = coat.skins(&pose)[SCARF_BONE + 1].transform_point3(end);
         assert!(swung.z > end.z + 0.005, "{swung} {end}");
+    }
+
+    fn hood_tip() -> Vec3 {
+        rest()[Bone::Head.index()].transform_point3(HOOD_TAIL[1])
+    }
+
+    #[test]
+    fn a_still_hood_hangs_as_sculpted() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        let tip = hood_tip();
+        let held = coat.skins(&pose)[HOOD_BONE].transform_point3(tip);
+        assert!(held.distance(tip) < 0.005, "{held} {tip}");
+    }
+
+    #[test]
+    fn the_hood_tail_lags_a_quick_glance() {
+        let mut coat = Coat::new(&Pose::default(), Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&Pose::default(), Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        let glance = Pose {
+            look: 0.6,
+            ..Pose::default()
+        };
+        let tip = hood_tip();
+        let mut lag = 0.0_f32;
+        for _ in 0..12 {
+            coat.update(&glance, Mat4::IDENTITY, 1.0 / 60.0);
+            let skins = coat.skins(&glance);
+            let swung = skins[HOOD_BONE].transform_point3(tip);
+            let rigid = skins[Bone::Head.index()].transform_point3(tip);
+            lag = lag.max(swung.distance(rigid));
+        }
+        assert!(lag > 0.005, "{lag}");
+    }
+
+    #[test]
+    fn a_bare_skin_carries_the_hood_with_the_head() {
+        let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
+        assert!(skins[HOOD_BONE].abs_diff_eq(skins[Bone::Head.index()], 1e-6));
     }
 
     #[test]

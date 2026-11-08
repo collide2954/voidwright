@@ -9,7 +9,7 @@ attribute vec4 in_bones;
 attribute vec4 in_weights;
 uniform mat4 view_projection;
 uniform mat4 model;
-uniform mat4 bones[76];
+uniform mat4 bones[77];
 varying highp float depth;
 void main() {
     mat4 skin = bones[int(in_bones.x)] * in_weights.x

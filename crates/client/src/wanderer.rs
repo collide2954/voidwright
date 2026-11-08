@@ -4,8 +4,8 @@ use glam::{Quat, Vec2, Vec3, Vec4};
 
 use crate::cloth::{COAT_FEEL, Cloth, Fabric};
 use crate::figure::{
-    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FINGER, FOREARM, JOINTS, LANTERN_BONE,
-    LANTERN_HOOK, SCARF_BONE, SCARF_TAIL, THIGH, UPPER_ARM, rest, waist,
+    ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FINGER, FOREARM, HOOD_BONE, HOOD_TAIL, JOINTS,
+    LANTERN_BONE, LANTERN_HOOK, SCARF_BONE, SCARF_TAIL, THIGH, UPPER_ARM, rest, waist,
 };
 use crate::palette::linear;
 use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
@@ -13,6 +13,7 @@ use crate::shape::{Material, Surface};
 use crate::sky::noise3;
 use crate::spline::smoothstep;
 
+const COWL_REACH: [f32; 2] = [0.05, 0.09];
 const COAT: Material = Material::matte(Vec3::new(0.22, 0.24, 0.25), 0.06).textured(Surface::Woven);
 const LINING: Material = Material::matte(Vec3::new(0.3, 0.12, 0.09), 0.05).textured(Surface::Woven);
 const CLOTH: Material = Material::matte(Vec3::new(0.14, 0.13, 0.12), 0.05).textured(Surface::Woven);
@@ -244,6 +245,40 @@ fn hang(mesh: &mut SkinnedMesh) {
     }
 }
 
+fn cowl(mesh: &mut SkinnedMesh) {
+    let head = Bone::Head.index();
+    let back = rest()[head].inverse();
+    let [from, to] = HOOD_TAIL;
+    let span = to - from;
+    for vertex in &mut mesh.vertices {
+        let Some(slot) = vertex
+            .bones
+            .iter()
+            .position(|&bone| (bone - index(head)).abs() < 0.5)
+        else {
+            continue;
+        };
+        let local = back.transform_point3(Vec3::from(vertex.position));
+        let along = ((local - from).dot(span) / span.length_squared()).clamp(0.0, 1.0);
+        let gap = local.distance(from + span * along);
+        let hold = along * smoothstep(COWL_REACH[1], COWL_REACH[0], gap) * vertex.weights[slot];
+        if hold <= 0.0 {
+            continue;
+        }
+        let spare = (0..vertex.weights.len())
+            .filter(|&other| other != slot)
+            .min_by(|&a, &b| vertex.weights[a].total_cmp(&vertex.weights[b]))
+            .expect("a vertex has more than one slot");
+        let kept = 1.0 - vertex.weights[spare];
+        vertex.weights[slot] -= hold;
+        vertex.bones[spare] = index(HOOD_BONE);
+        vertex.weights[spare] = hold;
+        for weight in &mut vertex.weights {
+            *weight /= kept;
+        }
+    }
+}
+
 fn trail(mesh: &mut SkinnedMesh) {
     let strand = Fabric::strand(SCARF_TAIL, 0.0, COAT_FEEL);
     let torso = Bone::Torso.index();
@@ -311,7 +346,10 @@ pub fn voidwright() -> SkinnedMesh {
         let mut mesh = piece.sculpt.mesh(piece.cell);
         mesh.simplify(piece.budget);
         match piece.fit {
-            Fit::Draped => drape(&mut mesh),
+            Fit::Draped => {
+                drape(&mut mesh);
+                cowl(&mut mesh);
+            }
             Fit::Hung => hang(&mut mesh),
             Fit::Tail => trail(&mut mesh),
             Fit::Rigid => {}
@@ -1453,6 +1491,68 @@ mod tests {
                 .iter()
                 .any(|vertex| { glows(vertex) && vertex.color[0] > 0.9 && vertex.color[2] < 0.2 })
         );
+    }
+
+    #[test]
+    fn the_hood_tail_follows_its_strand_and_the_hood_front_stays_on_the_head() {
+        use crate::figure::{HOOD_BONE, HOOD_TAIL, rest};
+        let head = rest()[Bone::Head.index()];
+        let near = |point: Vec3| {
+            let at = head.transform_point3(point);
+            FIGURE
+                .vertices
+                .iter()
+                .filter(move |vertex| Vec3::from(vertex.position).distance(at) < 0.05)
+        };
+        let tail: Vec<&SkinnedVertex> = near(HOOD_TAIL[1]).collect();
+        assert_ne!(tail.len(), 0);
+        for vertex in tail {
+            assert_eq!(strongest(vertex), HOOD_BONE);
+        }
+        let front: Vec<&SkinnedVertex> = near(Vec3::new(0.0, 0.25, -0.06)).collect();
+        assert_ne!(front.len(), 0);
+        for vertex in front {
+            assert_ne!(strongest(vertex), HOOD_BONE);
+        }
+    }
+
+    #[test]
+    fn the_cowl_moves_only_head_weight_near_the_tail_to_the_hood() {
+        use crate::figure::{HOOD_BONE, HOOD_TAIL, rest};
+        let head = rest()[Bone::Head.index()];
+        let follows = [Bone::Head, Bone::Torso, Bone::Pelvis, Bone::Pelvis];
+        let vertex = |point: Vec3, weights: [f32; 4]| SkinnedVertex {
+            position: head.transform_point3(point).to_array(),
+            normal: [0.0, 1.0, 0.0],
+            color: [0.1, 0.1, 0.1],
+            params: [0.1, 0.0],
+            bones: follows.map(|bone| super::index(bone.index())),
+            weights,
+            surface: [0.0; 4],
+        };
+        let mut mesh = SkinnedMesh {
+            vertices: vec![
+                vertex(HOOD_TAIL[1], [0.8, 0.2, 0.0, 0.0]),
+                vertex(Vec3::ZERO, [0.6, 0.4, 0.0, 0.0]),
+            ],
+            indices: Vec::new(),
+        };
+        let neck = mesh.vertices[1];
+        super::cowl(&mut mesh);
+        let tip = mesh.vertices[0];
+        let share = |target: usize| -> f32 {
+            (0..4)
+                .filter(|&slot| bone(tip.bones[slot]) == target)
+                .map(|slot| tip.weights[slot])
+                .sum()
+        };
+        assert!((share(Bone::Torso.index()) - 0.2).abs() < 1e-6, "{tip:?}");
+        assert!(share(HOOD_BONE) > 0.5, "{tip:?}");
+        assert!(
+            (tip.weights.iter().sum::<f32>() - 1.0).abs() < 1e-6,
+            "{tip:?}"
+        );
+        assert_eq!(mesh.vertices[1], neck);
     }
 
     #[test]
