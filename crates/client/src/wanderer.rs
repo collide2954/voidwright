@@ -315,35 +315,46 @@ fn body() -> Sculpt {
 
 fn trunk(clay: &mut Sculpt) {
     let cloth = Vec3::new(14.0, 9.0, 14.0);
-    clay.add(stroke(Bone::Pelvis, egg(0.145, 0.11, 0.105), CLOTH).at(Vec3::new(0.0, -0.02, 0.0)));
-    clay.add(
-        stroke(Bone::Torso, egg(0.145, 0.15, 0.11), COAT)
-            .at(Vec3::new(0.0, 0.1, 0.0))
-            .wrinkled(0.006, cloth)
-            .blended(0.05),
-    );
-    clay.add(
-        stroke(Bone::Torso, egg(0.176, 0.15, 0.12), COAT)
-            .at(Vec3::new(0.0, 0.27, -0.008))
-            .wrinkled(0.006, cloth)
-            .blended(0.07),
-    );
-    clay.add(
-        stroke(Bone::Torso, egg(0.17, 0.085, 0.115), COAT)
-            .at(Vec3::new(0.0, 0.4, 0.012))
+    clay.add(stroke(Bone::Pelvis, egg(0.15, 0.1, 0.115), CLOTH).at(Vec3::new(0.0, -0.01, 0.005)));
+    let coat = |form: Form, at: Vec3, blend: f32| {
+        stroke(Bone::Torso, form, COAT)
+            .at(at)
             .wrinkled(0.005, cloth)
-            .blended(0.06),
-    );
+            .blended(blend)
+    };
+    for (form, at, blend) in [
+        (egg(0.15, 0.12, 0.105), Vec3::new(0.0, 0.09, 0.0), 0.05),
+        (egg(0.158, 0.17, 0.122), Vec3::new(0.0, 0.29, 0.0), 0.06),
+        (egg(0.17, 0.08, 0.115), Vec3::new(0.0, 0.42, 0.005), 0.05),
+        (egg(0.15, 0.075, 0.05), Vec3::new(0.0, 0.35, -0.08), 0.05),
+    ] {
+        clay.add(coat(form, at, blend));
+    }
     for side in Side::BOTH {
+        let x = side.sign();
+        for (form, at, blend) in [
+            (egg(0.06, 0.13, 0.08), Vec3::new(x * 0.12, 0.33, 0.03), 0.05),
+            (
+                egg(0.07, 0.09, 0.05),
+                Vec3::new(x * 0.085, 0.36, 0.075),
+                0.04,
+            ),
+        ] {
+            clay.add(coat(form, at, blend));
+        }
+        let (neck, shoulder) = (
+            Vec3::new(x * 0.05, 0.515, 0.03),
+            Vec3::new(x * 0.175, 0.455, 0.01),
+        );
         clay.add(
-            stroke(Bone::Torso, egg(0.075, 0.09, 0.05), COAT)
-                .at(Vec3::new(side.sign() * 0.085, 0.33, 0.085))
+            segment(Bone::Torso, neck, shoulder, 0.045, COAT)
+                .wrinkled(0.005, cloth)
                 .blended(0.04),
         );
     }
     let closure = [
-        Vec3::new(-0.035, 0.43, -0.096),
-        Vec3::new(0.015, 0.25, -0.124),
+        Vec3::new(-0.035, 0.43, -0.112),
+        Vec3::new(0.015, 0.25, -0.118),
         Vec3::new(0.065, 0.04, -0.094),
     ];
     for pair in closure.windows(2) {
@@ -354,7 +365,6 @@ fn trunk(clay: &mut Sculpt) {
         );
     }
 }
-
 fn segment(bone: Bone, from: Vec3, to: Vec3, radius: f32, material: Material) -> Stroke {
     stroke(bone, limb(from.distance(to), radius, radius), material)
         .at(from)
@@ -684,11 +694,11 @@ fn chest() -> Sculpt {
         stroke(Bone::Torso, ring(0.205, 0.011), LEATHER)
             .at(Vec3::new(0.0, 0.24, 0.003))
             .turned(strap)
-            .squashed(Vec3::new(1.0, 1.0, 0.66)),
+            .squashed(Vec3::new(1.0, 1.0, 0.62)),
     );
     clay.add(
         stroke(Bone::Torso, block(0.02, 0.024, 0.007, 0.003), BRASS)
-            .at(Vec3::new(0.0, 0.24, -0.136))
+            .at(Vec3::new(0.0, 0.24, -0.128))
             .turned(strap),
     );
     clay
@@ -1203,6 +1213,19 @@ mod tests {
             .find(|&height| garments.distance(Vec3::new(0.0, height, 0.0)) < 0.0)
             .unwrap_or(0.0);
         assert!((1.77..1.795).contains(&top), "{top}");
+    }
+
+    #[test]
+    fn the_chest_is_wider_and_deeper_than_the_waist() {
+        let mut trunk = super::clay();
+        super::trunk(&mut trunk);
+        let width = |height: f32| extent(&trunk, Vec3::new(-0.3, height, 0.0), Vec3::X * 0.0015);
+        let depth = |height: f32| extent(&trunk, Vec3::new(0.0, height, -0.3), Vec3::Z * 0.0015);
+        let (chest, waist) = (1.3, 1.05);
+        assert!((0.29..0.32).contains(&width(waist)), "{}", width(waist));
+        assert!((0.2..0.23).contains(&depth(waist)), "{}", depth(waist));
+        assert!(width(chest) > width(waist) * 1.15, "{}", width(chest));
+        assert!(depth(chest) > depth(waist) * 1.15, "{}", depth(chest));
     }
 
     fn beside(point: Vec3, from: Vec3, to: Vec3) -> f32 {
