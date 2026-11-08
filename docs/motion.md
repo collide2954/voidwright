@@ -50,6 +50,8 @@ In the gait tables, 0% is the heel strike of the reference leg.
 
 Sources: Imai 2001; Farinelli 2021; Brenière and Do 1986; Jaeger 1992; Tirosh 2004.
 
+Paths on the tile grid turn at tight corners. At these corners, the turn formula gives a large lean. The game limits the turn lean to 4°.
+
 ## Standing
 
 | Item | Value | Source |

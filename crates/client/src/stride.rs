@@ -12,7 +12,7 @@ const RUN_SPEED: f32 = 2.0 / 0.6;
 const EASE_RATE: f32 = 8.0;
 const SURGE_PER_PUSH: f32 = 0.028;
 const GRAVITY: f32 = 9.81;
-const BANK_LIMIT: f32 = 0.3;
+const BANK_LIMIT: f32 = 0.07;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stride {
@@ -53,7 +53,7 @@ impl Stride {
         let bank = (self.speed * turning / GRAVITY)
             .atan()
             .clamp(-BANK_LIMIT, BANK_LIMIT);
-        self.bank.update(bank, 1.8, 0.7, seconds);
+        self.bank.update(bank, 1.2, 1.0, seconds);
     }
 
     #[must_use]
@@ -184,8 +184,21 @@ mod tests {
             let angle = f32::from(u16::try_from(frame).unwrap()) * 0.02;
             at = walk(&mut stride, at, Vec2::new(-angle.sin(), angle.cos()), 1);
         }
-        let pose = stride.pose(0.0);
-        assert!(pose.counter > 0.03);
+        assert!(stride.bank.value() > 0.03);
+    }
+
+    #[test]
+    fn a_corner_leans_the_body_only_a_little() {
+        let mut stride = Stride::default();
+        let mut at = walk(&mut stride, Vec2::ZERO, Vec2::Y, 60);
+        let mut deepest = 0.0_f32;
+        for _ in 0..90 {
+            at = walk(&mut stride, at, Vec2::X, 1);
+            deepest = deepest.max(stride.bank.value().abs());
+        }
+        assert!((0.015..0.07).contains(&deepest), "{deepest}");
+        let settled = stride.bank.value();
+        assert!(settled.abs() < 0.005, "{settled}");
     }
 
     #[test]
