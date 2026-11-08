@@ -3,7 +3,9 @@ use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 use voidwright_core::{ISLAND_RADIUS, Island, PlayerId, Tile, World};
-use voidwright_protocol::{ClientMessage, Error, Inbox, Name, Outbox, ServerMessage, Welcome};
+use voidwright_protocol::{
+    ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Welcome,
+};
 
 const GREETERS: usize = 64;
 
@@ -27,6 +29,7 @@ pub struct Stats {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Close {
     Left,
+    Refused(Reason),
     Malformed(Error),
 }
 
@@ -34,6 +37,7 @@ impl fmt::Display for Close {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Left => formatter.write_str("left"),
+            Self::Refused(reason) => write!(formatter, "refused ({reason:?})"),
             Self::Malformed(error) => write!(formatter, "malformed data: {error}"),
         }
     }
@@ -82,7 +86,7 @@ impl Connection {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    self.close = Some(Close::Malformed(error));
+                    self.reject(error);
                     break;
                 }
             }
@@ -120,6 +124,20 @@ impl Connection {
         }
         println!("{} joins as {} {name}", self.peer, id.get());
         self.stage = Stage::Playing { id, name };
+    }
+
+    fn refuse(&mut self, reason: Reason) {
+        let refusal = self.outbox.push(&ServerMessage::Refuse(reason));
+        self.close = Some(refusal.map_or_else(Close::Malformed, |()| Close::Refused(reason)));
+    }
+
+    fn reject(&mut self, error: Error) {
+        let greeting = matches!(self.stage, Stage::Greeting);
+        match error {
+            Error::Version(_) if greeting => self.refuse(Reason::Version),
+            Error::Name if greeting => self.refuse(Reason::Name),
+            _ => self.close = Some(Close::Malformed(error)),
+        }
     }
 
     fn flush(&mut self) {

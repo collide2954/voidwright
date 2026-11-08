@@ -2,6 +2,7 @@ mod common;
 
 use common::{Client, server};
 use voidwright_core::{ISLAND_RADIUS, Island};
+use voidwright_protocol::{Reason, ServerMessage, VERSION};
 use voidwright_server::Config;
 
 #[test]
@@ -21,4 +22,35 @@ fn each_player_gets_a_different_id() {
     let (_bryn, second) = Client::join(&mut server, "Bryn");
     assert_ne!(first.id, second.id);
     assert_eq!(server.stats().players, 2);
+}
+
+fn hello(version: u16, name: &[u8]) -> Vec<u8> {
+    let mut payload = vec![0x01];
+    payload.extend_from_slice(&version.to_le_bytes());
+    payload.push(u8::try_from(name.len()).unwrap());
+    payload.extend_from_slice(name);
+    let mut frame = u16::try_from(payload.len()).unwrap().to_le_bytes().to_vec();
+    frame.extend(payload);
+    frame
+}
+
+#[test]
+fn a_hello_with_another_version_is_refused() {
+    let mut server = server(Config::default());
+    let mut client = Client::connect(&server);
+    client.send_raw(&hello(VERSION + 1, b"Ash"));
+    let refusal = client.receive(&mut server);
+    assert_eq!(refusal, ServerMessage::Refuse(Reason::Version));
+    assert!(client.is_closed(&mut server));
+    assert_eq!(server.stats().players, 0);
+}
+
+#[test]
+fn a_hello_with_a_bad_name_is_refused() {
+    let mut server = server(Config::default());
+    let mut client = Client::connect(&server);
+    client.send_raw(&hello(VERSION, b"<script>"));
+    let refusal = client.receive(&mut server);
+    assert_eq!(refusal, ServerMessage::Refuse(Reason::Name));
+    assert!(client.is_closed(&mut server));
 }
