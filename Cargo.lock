@@ -693,6 +693,7 @@ dependencies = [
  "miniquad",
  "voidwright-core",
  "voidwright-protocol",
+ "voidwright-server",
 ]
 
 [[package]]

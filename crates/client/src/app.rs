@@ -10,7 +10,8 @@ use voidwright_core::Tile;
 use crate::audio::Audio;
 use crate::launch::{Sound, frame};
 use crate::{
-    Controls, FrameStats, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for,
+    Controls, FrameStats, Game, Launch, Renderer, Session, aspect, drag_rotation, to_screen,
+    turn_for,
 };
 
 const SEED: u64 = 1;
@@ -42,12 +43,20 @@ pub struct App {
     benchmark: Option<Benchmark>,
     recording: Option<Recording>,
     audio: Option<Audio>,
+    session: Option<Session>,
 }
 
 impl App {
     #[must_use]
-    pub fn new(mut context: Box<dyn RenderingBackend>, launch: Launch) -> Self {
-        let mut game = Game::new(SEED);
+    pub fn new(
+        mut context: Box<dyn RenderingBackend>,
+        launch: Launch,
+        session: Option<Session>,
+    ) -> Self {
+        let mut game = session.as_ref().map_or_else(
+            || Game::new(SEED),
+            |session| Game::online(session.welcome()),
+        );
         if let Some([yaw, pitch, distance]) = launch.orbit {
             game.camera_mut().set_orbit(yaw, pitch, distance);
         }
@@ -87,6 +96,18 @@ impl App {
                 stats: FrameStats::default(),
             }),
             audio,
+            session,
+        }
+    }
+
+    fn play(&mut self) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        if let Err(failure) = session.play(&mut self.game) {
+            eprintln!("the connection ended: {failure}");
+            self.session = None;
+            window::quit();
         }
     }
 
@@ -141,6 +162,7 @@ impl EventHandler for App {
         self.last_frame = now;
         let turn = self.controls.rotation(delta.as_secs_f32());
         self.game.camera_mut().rotate(turn.x, turn.y);
+        self.play();
         self.game.update(delta);
         if let Some(audio) = &mut self.audio {
             audio.update(&self.game, delta.as_secs_f32());

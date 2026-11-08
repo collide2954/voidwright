@@ -15,5 +15,8 @@ miniquad.workspace = true
 voidwright-core.workspace = true
 voidwright-protocol.workspace = true
 
+[dev-dependencies]
+voidwright-server.workspace = true
+
 [lints]
 workspace = true

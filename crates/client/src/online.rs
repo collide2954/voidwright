@@ -10,8 +10,8 @@ use voidwright_protocol::{
     ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Update, Welcome,
 };
 
-use crate::Stride;
 use crate::motion::Course;
+use crate::{Game, Stride};
 
 const PATIENCE: Duration = Duration::from_secs(5);
 const READS: usize = 64;
@@ -106,6 +106,17 @@ impl Session {
     pub fn walk(&mut self, tile: Tile) -> Result<(), Failure> {
         self.outbox.push(&ClientMessage::Walk(tile))?;
         Ok(())
+    }
+
+    pub fn play(&mut self, game: &mut Game) -> Result<usize, Failure> {
+        for tile in game.take_orders() {
+            self.walk(tile)?;
+        }
+        let updates = self.exchange()?;
+        for update in &updates {
+            game.apply(update);
+        }
+        Ok(updates.len())
     }
 
     pub fn exchange(&mut self) -> Result<Vec<Update>, Failure> {
