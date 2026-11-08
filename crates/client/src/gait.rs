@@ -9,7 +9,8 @@ const WALK_CYCLE: f32 = 1.6;
 const RUN_CYCLE: f32 = 2.4;
 const WALK_DUTY: f32 = 0.59;
 const RUN_DUTY: f32 = 0.35;
-const STANCE_FRONT: f32 = 0.38;
+const WALK_FRONT: f32 = 0.38;
+const RUN_FRONT: f32 = 0.4;
 const WALK_LIFT: f32 = 0.09;
 const RUN_LIFT: f32 = 0.2;
 const WALK_ARC: f32 = 0.5;
@@ -29,7 +30,7 @@ const SPAN: f32 = (THIGH + ANKLE) * 0.9999;
 const WALK_SURGE: f32 = 0.0;
 const RUN_SURGE: f32 = 0.04;
 const BANK_SWAY: f32 = 0.12;
-const RUN_DIP: f32 = 0.06;
+const RUN_DIP: f32 = 0.052;
 const WALK_LOWEST: f32 = 0.05;
 const RUN_LOWEST: f32 = 0.175;
 const WALK_ROLL: f32 = 0.07;
@@ -197,7 +198,7 @@ fn footing(phase: f32, pace: f32) -> Footing {
     let duty = duty(pace);
     let lift = blend(WALK_LIFT, RUN_LIFT);
     let travel = cycle(pace) * duty;
-    let front = travel * STANCE_FRONT;
+    let front = travel * blend(WALK_FRONT, RUN_FRONT);
     let flat = |ahead: f32| Vec2::new(ahead, ANKLE_HEIGHT);
     let moment = phase.rem_euclid(TAU) / TAU;
     if moment < duty {
@@ -322,6 +323,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn running_bends_the_planted_knee_40_to_45_degrees() {
+        let deepest = (0..SAMPLES)
+            .map(|sample| f32::from(sample) / f32::from(SAMPLES))
+            .filter(|&moment| moment < duty(1.0))
+            .map(|moment| pose_at(TAU * moment, WALKING, 1.0, 0.0).knees[0].to_degrees())
+            .fold(0.0, f32::max);
+        assert!((40.0..=45.0).contains(&deepest), "{deepest}");
     }
 
     #[test]
