@@ -1,6 +1,6 @@
 use std::f32::consts::TAU;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 pub const STRIPS: usize = 8;
 pub const CLOTH_BONES: usize = STRIPS * 2;
@@ -118,6 +118,24 @@ impl Cloth {
                 }
             }
         }
+    }
+
+    #[must_use]
+    pub fn skins(&self, placement: Mat4, rest_waist: Mat4, waist: Mat4) -> [Mat4; CLOTH_BONES] {
+        let to_model = placement.inverse();
+        let carry = Quat::from_mat4(&(waist * rest_waist.inverse()));
+        std::array::from_fn(|bone| {
+            let (strip, segment) = (bone / 2, bone % 2);
+            let rest_from = rest_waist.transform_point3(self.rest[strip][segment]);
+            let rest_to = rest_waist.transform_point3(self.rest[strip][segment + 1]);
+            let from = to_model.transform_point3(self.points[strip][segment]);
+            let to = to_model.transform_point3(self.points[strip][segment + 1]);
+            let carried = carry * (rest_to - rest_from).normalize_or_zero();
+            let swing = Quat::from_rotation_arc(carried, (to - from).normalize_or_zero());
+            Mat4::from_translation(from)
+                * Mat4::from_quat(swing * carry)
+                * Mat4::from_translation(-rest_from)
+        })
     }
 
     fn hold_lengths(&mut self, strip: usize) {
@@ -260,6 +278,35 @@ mod tests {
                 assert!(flat > 0.075 || (at.y - hem.y).abs() > 0.3);
             }
         }
+    }
+
+    #[test]
+    fn a_coat_at_rest_skins_nothing() {
+        let mut cloth = Cloth::hanging(COAT);
+        let frame = Mat4::from_translation(Vec3::new(0.0, 0.98, 0.0));
+        cloth.update(frame, &[], FRAME);
+        for matrix in cloth.skins(Mat4::IDENTITY, frame, frame) {
+            assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-4));
+        }
+    }
+
+    #[test]
+    fn a_swung_hem_moves_its_skin_with_it() {
+        let mut cloth = Cloth::hanging(COAT);
+        let frame = Mat4::from_translation(Vec3::new(0.0, 0.98, 0.0));
+        cloth.update(frame, &[], FRAME);
+        cloth.points[0][2] += Vec3::new(0.0, 0.05, 0.25);
+        let skins = cloth.skins(Mat4::IDENTITY, frame, frame);
+        let rest_hem = frame.transform_point3(cloth.rest()[0][2]);
+        let skinned = skins[1].transform_point3(rest_hem);
+        assert!(skinned.z > rest_hem.z + 0.1);
+        let knee = frame.transform_point3(cloth.rest()[0][1]);
+        assert!(
+            skins[1]
+                .transform_point3(knee)
+                .distance(cloth.points()[0][1])
+                < 1e-4
+        );
     }
 
     #[test]
