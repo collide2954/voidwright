@@ -353,6 +353,11 @@ impl Coat {
     pub const fn cloth(&self) -> &Cloth {
         &self.cloth
     }
+
+    #[must_use]
+    pub fn lantern_swing(&self) -> f32 {
+        self.lantern.speed(1)
+    }
 }
 
 #[must_use]
@@ -645,6 +650,23 @@ mod tests {
         let middle = lantern_middle();
         let swung = coat.skins(&pose)[LANTERN_BONE].transform_point3(middle);
         assert!(swung.z > middle.z + 0.005, "{swung} {middle}");
+    }
+
+    #[test]
+    fn the_lantern_swing_rises_when_the_figure_sets_off() {
+        let pose = Pose::default();
+        let mut coat = Coat::new(&pose, Mat4::IDENTITY);
+        for _ in 0..60 {
+            coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
+        }
+        assert!(coat.lantern_swing() < 0.01, "{}", coat.lantern_swing());
+        let mut fastest = 0.0_f32;
+        for frame in 1..=8_u8 {
+            let ahead = Mat4::from_translation(Vec3::NEG_Z * 0.03 * f32::from(frame));
+            coat.update(&pose, ahead, 1.0 / 60.0);
+            fastest = fastest.max(coat.lantern_swing());
+        }
+        assert!(fastest > 0.1, "{fastest}");
     }
 
     fn scarf_end() -> Vec3 {

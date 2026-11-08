@@ -346,6 +346,11 @@ impl<const N: usize> Fabric<N> {
         &self.points
     }
 
+    #[must_use]
+    pub fn speed(&self, index: usize) -> f32 {
+        self.points[index].distance(self.previous[index]) / STEP
+    }
+
     pub fn update(&mut self, frame: Mat4, legs: &[Capsule], seconds: f32) {
         let now = Frame::of(frame);
         if !self.started || self.legs.len() != legs.len() {
@@ -694,6 +699,25 @@ mod tests {
             );
         }
         assert!(strand.points()[3].z > resting + 0.01);
+    }
+
+    #[test]
+    fn the_speed_of_a_point_shows_how_fast_it_swings() {
+        let mut strand = tail();
+        run(&mut strand, Vec3::Y, &[], 120);
+        assert!(strand.speed(3) < 0.01, "{}", strand.speed(3));
+        let mut fastest = 0.0_f32;
+        for frame in 1..=12_u8 {
+            strand.update(
+                waist(Vec3::new(0.0, 1.0, -0.03 * f32::from(frame))),
+                &[],
+                FRAME,
+            );
+            fastest = fastest.max(strand.speed(3));
+        }
+        assert!(fastest > 0.2, "{fastest}");
+        run(&mut strand, Vec3::new(0.0, 1.0, -0.36), &[], 240);
+        assert!(strand.speed(3) < 0.01, "{}", strand.speed(3));
     }
 
     #[test]
