@@ -101,7 +101,7 @@ vec3 pool() {
 }
 void main() {
     vec3 shaded = mix(mix(color * (sunlight() + pool()), TEAL * 2.5, ring()), fog_color, fog);
-    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
+    gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), ring());
 }
 ";
 
@@ -481,6 +481,31 @@ mod tests {
     #[test]
     fn the_marker_glows_like_a_light() {
         assert!(FRAGMENT.contains("mix(color * (sunlight() + pool()), TEAL * 2.5, ring())"));
+    }
+
+    fn ring(world: Vec3, marker: Vec4) -> f32 {
+        let soft = 0.02;
+        let [inner, outer] = [0.26, 0.36].map(|radius| radius * marker.w);
+        let reach = Vec2::new(world.x - marker.x, world.z - marker.z).length();
+        let band = smoothstep(inner - soft, inner + soft, reach)
+            - smoothstep(outer - soft, outer + soft, reach);
+        band * (1.0 - smoothstep(0.25, 0.5, (world.y - marker.y).abs()))
+    }
+
+    #[test]
+    fn only_the_marker_ring_marks_the_alpha_for_the_bloom() {
+        assert!(FRAGMENT.contains("vec4(pow(filmic(shaded), vec3(0.4545)), ring());"));
+        assert!(FRAGMENT.contains("const float SOFT = 0.02;"));
+        let marker = Vec4::new(3.0, 1.0, -2.0, 1.0);
+        assert!(ring(Vec3::new(3.31, 1.0, -2.0), marker) > 0.99);
+        for world in [
+            Vec3::new(3.0, 1.0, -2.0),
+            Vec3::new(9.0, 1.0, 4.0),
+            Vec3::splat(300.0),
+        ] {
+            assert!(ring(world, marker) < 1e-6);
+            assert!(ring(world, Vec4::ZERO).abs() < 1e-6);
+        }
     }
 
     #[test]
