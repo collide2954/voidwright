@@ -1,5 +1,6 @@
 mod camera;
 mod entries;
+mod index;
 pub mod scene;
 pub mod swatch;
 
@@ -10,6 +11,7 @@ use crate::shape::{Material, Surface};
 
 pub use camera::{Camera, FIELD, Focus};
 pub use entries::entries;
+pub use index::index;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Subject {
