@@ -53,7 +53,8 @@ fn weather(mesh: &mut SkinnedMesh) {
         }
     }
     let mean = total / count.max(Vec4::splat(1e-6));
-    for (vertex, swell) in mesh.vertices.iter_mut().zip(swells) {
+    let bends = bends(mesh);
+    for ((vertex, swell), bend) in mesh.vertices.iter_mut().zip(swells).zip(bends) {
         if vertex.params[1] > 0.5 {
             continue;
         }
@@ -64,16 +65,41 @@ fn weather(mesh: &mut SkinnedMesh) {
         let fade = 0.6 * noise3(at * 2.2, 13) + 0.4 * noise3(at * 5.0, 14);
         let sun = 0.55 + 0.45 * vertex.normal[1].max(0.0);
         let bleach = ((fade - 0.5) * 2.2 + 0.5).clamp(0.0, 1.0) * sun * (1.0 - vertex.surface[3]);
+        let edge = smoothstep(25.0, 70.0, bend)
+            * (0.35 + 0.65 * smoothstep(0.3, 0.7, noise3(at * 40.0, 16)));
+        let (scuff, polish) = (edge * vertex.surface[2], edge * vertex.surface[3]);
         let base = Vec3::from(vertex.color) * mottle * tone;
         let grey = Vec3::splat(base.dot(Vec3::new(0.3, 0.59, 0.11)));
         let faded = grey.lerp(base, 0.55) * 1.3;
         let grime = 1.0 - 0.35 * smoothstep(0.6, 0.15, at.y);
         let dusting = 0.45 * smoothstep(0.22, 0.0, at.y);
-        let color = base.lerp(faded, 0.45 * bleach) * grime;
+        let color = base
+            .lerp(faded, 0.45 * bleach)
+            .lerp(grey.lerp(base, 0.6) * 1.7, 0.6 * scuff)
+            .lerp(base * 1.6 + 0.02, 0.6 * polish)
+            * grime;
         vertex.color = color.lerp(dust, dusting).to_array();
-        let gain = 1.15 + 0.5 * (swell - mean);
+        vertex.params[0] = (vertex.params[0] * (1.0 - 0.5 * scuff) + 0.25 * polish).min(1.0);
+        let gain = (1.15 + 0.5 * (swell - mean)) * (1.0 - 0.4 * (scuff + polish));
         vertex.surface = (Vec4::from(vertex.surface) * gain).to_array();
     }
+}
+
+fn bends(mesh: &SkinnedMesh) -> Vec<f32> {
+    let mut sums = vec![Vec2::ZERO; mesh.vertices.len()];
+    for face in mesh.indices.as_chunks::<3>().0 {
+        for (from, to) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+            let [a, b] = [from, to].map(|index| &mesh.vertices[index as usize]);
+            let offset = Vec3::from(b.position) - Vec3::from(a.position);
+            let turn = Vec3::from(b.normal) - Vec3::from(a.normal);
+            if offset.length_squared() > 1e-12 {
+                let bend = Vec2::new(turn.dot(offset) / offset.length_squared(), 1.0);
+                sums[from as usize] += bend;
+                sums[to as usize] += bend;
+            }
+        }
+    }
+    sums.iter().map(|sum| sum.x / sum.y.max(1.0)).collect()
 }
 
 #[derive(Clone, Copy)]
@@ -931,6 +957,7 @@ mod tests {
     use crate::palette::linear;
     use crate::sculpt::{SkinnedMesh, SkinnedVertex};
     use glam::{Mat4, Vec3};
+    use std::f32::consts::{PI, TAU};
     use std::sync::LazyLock;
 
     static FIGURE: LazyLock<SkinnedMesh> = LazyLock::new(voidwright);
@@ -1136,6 +1163,83 @@ mod tests {
         assert!(lowest > 0.6 && highest < 1.2, "{lowest} {highest}");
         assert!(highest / lowest > 1.1, "{lowest} {highest}");
         assert!(change(&warmth, 1) < change(&warmth, 20) * 0.25);
+    }
+
+    fn ball(radius: f32, surface: [f32; 4]) -> SkinnedMesh {
+        let (rings, segments) = (12_u16, 24_u16);
+        let mut vertices = Vec::new();
+        for ring in 0..=rings {
+            let polar = PI * f32::from(ring) / f32::from(rings);
+            for segment in 0..segments {
+                let around = TAU * f32::from(segment) / f32::from(segments);
+                let normal = Vec3::new(
+                    polar.sin() * around.cos(),
+                    polar.cos(),
+                    polar.sin() * around.sin(),
+                );
+                vertices.push(SkinnedVertex {
+                    position: (Vec3::new(0.1, 1.1, -0.1) + normal * radius).to_array(),
+                    normal: normal.to_array(),
+                    color: [0.1, 0.06, 0.04],
+                    params: [0.2, 0.0],
+                    bones: [0.0; 4],
+                    weights: [1.0, 0.0, 0.0, 0.0],
+                    surface,
+                });
+            }
+        }
+        let at = |ring: u16, segment: u16| u32::from(ring * segments + segment % segments);
+        let indices = (0..rings)
+            .flat_map(|ring| (0..segments).map(move |segment| (ring, segment)))
+            .flat_map(|(ring, segment)| {
+                let (here, below) = (ring, ring + 1);
+                [
+                    at(here, segment),
+                    at(below, segment),
+                    at(below, segment + 1),
+                    at(here, segment),
+                    at(below, segment + 1),
+                    at(here, segment + 1),
+                ]
+            })
+            .collect();
+        let mut mesh = SkinnedMesh { vertices, indices };
+        weather(&mut mesh);
+        mesh
+    }
+
+    fn average(mesh: &SkinnedMesh, value: impl Fn(&SkinnedVertex) -> f32) -> f32 {
+        let values: Vec<f32> = mesh.vertices.iter().map(value).collect();
+        mean_of(&values)
+    }
+
+    fn luma(vertex: &SkinnedVertex) -> f32 {
+        Vec3::from(vertex.color).dot(Vec3::new(0.3, 0.59, 0.11))
+    }
+
+    fn gain(vertex: &SkinnedVertex) -> f32 {
+        vertex.surface.iter().sum()
+    }
+
+    #[test]
+    fn weather_scuffs_the_sharp_edges_of_leather_and_metal() {
+        let [cloth, leather, metal] = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let sharp_cloth = ball(0.01, cloth);
+        assert!((average(&sharp_cloth, gain) - 1.15).abs() < 0.01);
+        for kind in [leather, metal] {
+            let (sharp, flat) = (ball(0.01, kind), ball(0.4, kind));
+            assert!(average(&sharp, luma) > average(&sharp_cloth, luma) * 1.1);
+            assert!(average(&sharp, gain) < average(&flat, gain) * 0.95);
+        }
+        let flat_ratio = average(&ball(0.4, leather), luma) / average(&ball(0.4, cloth), luma);
+        assert!((flat_ratio - 1.0).abs() < 0.02, "{flat_ratio}");
+        let shine = |vertex: &SkinnedVertex| vertex.params[0];
+        assert!(average(&ball(0.01, metal), shine) > average(&ball(0.4, metal), shine) + 0.05);
+        assert!(average(&ball(0.01, leather), shine) < average(&ball(0.4, leather), shine) - 0.02);
     }
 
     #[test]
