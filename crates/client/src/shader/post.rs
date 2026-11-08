@@ -1,5 +1,6 @@
 use miniquad::{VertexAttribute, VertexFormat};
 
+pub const LEVELS: usize = 3;
 pub const TRIANGLE: [[f32; 2]; 3] = [[-1.0, -1.0], [3.0, -1.0], [-1.0, 3.0]];
 
 pub const VERTEX: &str = "#version 100
@@ -16,10 +17,37 @@ pub fn attributes() -> [VertexAttribute; 1] {
     [VertexAttribute::new("in_position", VertexFormat::Float2)]
 }
 
+#[must_use]
+pub fn levels(screen: [u32; 2]) -> [[u32; 2]; LEVELS] {
+    let mut size = screen.map(|side| side.div_ceil(4).max(1));
+    std::array::from_fn(|_| {
+        let level = size;
+        size = size.map(|side| side.div_ceil(2));
+        level
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TRIANGLE, VERTEX, attributes};
+    use super::{TRIANGLE, VERTEX, attributes, levels};
     use glam::Vec2;
+
+    #[test]
+    fn the_bloom_starts_at_a_quarter_of_the_screen_and_halves() {
+        assert_eq!(levels([1920, 1080]), [[480, 270], [240, 135], [120, 68]]);
+        assert_eq!(levels([1280, 720]), [[320, 180], [160, 90], [80, 45]]);
+    }
+
+    #[test]
+    fn odd_screens_round_the_levels_up() {
+        assert_eq!(levels([1366, 767]), [[342, 192], [171, 96], [86, 48]]);
+    }
+
+    #[test]
+    fn a_tiny_screen_keeps_one_texel_in_each_level() {
+        assert_eq!(levels([3, 1]), [[1, 1]; 3]);
+        assert_eq!(levels([0, 0]), [[1, 1]; 3]);
+    }
 
     fn inside(point: Vec2) -> bool {
         let [a, b, c] = TRIANGLE.map(Vec2::from);
