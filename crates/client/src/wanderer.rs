@@ -21,6 +21,7 @@ const BRACER: [Vec3; 2] = [Vec3::new(0.048, 0.0, 0.048), Vec3::new(0.036, -0.09,
 const SHELL: f32 = 0.022;
 const SASH_RADIUS: f32 = 0.009;
 const SASH_STEPS: u16 = 36;
+const KNUCKLES: [f32; 4] = [-0.0305, -0.0102, 0.0102, 0.0295];
 const BAND: f32 = 0.008;
 const STRAP: [Vec3; 3] = {
     let reach = SHELL / 2.0 + 0.002 + BAND / 2.0;
@@ -669,52 +670,84 @@ fn hand(side: Side) -> Sculpt {
     let mut clay = clay();
     let (hand, fingers) = (side.hand(), side.fingers());
     let inward = -side.sign();
+    let glove =
+        |form: Form, at: Vec3, blend: f32| stroke(hand, form, LEATHER).at(at).blended(blend);
     clay.add(
-        stroke(hand, limb(0.04, 0.029, 0.026), LEATHER)
+        stroke(hand, limb(0.036, 0.027, 0.024), LEATHER)
             .at(Vec3::new(0.0, 0.02, 0.0))
-            .squashed(Vec3::new(0.72, 1.0, 1.0)),
+            .squashed(Vec3::new(0.75, 1.0, 1.0)),
     );
-    clay.add(
-        stroke(hand, egg(0.017, 0.035, 0.034), LEATHER)
-            .at(Vec3::new(0.0, -0.03, -0.002))
-            .blended(0.012),
-    );
-    clay.add(
-        stroke(hand, block(0.014, 0.03, 0.042, 0.012), LEATHER)
-            .at(Vec3::new(0.0, -0.06, -0.002))
-            .blended(0.012),
-    );
-    clay.add(
-        stroke(hand, egg(0.014, 0.026, 0.016), LEATHER)
-            .at(Vec3::new(inward * 0.008, -0.035, -0.024))
-            .blended(0.01),
-    );
-    let base = Vec3::new(inward * 0.006, -0.03, -0.03);
-    let knuckle = base + Vec3::new(inward * 0.3, -0.88, -0.35).normalize() * 0.04;
-    clay.add(segment(hand, base, knuckle, 0.012, LEATHER).blended(0.006));
-    let tip = knuckle + Vec3::new(inward * 0.35, -0.93, 0.05).normalize() * 0.03;
-    clay.add(segment(hand, knuckle, tip, 0.0105, LEATHER).blended(0.003));
-    for (across, reach, bend) in [
-        (-0.029, 0.86_f32, 0.35_f32),
-        (-0.0095, 1.0, 0.42),
-        (0.0095, 0.94, 0.5),
-        (0.028, 0.74, 0.58),
+    for (form, at, blend) in [
+        (
+            egg(0.0115, 0.032, 0.03),
+            Vec3::new(0.0, -0.022, -0.002),
+            0.012,
+        ),
+        (
+            egg(0.012, 0.03, 0.041),
+            Vec3::new(0.0, -0.062, -0.001),
+            0.014,
+        ),
+        (
+            egg(0.012, 0.027, 0.017),
+            Vec3::new(inward * 0.008, -0.034, -0.021),
+            0.01,
+        ),
+        (
+            egg(0.009, 0.026, 0.012),
+            Vec3::new(inward * 0.006, -0.04, 0.02),
+            0.01,
+        ),
+        (
+            egg(0.008, 0.011, 0.035),
+            Vec3::new(inward * 0.006, -0.082, 0.0),
+            0.008,
+        ),
     ] {
-        let radius = 0.0095 * reach.sqrt();
-        let length = FINGER * reach - radius;
-        let (mut at, mut heading) = (Vec3::new(0.0, 0.004, across), 0.0_f32);
+        clay.add(glove(form, at, blend));
+    }
+    for across in KNUCKLES {
+        clay.add(glove(
+            ball(0.0078),
+            Vec3::new(-inward * 0.006, -0.086, across),
+            0.006,
+        ));
+    }
+    let root = Vec3::new(inward * 0.004, -0.016, -0.022);
+    let base = Vec3::new(inward * 0.007, -0.034, -0.033);
+    let knuckle = base + Vec3::new(inward * 0.3, -0.88, -0.35).normalize() * 0.036;
+    let tip = knuckle + Vec3::new(inward * 0.35, -0.93, 0.05).normalize() * 0.028;
+    clay.add(tapered(hand, [root, base], [0.012, 0.0115]).blended(0.008));
+    clay.add(tapered(hand, [base, knuckle], [0.0112, 0.01]).blended(0.004));
+    clay.add(tapered(hand, [knuckle, tip], [0.0098, 0.0078]).blended(0.003));
+    for (across, reach, bend) in [
+        (KNUCKLES[0], 0.86_f32, 0.35_f32),
+        (KNUCKLES[1], 1.0, 0.42),
+        (KNUCKLES[2], 0.94, 0.5),
+        (KNUCKLES[3], 0.74, 0.58),
+    ] {
+        let radius = 0.0086 * reach.sqrt();
+        let length = FINGER * reach - radius * 0.8;
+        let (mut at, mut heading, mut width) = (Vec3::new(0.0, 0.004, across), 0.0_f32, radius);
         for (share, flex, taper) in [
-            (0.45, 0.0, 1.0),
-            (0.3, bend, 0.95),
-            (0.25, bend * 0.6, 0.88),
+            (0.45, 0.0, 0.94),
+            (0.3, bend, 0.86),
+            (0.25, bend * 0.6, 0.74),
         ] {
             heading += flex;
-            let next = at + Vec3::new(inward * heading.sin(), -heading.cos(), 0.0) * length * share;
-            clay.add(segment(fingers, at, next, radius * taper, LEATHER).blended(0.003));
-            at = next;
+            let toward = Vec3::new(inward * heading.sin(), -heading.cos(), across * 0.5);
+            let next = at + toward.normalize() * length * share;
+            clay.add(tapered(fingers, [at, next], [width, radius * taper]).blended(0.002));
+            (at, width) = (next, radius * taper);
         }
     }
     clay
+}
+
+fn tapered(bone: Bone, [from, to]: [Vec3; 2], [start, end]: [f32; 2]) -> Stroke {
+    stroke(bone, limb(from.distance(to), start, end), LEATHER)
+        .at(from)
+        .turned(toward(to - from))
 }
 
 fn coat(clay: &mut Sculpt) {
@@ -1899,6 +1932,41 @@ mod tests {
                 .collect();
             let curl = tips.iter().sum::<f32>() / f32::from(u16::try_from(tips.len()).unwrap());
             assert!(curl > 0.02, "{curl}");
+        }
+    }
+
+    #[test]
+    fn the_gloved_fingers_stand_apart() {
+        for side in super::Side::BOTH {
+            let frame = crate::figure::rest()[side.fingers().index()];
+            let hand = super::hand(side);
+            let mut runs = 0;
+            let mut inside = false;
+            for step in 0..240_u16 {
+                let across = f32::from(step) * 0.0005 - 0.06;
+                let point = frame.transform_point3(Vec3::new(0.0, -0.025, across));
+                let now = hand.distance(point) < 0.0;
+                if now && !inside {
+                    runs += 1;
+                }
+                inside = now;
+            }
+            assert_eq!(runs, 4);
+        }
+    }
+
+    #[test]
+    fn the_back_of_the_hand_is_slim_and_rounded() {
+        for side in super::Side::BOTH {
+            let frame = crate::figure::rest()[side.hand().index()];
+            let hand = super::hand(side);
+            let thickness = |across: f32| {
+                let from = frame.transform_point3(Vec3::new(-0.04, -0.062, across));
+                extent(&hand, from, frame.transform_vector3(Vec3::X) * 0.0005)
+            };
+            let middle = thickness(0.0);
+            assert!(middle < 0.027, "{middle}");
+            assert!(thickness(0.03) < middle * 0.75, "{}", thickness(0.03));
         }
     }
 
