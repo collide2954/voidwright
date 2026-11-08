@@ -74,7 +74,7 @@ const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
 const float BEND = 0.12;
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
-const vec4 STRENGTH = vec4(0.55, 0.75, 0.6, 0.85);
+const vec4 STRENGTH = vec4(0.48, 0.65, 0.52, 0.74);
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -403,6 +403,29 @@ mod tests {
         let widest = shifts.iter().copied().fold(0.0, f32::max);
         let mean = shifts.iter().sum::<f32>() / 400.0;
         assert!(widest > 0.15 && mean > 0.05, "{widest} {mean}");
+    }
+
+    fn constant(name: &str) -> Vec4 {
+        let head = format!("const vec4 {name} = vec4(");
+        let start = FRAGMENT.find(&head).expect("the constant is declared") + head.len();
+        let values: Vec<f32> = FRAGMENT[start..]
+            .split(')')
+            .next()
+            .expect("the vector closes")
+            .split(", ")
+            .map(|value| value.parse().expect("a number"))
+            .collect();
+        Vec4::from_slice(&values)
+    }
+
+    #[test]
+    fn the_strength_divides_out_the_mean_weather_gain() {
+        let middle = Vec4::new(0.55, 0.75, 0.6, 0.85);
+        let strength = constant("STRENGTH");
+        assert!(
+            (strength * 1.15 - middle).abs().max_element() < 0.01,
+            "{strength}"
+        );
     }
 
     #[test]

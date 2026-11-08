@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_2;
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Quat, Vec2, Vec3, Vec4};
 
 use crate::cloth::Cloth;
 use crate::figure::{
@@ -36,7 +36,24 @@ const DUST: Vec3 = Vec3::new(0.42, 0.36, 0.28);
 
 fn weather(mesh: &mut SkinnedMesh) {
     let dust = linear(DUST);
-    for vertex in &mut mesh.vertices {
+    let swells: Vec<f32> = mesh
+        .vertices
+        .iter()
+        .map(|vertex| {
+            let at = Vec3::from(vertex.position);
+            let swell = 0.55 * noise3(at * 4.5, 11) + 0.45 * noise3(at * 10.0, 12);
+            ((swell - 0.5) * 2.2 + 0.5).clamp(0.0, 1.0)
+        })
+        .collect();
+    let (mut total, mut count) = (Vec4::ZERO, Vec4::ZERO);
+    for (vertex, swell) in mesh.vertices.iter().zip(&swells) {
+        if vertex.params[1] <= 0.5 {
+            total += Vec4::from(vertex.surface) * *swell;
+            count += Vec4::from(vertex.surface);
+        }
+    }
+    let mean = total / count.max(Vec4::splat(1e-6));
+    for (vertex, swell) in mesh.vertices.iter_mut().zip(swells) {
         if vertex.params[1] > 0.5 {
             continue;
         }
@@ -46,6 +63,8 @@ fn weather(mesh: &mut SkinnedMesh) {
         let dusting = 0.45 * smoothstep(0.22, 0.0, at.y);
         let color = Vec3::from(vertex.color) * mottle * grime;
         vertex.color = color.lerp(dust, dusting).to_array();
+        let gain = 1.15 + 0.5 * (swell - mean);
+        vertex.surface = (Vec4::from(vertex.surface) * gain).to_array();
     }
 }
 
@@ -1002,6 +1021,86 @@ mod tests {
         let before = mesh.clone();
         weather(&mut mesh);
         assert_eq!(mesh, before);
+    }
+
+    const SIDE: u16 = 60;
+    const SPACING: f32 = 0.02;
+
+    fn sheet(surface: [f32; 4], normal: [f32; 3], depth: f32) -> SkinnedMesh {
+        let vertices = (0..SIDE * SIDE)
+            .map(|index| SkinnedVertex {
+                position: [
+                    f32::from(index % SIDE) * SPACING - 0.6,
+                    f32::from(index / SIDE) * SPACING + 0.8,
+                    depth,
+                ],
+                normal,
+                color: [0.1, 0.1, 0.1],
+                params: [0.3, 0.0],
+                bones: [0.0; 4],
+                weights: [1.0, 0.0, 0.0, 0.0],
+                surface,
+            })
+            .collect();
+        SkinnedMesh {
+            vertices,
+            indices: Vec::new(),
+        }
+    }
+
+    fn change(values: &[f32], step: u16) -> f32 {
+        let side = usize::from(SIDE);
+        let step = usize::from(step);
+        let pairs: Vec<f32> = (0..values.len())
+            .filter(|index| index % side + step < side)
+            .map(|index| (values[index + step] - values[index]).abs())
+            .collect();
+        pairs.iter().sum::<f32>() / f32::from(u16::try_from(pairs.len()).unwrap())
+    }
+
+    fn mean_of(values: &[f32]) -> f32 {
+        values.iter().sum::<f32>() / f32::from(u16::try_from(values.len()).unwrap())
+    }
+
+    #[test]
+    fn weather_varies_the_detail_gain_slowly_around_a_known_mean() {
+        for depth in [-0.15, 1.1, 2.3] {
+            let mut mesh = sheet([1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0], depth);
+            weather(&mut mesh);
+            assert!(
+                mesh.vertices
+                    .iter()
+                    .all(|vertex| vertex.surface[1..] == [0.0; 3])
+            );
+            let gains: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .map(|vertex| vertex.surface[0])
+                .collect();
+            let lowest = gains.iter().copied().fold(f32::INFINITY, f32::min);
+            let highest = gains.iter().copied().fold(0.0, f32::max);
+            assert!(lowest > 0.8 && highest < 1.5, "{lowest} {highest}");
+            assert!(highest - lowest > 0.35, "{lowest} {highest}");
+            assert!((mean_of(&gains) - 1.15).abs() < 0.01);
+            assert!(change(&gains, 1) < change(&gains, 20) * 0.2);
+        }
+    }
+
+    #[test]
+    fn weather_keeps_the_mean_gain_of_each_surface_kind() {
+        let mut mesh = sheet([1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0], -0.15);
+        let scarf = sheet([0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0], 0.6);
+        mesh.vertices.extend(scarf.vertices.into_iter().take(300));
+        weather(&mut mesh);
+        for kind in [0, 1] {
+            let gains: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .map(|vertex| vertex.surface[kind])
+                .filter(|gain| *gain > 0.0)
+                .collect();
+            assert!((mean_of(&gains) - 1.15).abs() < 0.01, "{kind}");
+        }
     }
 
     #[test]
