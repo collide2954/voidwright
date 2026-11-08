@@ -36,6 +36,10 @@ const DRIFT: [f32; 2] = [7.0, 14.0];
 const DRIFT_CENTS: f32 = 2.5;
 const PAD_CUTOFF: f32 = 850.0;
 const PAD_FADES: [f32; 2] = [10.0, 12.0];
+const PAD_OPEN: f32 = 0.3;
+const SWELL: f32 = 0.35;
+const SWELL_FADES: [f32; 2] = [3.0, 6.0];
+const SWELL_HOLD: f32 = 12.0;
 
 // D dorian from D4 to D6.
 const SCALE: [u8; 15] = [62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86];
@@ -89,7 +93,7 @@ impl Music {
         while start < out.len() {
             if self.countdown == 0 {
                 self.motif.control(self.time);
-                self.bed.control(self.time);
+                self.bed.control(self.motif.swelling(), self.time);
                 self.countdown = usize::from(CONTROL);
             }
             let end = out.len().min(start + self.countdown);
@@ -141,7 +145,7 @@ impl Bed {
         }
     }
 
-    fn control(&mut self, time: Time) {
+    fn control(&mut self, swelling: bool, time: Time) {
         self.until -= f64::from(time.step);
         if self.until <= 0.0 {
             self.playing = !self.playing;
@@ -152,6 +156,7 @@ impl Bed {
             .control(self.playing || self.pad.fade.level > 0.5, time);
         self.pad.control(
             self.playing && self.drone.fade.level > 0.5,
+            swelling,
             &mut self.dice,
             time,
         );
@@ -221,6 +226,7 @@ struct Pad {
     voices: [Voice; 4],
     filters: [Svf; 2],
     fade: Fade,
+    swell: Fade,
     chord: usize,
     until: f64,
 }
@@ -265,12 +271,13 @@ impl Pad {
             }),
             filters: [Svf::new(PAD_CUTOFF, FILTER_Q, time.rate); 2],
             fade: Fade::new(PAD_FADES, time),
+            swell: Fade::new(SWELL_FADES, time),
             chord: 0,
             until: f64::from(dice.within(CHORD_SECONDS)),
         }
     }
 
-    fn control(&mut self, on: bool, dice: &mut Dice, time: Time) {
+    fn control(&mut self, on: bool, swelling: bool, dice: &mut Dice, time: Time) {
         if on {
             self.until -= f64::from(time.step);
         }
@@ -282,9 +289,14 @@ impl Pad {
                 voice.wait = dice.within([0.0, STAGGER]);
             }
         }
-        let level = VOICE_LEVEL * self.fade.toward(on);
+        let swell = self.swell.toward(swelling);
+        let level = VOICE_LEVEL * (self.fade.toward(on) + SWELL * swell);
         for voice in &mut self.voices {
             voice.control(level, time);
+        }
+        let cutoff = PAD_CUTOFF * (1.0 + PAD_OPEN * swell);
+        for filter in &mut self.filters {
+            filter.set(cutoff, FILTER_Q, time.rate);
         }
     }
 
@@ -410,6 +422,10 @@ impl Motif {
             string.control(master, time);
         }
         self.active = self.age < MOTIF_FADE[1] || !self.strings.iter().all(Pluck::silent);
+    }
+
+    fn swelling(&self) -> bool {
+        self.active && self.age < SWELL_HOLD
     }
 
     fn render(&mut self, out: &mut [Frame]) {
@@ -774,25 +790,56 @@ mod tests {
         assert!(after < 1e-6, "{after}");
     }
 
-    #[test]
-    fn a_discovery_plays_even_while_the_bed_rests() {
-        let mut music = Music::new(6, RATE);
-        take(&mut music, 30);
+    fn until_rest(music: &mut Music) -> bool {
+        take(music, 30);
         let mut quiet = 0;
         for _ in 0..600 {
-            quiet = if peak(&take(&mut music, 1)) < 1e-5 {
+            quiet = if peak(&take(music, 1)) < 1e-5 {
                 quiet + 1
             } else {
                 0
             };
             if quiet == 3 {
-                break;
+                return true;
             }
         }
-        assert_eq!(quiet, 3);
+        false
+    }
+
+    fn pad(frames: &[Frame]) -> f64 {
+        [53, 55, 59, 60]
+            .into_iter()
+            .map(|note| strength(frames, note))
+            .sum()
+    }
+
+    #[test]
+    fn a_discovery_plays_even_while_the_bed_rests() {
+        let mut music = Music::new(6, RATE);
+        assert!(until_rest(&mut music));
         music.discover();
         let loudest = peak(&take(&mut music, 2));
         assert!(loudest > 0.05, "{loudest}");
+    }
+
+    #[test]
+    fn a_discovery_swells_the_pad_a_little_even_during_a_rest() {
+        let mut with = Music::new(6, RATE);
+        let mut without = Music::new(6, RATE);
+        take(&mut with, 30);
+        take(&mut without, 30);
+        with.discover();
+        take(&mut with, 4);
+        take(&mut without, 4);
+        let steady = pad(&take(&mut without, 2));
+        let rise = pad(&take(&mut with, 2)) / steady;
+        assert!((1.12..2.0).contains(&rise), "{rise}");
+        let mut resting = Music::new(6, RATE);
+        assert!(until_rest(&mut resting));
+        resting.discover();
+        take(&mut resting, 4);
+        let soft = pad(&take(&mut resting, 2)) / steady;
+        assert!((0.1..0.6).contains(&soft), "{soft}");
     }
 
     #[test]
