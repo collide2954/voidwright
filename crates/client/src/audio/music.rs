@@ -1,7 +1,7 @@
 use std::array::from_fn;
 use std::f32::consts::FRAC_PI_4;
 
-use super::dsp::{Frame, Noise, OnePole, Phase, Svf, decay, sine};
+use super::dsp::{Frame, Phase, Svf, sine};
 use crate::spline::smoothstep;
 
 const CONTROL: u16 = 32;
@@ -17,77 +17,35 @@ const DRONE_CUTOFF: f32 = 300.0;
 const DRONE_FADES: [f32; 2] = [6.0, 14.0];
 
 const CHORDS: [[u8; 4]; 4] = [
-    // F3 A3 C4 E4: D minor 9 over the drone.
-    [53, 57, 60, 64],
-    // G3 B3 D4 E4: G 6, the bright chord of the dorian mode.
-    [55, 59, 62, 64],
-    // G3 C4 D4 E4: C with an added 9.
-    [55, 60, 62, 64],
-    // A3 C4 E4 G4: A minor 7.
-    [57, 60, 64, 67],
+    // F2 A2 C3 E3: D minor 9, low and close over the drone.
+    [41, 45, 48, 52],
+    // G2 B-flat2 D3 E3: G minor 6, the dark chord of the aeolian mode.
+    [43, 46, 50, 52],
+    // G2 C3 D3 E3: C with an added 9.
+    [43, 48, 50, 52],
+    // A2 C3 E3 G3: A minor 7.
+    [45, 48, 52, 55],
 ];
-const CHORD_SECONDS: [f32; 2] = [8.0, 16.0];
+const CHORD_SECONDS: [f32; 2] = [16.0, 28.0];
 const STAGGER: f32 = 2.5;
 const VOICE_FADES: [f32; 2] = [2.6, 1.8];
-const VOICE_LEVEL: f32 = 0.022;
+const VOICE_LEVEL: f32 = 0.016;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
 const DETUNE: [f32; 2] = [2.0, 6.0];
 const DRIFT: [f32; 2] = [7.0, 14.0];
 const DRIFT_CENTS: f32 = 2.5;
-const PAD_CUTOFF: f32 = 850.0;
+const PAD_CUTOFF: f32 = 300.0;
 const PAD_FADES: [f32; 2] = [10.0, 12.0];
 const PAD_OPEN: f32 = 0.3;
 const SWELL: f32 = 0.35;
 const SWELL_FADES: [f32; 2] = [3.0, 6.0];
 const SWELL_HOLD: f32 = 12.0;
 
-// D dorian from D4 to D6.
-const SCALE: [u8; 15] = [62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86];
-// The steps of the scale on D and A, where a phrase can end.
-const HOMES: [usize; 5] = [0, 4, 7, 11, 14];
-const STEPS: [isize; 6] = [-2, -1, -1, 1, 1, 2];
-const BEAT: f32 = 0.3;
-const PAUSE: f32 = 1.8;
-const REPEAT_SPAN: f32 = 6.0;
-const ECHO: f32 = 0.6;
-const MOTIF_FADE: [f32; 2] = [16.0, 20.0];
-
-const PLUCKED: Style = Style {
-    range: [4, 14],
-    starts: &[4, 7, 9, 11],
-    beats: &[2, 2, 3, 3, 4],
-    level: 0.13,
-};
-const BOWED: Style = Style {
-    range: [2, 11],
-    starts: &[4, 7, 9],
-    beats: &[4, 5, 6, 8],
-    level: 0.062,
-};
-
-const PLUCK_RING: f32 = 2.6;
-const PLUCK_LIFE: f32 = 3.5;
-const PLUCK_END: f32 = 0.3;
-const PLUCK_POINT: f32 = 0.27;
-const PLUCK_NOISE: f32 = 0.3;
-const PLUCK_TONE: f32 = 3_000.0;
-const PLUCK_PANS: [f32; 2] = [-0.25, 0.3];
-const LINE: u16 = 1_024;
-
-const BOW_FADES: [f32; 2] = [0.45, 1.1];
-const BOW_HOLD: f32 = 0.85;
-const BOW_TONE: f32 = 4.0;
-const BOW_Q: f32 = 0.9;
-const BOW_PANS: [f32; 2] = [-0.15, 0.2];
-const VIBRATO: f32 = 0.0045;
-const VIBRATO_RATE: f32 = 5.0;
-const VIBRATO_ONSET: f32 = 0.8;
-
 pub struct Music {
     time: Time,
     countdown: usize,
     bed: Bed,
-    motif: Motif,
+    swell: Option<f32>,
 }
 
 impl Music {
@@ -98,25 +56,27 @@ impl Music {
             time,
             countdown: 0,
             bed: Bed::new(seed, time),
-            motif: Motif::new(seed, time),
+            swell: None,
         }
     }
 
     pub fn discover(&mut self) {
-        self.motif.start();
+        self.swell.get_or_insert(0.0);
     }
 
     pub fn render(&mut self, out: &mut [Frame]) {
         let mut start = 0;
         while start < out.len() {
             if self.countdown == 0 {
-                self.motif.control(self.time);
-                self.bed.control(self.motif.swelling(), self.time);
+                self.swell = self
+                    .swell
+                    .map(|age| age + self.time.step)
+                    .filter(|&age| age < SWELL_HOLD);
+                self.bed.control(self.swell.is_some(), self.time);
                 self.countdown = usize::from(CONTROL);
             }
             let end = out.len().min(start + self.countdown);
             self.bed.render(&mut out[start..end]);
-            self.motif.render(&mut out[start..end]);
             self.countdown -= end - start;
             start = end;
         }
@@ -354,297 +314,6 @@ impl Voice {
     }
 }
 
-struct Style {
-    range: [usize; 2],
-    starts: &'static [usize],
-    beats: &'static [u8],
-    level: f32,
-}
-
-struct Motif {
-    dice: Dice,
-    noise: Noise,
-    strings: [Pluck; 2],
-    bows: [Bow; 2],
-    plucked: bool,
-    degrees: [usize; 7],
-    gaps: [f32; 7],
-    length: usize,
-    notes: usize,
-    played: usize,
-    wait: f32,
-    age: f32,
-    active: bool,
-}
-
-impl Motif {
-    fn new(seed: u32, time: Time) -> Self {
-        Self {
-            dice: Dice::new(seed ^ 0x6D6F_7466),
-            noise: Noise::new(seed),
-            strings: PLUCK_PANS.map(Pluck::new),
-            bows: BOW_PANS.map(|position| Bow::new(position, time)),
-            plucked: true,
-            degrees: [0; 7],
-            gaps: [0.0; 7],
-            length: 0,
-            notes: 0,
-            played: 0,
-            wait: 0.0,
-            age: 0.0,
-            active: false,
-        }
-    }
-
-    const fn style(&self) -> &'static Style {
-        if self.plucked { &PLUCKED } else { &BOWED }
-    }
-
-    fn start(&mut self) {
-        if self.active {
-            return;
-        }
-        self.plucked = self.dice.pick(2) == 0;
-        let style = self.style();
-        self.length = 4 + self.dice.pick(4);
-        let mut degree = style.starts[self.dice.pick(style.starts.len())];
-        for (slot, gap) in self
-            .degrees
-            .iter_mut()
-            .zip(&mut self.gaps)
-            .take(self.length)
-        {
-            *slot = degree;
-            *gap = BEAT * f32::from(style.beats[self.dice.pick(style.beats.len())]);
-            let step = STEPS[self.dice.pick(STEPS.len())];
-            degree = degree
-                .saturating_add_signed(step)
-                .clamp(style.range[0], style.range[1]);
-        }
-        let last = self.length - 1;
-        self.degrees[last] = home(self.degrees[last], style.range);
-        self.gaps[last] = PAUSE;
-        let span: f32 = self.gaps[..last].iter().sum();
-        let passes = if span <= REPEAT_SPAN && self.dice.pick(2) == 0 {
-            2
-        } else {
-            1
-        };
-        self.notes = self.length * passes;
-        self.played = 0;
-        self.wait = 0.0;
-        self.age = 0.0;
-        self.active = true;
-    }
-
-    fn control(&mut self, time: Time) {
-        if !self.active {
-            return;
-        }
-        self.age += time.step;
-        self.wait -= time.step;
-        if self.wait <= 0.0 && self.played < self.notes {
-            let slot = self.played % self.length;
-            let echo = if self.played < self.length { 1.0 } else { ECHO };
-            let level = self.style().level * echo * (0.85 + 0.15 * self.dice.unit());
-            let frequency = hertz(SCALE[self.degrees[slot]]);
-            let voice = self.played % 2;
-            if self.plucked {
-                self.strings[voice].pluck(frequency, level, &mut self.noise, time.rate);
-            } else {
-                self.bows[voice].bow(frequency, level, BOW_HOLD * self.gaps[slot]);
-            }
-            self.wait += self.gaps[slot];
-            self.played += 1;
-        }
-        let master = 1.0 - smoothstep(MOTIF_FADE[0], MOTIF_FADE[1], self.age);
-        for string in &mut self.strings {
-            string.control(master, time);
-        }
-        for bow in &mut self.bows {
-            bow.control(master, time);
-        }
-        let silent = self.strings.iter().all(Pluck::silent) && self.bows.iter().all(Bow::silent);
-        self.active = self.age < MOTIF_FADE[1] || !silent;
-    }
-
-    fn swelling(&self) -> bool {
-        self.active && self.age < SWELL_HOLD
-    }
-
-    fn render(&mut self, out: &mut [Frame]) {
-        if self.active {
-            for string in &mut self.strings {
-                string.render(out);
-            }
-            for bow in &mut self.bows {
-                bow.render(out);
-            }
-        }
-    }
-}
-
-struct Bow {
-    saw: Saw,
-    tone: Svf,
-    gain: Ramp,
-    fade: Fade,
-    vibrato: Phase,
-    pitch: f32,
-    level: f32,
-    hold: f32,
-    age: f32,
-    pan: [f32; 2],
-}
-
-impl Bow {
-    fn new(position: f32, time: Time) -> Self {
-        Self {
-            saw: Saw::default(),
-            tone: Svf::default(),
-            gain: Ramp::default(),
-            fade: Fade::new(BOW_FADES, time),
-            vibrato: Phase::default(),
-            pitch: 0.0,
-            level: 0.0,
-            hold: 0.0,
-            age: 0.0,
-            pan: pan(position),
-        }
-    }
-
-    const fn bow(&mut self, frequency: f32, level: f32, hold: f32) {
-        self.pitch = frequency;
-        self.level = level;
-        self.hold = hold;
-        self.age = 0.0;
-    }
-
-    fn control(&mut self, master: f32, time: Time) {
-        self.age += time.step;
-        self.hold -= time.step;
-        let shape = self.fade.toward(self.hold > 0.0);
-        let depth = VIBRATO * smoothstep(0.0, VIBRATO_ONSET, self.age);
-        let swing = depth * sine(self.vibrato.advance(VIBRATO_RATE, time.control));
-        self.saw.tune(self.pitch * (1.0 + swing), time.rate);
-        self.tone.set(self.pitch * BOW_TONE, BOW_Q, time.rate);
-        self.gain.aim(master * self.level * shape);
-    }
-
-    fn silent(&self) -> bool {
-        self.gain.silent()
-    }
-
-    fn render(&mut self, out: &mut [Frame]) {
-        if self.gain.silent() {
-            return;
-        }
-        for frame in out {
-            let sound = self.tone.process(self.saw.next()).low * self.gain.next();
-            frame[0] += sound * self.pan[0];
-            frame[1] += sound * self.pan[1];
-        }
-    }
-}
-
-struct Pluck {
-    line: Box<[f32]>,
-    length: usize,
-    index: usize,
-    last: f32,
-    tuning: f32,
-    held: [f32; 2],
-    loss: f32,
-    life: f32,
-    gain: Ramp,
-    pan: [f32; 2],
-}
-
-impl Pluck {
-    fn new(position: f32) -> Self {
-        Self {
-            line: vec![0.0; usize::from(LINE)].into_boxed_slice(),
-            length: 2,
-            index: 0,
-            last: 0.0,
-            tuning: 0.0,
-            held: [0.0; 2],
-            loss: 0.0,
-            life: 0.0,
-            gain: Ramp::default(),
-            pan: pan(position),
-        }
-    }
-
-    fn pluck(&mut self, frequency: f32, level: f32, noise: &mut Noise, rate: f32) {
-        let period = rate / frequency;
-        let whole = whole(period - 0.6).clamp(2, LINE - 1);
-        // The mean of two frames delays the loop by half a frame.
-        // The all-pass gives the remaining fraction of the period.
-        let fraction = period - 0.5 - f32::from(whole);
-        self.tuning = (1.0 - fraction) / (1.0 + fraction);
-        self.loss = decay(PLUCK_RING, frequency);
-        self.length = usize::from(whole);
-        let line = &mut self.line[..self.length];
-        let span = f32::from(whole);
-        let apex = PLUCK_POINT * span;
-        let mut tone = OnePole::low(PLUCK_TONE, rate);
-        let mut position = 0.0;
-        for slot in line.iter_mut() {
-            let shape = if position < apex {
-                position / apex
-            } else {
-                (span - position) / (span - apex)
-            };
-            *slot = shape + PLUCK_NOISE * tone.process(noise.sample());
-            position += 1.0;
-        }
-        let mean = line.iter().sum::<f32>() / span;
-        let loudest = line
-            .iter()
-            .fold(0.0_f32, |loudest, value| loudest.max((value - mean).abs()));
-        let scale = level / loudest.max(1e-6);
-        for slot in line.iter_mut() {
-            *slot = (*slot - mean) * scale;
-        }
-        self.index = 0;
-        self.last = 0.0;
-        self.held = [0.0; 2];
-        self.life = PLUCK_LIFE;
-    }
-
-    fn control(&mut self, master: f32, time: Time) {
-        self.life = (self.life - time.step).max(0.0);
-        self.gain.aim(master * (self.life / PLUCK_END).min(1.0));
-    }
-
-    fn silent(&self) -> bool {
-        self.gain.silent()
-    }
-
-    fn render(&mut self, out: &mut [Frame]) {
-        if self.gain.silent() {
-            return;
-        }
-        for frame in out {
-            let old = self.line[self.index];
-            let averaged = old.midpoint(self.last);
-            self.last = old;
-            let [input, output] = self.held;
-            let tuned = self.tuning * (averaged - output) + input;
-            self.held = [averaged, tuned];
-            self.line[self.index] = tuned * self.loss;
-            self.index += 1;
-            if self.index == self.length {
-                self.index = 0;
-            }
-            let sound = old * self.gain.next();
-            frame[0] += sound * self.pan[0];
-            frame[1] += sound * self.pan[1];
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 struct Saw {
     phase: f32,
@@ -757,29 +426,6 @@ impl Dice {
     fn within(&mut self, [low, high]: [f32; 2]) -> f32 {
         low + (high - low) * self.unit()
     }
-
-    fn pick(&mut self, count: usize) -> usize {
-        usize::try_from(self.roll()).unwrap_or(0) % count
-    }
-}
-
-fn whole(value: f32) -> u16 {
-    (0..16).rev().fold(0, |whole, bit| {
-        let next = whole | (1 << bit);
-        if f32::from(next) <= value {
-            next
-        } else {
-            whole
-        }
-    })
-}
-
-fn home(degree: usize, [low, high]: [usize; 2]) -> usize {
-    HOMES
-        .into_iter()
-        .filter(|home| (low..=high).contains(home))
-        .min_by_key(|home| home.abs_diff(degree))
-        .unwrap_or(degree)
 }
 
 fn turned(turns: f32) -> Phase {
@@ -802,7 +448,7 @@ mod tests {
     use std::f64::consts::TAU;
 
     use super::Music;
-    use crate::audio::dsp::Frame;
+    use crate::audio::dsp::{Frame, Svf};
 
     const RATE: f32 = 48_000.0;
     const SECOND: usize = 48_000;
@@ -886,26 +532,45 @@ mod tests {
     }
 
     #[test]
-    fn each_motif_surfaces_stays_below_minus_14_dbfs_and_is_gone_within_thirty_seconds() {
+    fn a_discovery_swells_the_texture_and_settles_within_thirty_seconds() {
         for seed in 1..=6 {
             let mut with = Music::new(seed, RATE);
             let mut without = Music::new(seed, RATE);
-            take(&mut with, 12);
-            take(&mut without, 12);
+            take(&mut with, 30);
+            take(&mut without, 30);
             with.discover();
-            let motif = difference(&take(&mut with, 32), &take(&mut without, 32));
-            let rise = decibels(rms(&motif[..2 * SECOND]));
-            assert!(rise > -40.0, "seed {seed}: {rise} dBFS");
-            let loudest = peak(&motif);
+            let swell = difference(&take(&mut with, 32), &take(&mut without, 32));
+            let rise = decibels(rms(&swell[2 * SECOND..6 * SECOND]));
+            assert!(rise > -60.0, "seed {seed}: {rise} dBFS");
+            let loudest = peak(&swell);
             assert!(
-                loudest < 10.0_f32.powf(-14.0 / 20.0),
+                loudest < 10.0_f32.powf(-24.0 / 20.0),
                 "seed {seed}: {loudest}"
             );
-            let after = peak(&motif[30 * SECOND..]);
-            assert!(after < 1e-6, "seed {seed}: {after}");
+            let after = peak(&swell[30 * SECOND..]);
+            assert!(after < 1e-4, "seed {seed}: {after}");
         }
     }
 
+    #[test]
+    fn the_music_stays_dark() {
+        let mut music = Music::new(7, RATE);
+        take(&mut music, 10);
+        music.discover();
+        let mut frames = take(&mut music, 30);
+        music.discover();
+        frames.extend(take(&mut music, 30));
+        let mut first = Svf::new(1_000.0, 0.707, RATE);
+        let mut second = Svf::new(1_000.0, 0.707, RATE);
+        let (mut total, mut high) = (0.0_f64, 0.0_f64);
+        for frame in &frames {
+            let value = frame[0] + frame[1];
+            let edge = second.process(first.process(value).high).high;
+            total += f64::from(value * value);
+            high += f64::from(edge * edge);
+        }
+        assert!(high < total * 0.01, "{}", high / total);
+    }
     fn until_rest(music: &mut Music) -> bool {
         take(music, 30);
         let mut quiet = 0;
@@ -923,46 +588,10 @@ mod tests {
     }
 
     fn pad(frames: &[Frame]) -> f64 {
-        [53, 55, 59, 60]
+        [41, 43, 46, 48]
             .into_iter()
             .map(|note| strength(frames, note))
             .sum()
-    }
-
-    #[test]
-    fn some_motifs_pluck_and_others_bow_with_a_soft_attack() {
-        let attacks: Vec<usize> = (1..=8)
-            .map(|seed| {
-                let mut music = Music::new(seed, RATE);
-                music.discover();
-                let first = take(&mut music, 1);
-                let half = 0.5 * peak(&first);
-                first
-                    .iter()
-                    .position(|frame| frame[0].abs().max(frame[1].abs()) >= half)
-                    .unwrap_or(SECOND)
-            })
-            .collect();
-        let plucked = attacks
-            .iter()
-            .filter(|&&frames| frames < SECOND / 100)
-            .count();
-        let bowed = attacks
-            .iter()
-            .filter(|&&frames| frames > SECOND / 10)
-            .count();
-        assert!(plucked > 0, "{attacks:?}");
-        assert!(bowed > 0, "{attacks:?}");
-        assert_eq!(plucked + bowed, attacks.len(), "{attacks:?}");
-    }
-
-    #[test]
-    fn a_discovery_plays_even_while_the_bed_rests() {
-        let mut music = Music::new(6, RATE);
-        assert!(until_rest(&mut music));
-        music.discover();
-        let loudest = peak(&take(&mut music, 2));
-        assert!(loudest > 0.02, "{loudest}");
     }
 
     #[test]
@@ -1034,7 +663,7 @@ mod tests {
         let mut chords = Vec::new();
         for _ in 0..12 {
             let window = take(&mut music, 10);
-            chords.push(heard(&window[..SECOND / 2], &[53, 55, 59, 60]));
+            chords.push(heard(&window[..SECOND / 2], &[41, 43, 46, 48]));
         }
         chords.sort();
         chords.dedup();
@@ -1068,7 +697,7 @@ mod tests {
             last = window[window.len() - 1];
             if start >= 30 {
                 let level = decibels(rms(&window));
-                assert!((-39.0..=-33.0).contains(&level), "{start} s: {level} dBFS");
+                assert!((-42.0..=-34.0).contains(&level), "{start} s: {level} dBFS");
             }
         }
         assert!(jump < 0.01, "{jump}");

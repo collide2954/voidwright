@@ -45,8 +45,8 @@ This document gives the design of the sound and the music of Voidwright.
 
 | Topic | Decision |
 | --- | --- |
-| Style | Sparse ambient music: slow drones, soft pads, and rare bowed or plucked motifs. Silence is part of the music. |
-| Layers | Each place has a quiet bed of drones and pads. A motif layer fades in at a discovery, for example a new island or a landmark, and fades out after it. A low pulse layer fades in during danger. |
+| Style | Dark, textural ambient music: deep drones and a low, slow, dark pad. There is no melody. Silence is part of the music. |
+| Layers | Each place has a quiet bed of drones and pads. At a discovery, for example a new island or a landmark, the pad swells and opens a little, and then settles. A low pulse layer fades in during danger. |
 | Rests | The bed plays for some minutes and then stops for some minutes. |
 | Notes | The note data is in Rust code. Code synthesizes all instruments. |
 
@@ -68,7 +68,7 @@ The first playable slice contains these sounds:
 - The void wind.
 - The hiss and the creak of the lantern.
 - The reverb of the open island.
-- One music bed, with a motif that plays at a discovery.
+- One music bed that swells at a discovery.
 
 ## Sources
 
