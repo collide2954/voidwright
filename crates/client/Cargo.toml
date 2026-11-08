@@ -9,6 +9,7 @@ publish.workspace = true
 default-run = "voidwright-client"
 
 [dependencies]
+cpal = "0.18"
 glam.workspace = true
 miniquad.workspace = true
 voidwright-core.workspace = true

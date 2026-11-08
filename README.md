@@ -7,6 +7,7 @@ The game is not complete. The offline prototype is playable: one player walks on
 ## Requirements
 
 - Rust 1.99 or a later version
+- On Linux: the ALSA development files, for example the `libasound2-dev` package
 
 ## Commands
 
@@ -33,7 +34,10 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | --- | --- |
 | `--walk <dx> <dy>` | At start, the player walks to the tile at this offset. |
 | `--capture-at <seconds>` | The capture waits for this game time. |
-| `--record <frames>` | With `--capture`, the game moves 1/30 s for each frame and saves this number of frames. Each file name gets a frame number. |
+| `--record <frames>` | With `--capture`, the game moves 1/30 s for each frame and saves this number of frames. Each file name gets a frame number. The sound of the recording goes to a WAV file with the name of the capture file. |
+| `--headphones` | The sound uses the headphones mix. The default mix is for speakers. |
+
+The client plays sound on the default output device. A capture without `--record` and a frame rate measurement play no sound.
 
 ## Controls
 

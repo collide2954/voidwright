@@ -1,6 +1,15 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::audio::mixer::Mode;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sound {
+    Live(Mode),
+    Recorded(Mode),
+    Silent,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Launch {
     pub capture: Option<PathBuf>,
@@ -9,6 +18,7 @@ pub struct Launch {
     pub walk: Option<[i32; 2]>,
     pub benchmark: Option<f32>,
     pub record: Option<u16>,
+    pub headphones: bool,
 }
 
 impl Launch {
@@ -24,10 +34,25 @@ impl Launch {
                 "--walk" => launch.walk = values(&mut args),
                 "--benchmark" => launch.benchmark = values(&mut args).map(|[seconds]| seconds),
                 "--record" => launch.record = values(&mut args).map(|[frames]| frames),
+                "--headphones" => launch.headphones = true,
                 _ => {}
             }
         }
         launch
+    }
+
+    #[must_use]
+    pub const fn sound(&self) -> Sound {
+        let mode = if self.headphones {
+            Mode::Headphones
+        } else {
+            Mode::Speakers
+        };
+        match (&self.capture, self.record, self.benchmark) {
+            (Some(_), Some(_), _) => Sound::Recorded(mode),
+            (None, _, None) => Sound::Live(mode),
+            _ => Sound::Silent,
+        }
     }
 }
 
@@ -64,7 +89,8 @@ pub fn flip_rows(pixels: &[u8], width: u16, height: u16) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launch, flip_rows, frame};
+    use super::{Launch, Sound, flip_rows, frame};
+    use crate::audio::mixer::Mode;
     use std::path::PathBuf;
 
     fn parse(args: &[&str]) -> Launch {
@@ -119,6 +145,27 @@ mod tests {
     fn record_takes_a_number_of_frames() {
         assert_eq!(parse(&["--record", "90"]).record, Some(90));
         assert_eq!(parse(&["--record", "many"]), Launch::default());
+    }
+
+    #[test]
+    fn headphones_switch_the_mix_to_headphones() {
+        assert!(parse(&["--headphones"]).headphones);
+        assert!(!parse(&[]).headphones);
+    }
+
+    #[test]
+    fn a_game_plays_live_sound_and_recordings_render_it_offline() {
+        assert_eq!(parse(&[]).sound(), Sound::Live(Mode::Speakers));
+        assert_eq!(
+            parse(&["--headphones"]).sound(),
+            Sound::Live(Mode::Headphones)
+        );
+        assert_eq!(
+            parse(&["--capture", "walk.png", "--record", "90"]).sound(),
+            Sound::Recorded(Mode::Speakers)
+        );
+        assert_eq!(parse(&["--capture", "shot.png"]).sound(), Sound::Silent);
+        assert_eq!(parse(&["--benchmark", "10"]).sound(), Sound::Silent);
     }
 
     #[test]

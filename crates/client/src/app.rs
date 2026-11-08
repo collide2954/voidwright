@@ -7,7 +7,8 @@ use miniquad::{EventHandler, KeyCode, KeyMods, MouseButton, RenderingBackend, da
 
 use voidwright_core::Tile;
 
-use crate::launch::frame;
+use crate::audio::Audio;
+use crate::launch::{Sound, frame};
 use crate::{
     Controls, FrameStats, Game, Launch, Renderer, aspect, drag_rotation, to_screen, turn_for,
 };
@@ -40,6 +41,7 @@ pub struct App {
     capture_at: f32,
     benchmark: Option<Benchmark>,
     recording: Option<Recording>,
+    audio: Option<Audio>,
 }
 
 impl App {
@@ -54,6 +56,11 @@ impl App {
             game.walk_to(Tile::new(start.x + dx, start.y + dy));
         }
         let renderer = Renderer::new(context.as_mut(), &game);
+        let audio = match launch.sound() {
+            Sound::Live(mode) => Audio::live(mode),
+            Sound::Recorded(mode) => Some(Audio::recorded(mode)),
+            Sound::Silent => None,
+        };
         let now = date::now();
         let recording = launch
             .capture
@@ -79,6 +86,7 @@ impl App {
                 end: now + WARMUP + f64::from(seconds),
                 stats: FrameStats::default(),
             }),
+            audio,
         }
     }
 
@@ -134,6 +142,12 @@ impl EventHandler for App {
         let turn = self.controls.rotation(delta.as_secs_f32());
         self.game.camera_mut().rotate(turn.x, turn.y);
         self.game.update(delta);
+        if let Some(audio) = &mut self.audio {
+            audio.update(&self.game, delta.as_secs_f32());
+            if self.recording.is_some() {
+                audio.record(self.game.time() >= self.capture_at);
+            }
+        }
         self.measure(now, delta);
     }
 
@@ -147,6 +161,12 @@ impl EventHandler for App {
             }
             recording.next += 1;
             if recording.next >= recording.frames {
+                let wave = self.audio.as_ref().and_then(Audio::wave);
+                if let Some(Err(error)) =
+                    wave.map(|wave| std::fs::write(recording.base.with_extension("wav"), wave))
+                {
+                    eprintln!("sound save failed: {error}");
+                }
                 window::quit();
             }
             return;
