@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 
-use crate::palette;
+use crate::{Lamp, Light, palette};
 
 const FOG_RANGE: [f32; 2] = [30.0, 90.0];
 const NO_FOG: [f32; 2] = [1.0e6, 2.0e6];
@@ -39,6 +39,8 @@ pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform vec3 fog_color;
 uniform highp vec4 marker;
+uniform highp vec4 lantern;
+uniform vec3 lantern_light;
 uniform highp sampler2D shadow_map;
 varying mediump vec3 color;
 varying mediump float fog;
@@ -99,6 +101,8 @@ pub fn meta() -> ShaderMeta {
                 UniformDesc::new("fog_color", UniformType::Float3),
                 UniformDesc::new("fog_range", UniformType::Float2),
                 UniformDesc::new("marker", UniformType::Float4),
+                UniformDesc::new("lantern", UniformType::Float4),
+                UniformDesc::new("lantern_light", UniformType::Float3),
             ],
         },
     }
@@ -114,6 +118,8 @@ pub struct Uniforms {
     pub fog_color: [f32; 3],
     pub fog_range: [f32; 2],
     pub marker: [f32; 4],
+    pub lantern: [f32; 4],
+    pub lantern_light: [f32; 3],
 }
 
 impl Uniforms {
@@ -127,6 +133,8 @@ impl Uniforms {
             fog_color: palette::linear(palette::VOID).to_array(),
             fog_range: FOG_RANGE,
             marker: [0.0; 4],
+            lantern: [0.0; 4],
+            lantern_light: [0.0; 3],
         }
     }
 
@@ -147,13 +155,70 @@ impl Uniforms {
         self.sun_space = sun_space.to_cols_array();
         self
     }
+
+    #[must_use]
+    pub fn lit(mut self, lamp: &Lamp, bake: &Light) -> Self {
+        self.lantern = lamp.position.extend(lamp.reach.recip()).to_array();
+        self.lantern_light = (lamp.color / bake.shade(Vec3::ONE, Vec3::Y)).to_array();
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::shadow::{DIGITS, MAP_SIZE};
+    use crate::{Lamp, VAEL};
     use glam::{Mat4, Vec3, Vec4};
+    use miniquad::{UniformDesc, UniformType};
+
+    fn declared(name: &str) -> UniformDesc {
+        meta()
+            .uniforms
+            .uniforms
+            .into_iter()
+            .find(|uniform| uniform.name == name)
+            .expect("the shader declares the uniform")
+    }
+
+    fn lamp() -> Lamp {
+        Lamp::lantern(Vec3::new(28.6, 2.9, -28.2), 1.5)
+    }
+
+    fn lit() -> Uniforms {
+        Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO).lit(&lamp(), &VAEL)
+    }
+
+    #[test]
+    fn the_fragment_shader_declares_the_lantern_uniforms() {
+        let [place, light] = ["lantern", "lantern_light"].map(|name| declared(name).uniform_type);
+        assert!(matches!(place, UniformType::Float4));
+        assert!(matches!(light, UniformType::Float3));
+        assert!(FRAGMENT.contains("uniform highp vec4 lantern;"));
+        assert!(FRAGMENT.contains("uniform vec3 lantern_light;"));
+    }
+
+    #[test]
+    fn new_uniforms_leave_the_lantern_dark() {
+        let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
+        assert_eq!(uniforms.lantern, [0.0; 4]);
+        assert_eq!(uniforms.lantern_light, [0.0; 3]);
+    }
+
+    #[test]
+    fn lit_uniforms_carry_the_lantern_and_its_inverse_reach() {
+        let lamp = lamp();
+        let [x, y, z, inverse] = lit().lantern;
+        assert_eq!(Vec3::new(x, y, z), lamp.position);
+        assert!((inverse * lamp.reach - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_lantern_light_scales_the_baked_light_of_flat_ground() {
+        let flat = VAEL.shade(Vec3::ONE, Vec3::Y);
+        let light = Vec3::from(lit().lantern_light) * flat;
+        assert!(light.distance(lamp().color) < 1e-6, "{light}");
+    }
 
     #[test]
     fn uniforms_match_the_shader_layout_in_size() {
