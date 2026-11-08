@@ -94,7 +94,7 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     let roll = SHIFT_ROLL * shift * rest - WALK_ROLL * (phase + ROLL_LEAD).sin() * motion;
     let twist = -blend(0.105, 0.16) * cos;
     let surge = blend(WALK_SURGE, RUN_SURGE) + lean.surge;
-    let walk = stride(phase, pace, twist, surge);
+    let walk = stride(phase, pace, twist, roll, surge);
     let relaxed = |leg: usize| (RELAXED_THIGH * free[leg], RELAXED_KNEE * free[leg]);
     let leg = |index: usize| {
         let (thigh, knee) = relaxed(index);
@@ -146,9 +146,10 @@ struct Footing {
     pitch: f32,
 }
 
-fn stride(phase: f32, pace: f32, twist: f32, surge: f32) -> Walk {
+fn stride(phase: f32, pace: f32, twist: f32, roll: f32, surge: f32) -> Walk {
     let feet = [footing(phase, pace), footing(phase + PI, pace)];
     let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin() + surge);
+    let (sin, cos) = roll.sin_cos();
     let length = REACH * (THIGH + ANKLE);
     let rest = THIGH + ANKLE + ANKLE_HEIGHT;
     let strike = footing(0.0, pace).ankle;
@@ -160,7 +161,9 @@ fn stride(phase: f32, pace: f32, twist: f32, surge: f32) -> Walk {
     let height = walking + (running - walking) * pace;
     let legs = [0, 1].map(|index| {
         let foot = feet[index];
-        let (thigh, knee) = reach(foot.ankle.x - hips[index], height - foot.ankle.y);
+        let side = [-1.0, 1.0][index];
+        let hip = height + HIP.x * (side * sin - sin.abs()) + HIP.y * (cos - 1.0);
+        let (thigh, knee) = reach(foot.ankle.x - hips[index], hip - foot.ankle.y);
         (thigh, knee, foot.pitch)
     });
     Walk {
@@ -239,11 +242,51 @@ fn snap(value: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Pose, cycle, footing, pose_at};
+    use super::{HEEL, Pose, TOE, cycle, footing, pose_at};
+    use crate::{Bone, skeleton};
+    use glam::Vec3;
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     const WALKING: f32 = 1.0;
     const IDLE: f32 = 0.0;
+    const SAMPLES: u16 = 2400;
+    const FEET: [(Bone, f32); 2] = [(Bone::LeftFoot, 0.0), (Bone::RightFoot, 0.5)];
+
+    fn soles(pace: f32, sample: u16, bone: Bone) -> [Vec3; 2] {
+        let moment = f32::from(sample) / f32::from(SAMPLES);
+        let bones = skeleton(&pose_at(TAU * moment, WALKING, pace, 0.0));
+        let travelled = Vec3::Z * cycle(pace) * moment;
+        [HEEL, TOE].map(|point| {
+            bones[bone.index()].transform_point3(Vec3::new(0.0, point.y, -point.x)) - travelled
+        })
+    }
+
+    fn lowest(soles: [Vec3; 2]) -> Vec3 {
+        if soles[1].y < soles[0].y {
+            soles[1]
+        } else {
+            soles[0]
+        }
+    }
+
+    fn strides(pace: f32, bone: Bone, lag: f32) -> impl Iterator<Item = (f32, [Vec3; 2])> {
+        (0..SAMPLES).map(move |sample| {
+            let moment = (f32::from(sample) / f32::from(SAMPLES) + lag).fract();
+            (moment, soles(pace, sample, bone))
+        })
+    }
+
+    #[test]
+    fn the_feet_never_sink_into_the_ground() {
+        for pace in [0.0, 1.0] {
+            for (bone, lag) in FEET {
+                for (moment, soles) in strides(pace, bone, lag) {
+                    let low = lowest(soles).y;
+                    assert!(low > -0.002, "pace {pace} {bone:?} at {moment}: {low}");
+                }
+            }
+        }
+    }
 
     fn idle_poses() -> impl Iterator<Item = Pose> {
         (0..600).map(|step| {
