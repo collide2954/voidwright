@@ -39,7 +39,7 @@ const MOSS: Treatment = Treatment {
     kind: Kind::Sand,
     pitch: 0.92,
     cutoff: 1_200.0,
-    gain: 0.55,
+    gain: 1.3,
 };
 
 const SOIL: Treatment = Treatment {
@@ -53,7 +53,7 @@ const ROCK: Treatment = Treatment {
     kind: Kind::Stone,
     pitch: 1.0,
     cutoff: 18_000.0,
-    gain: 1.0,
+    gain: 0.65,
 };
 
 struct Take {

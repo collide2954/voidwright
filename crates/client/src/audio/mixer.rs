@@ -12,7 +12,7 @@ pub const CEILING: f32 = 0.891;
 const VOICES: usize = 32;
 const RELEASE: f32 = 0.1;
 const GLIDE: f32 = 0.02;
-const STEP_GAIN: f32 = 0.5;
+const STEP_GAIN: f32 = 1.0;
 const SPEAKERS: f32 = 1.6;
 const HEADPHONES: f32 = 1.0;
 
@@ -234,6 +234,29 @@ mod tests {
         let stepped = render(&[listener(), step(Vec3::new(1.0, 1.6, 0.0), 0.7)], 24_000);
         let [left, right] = energies(&stepped, &quiet);
         assert!(right > 0.0 && right > left * 3.0, "{left} {right}");
+    }
+
+    #[test]
+    fn a_walking_step_on_moss_stands_well_above_the_bed() {
+        let quiet = render(&[listener()], 24_000);
+        let walking = Command::Step {
+            at: Vec3::new(0.1, 0.0, 0.0),
+            underfoot: Underfoot::Moss,
+            strength: 0.55,
+        };
+        let stepped = render(&[listener(), walking], 24_000);
+        let peak = stepped
+            .iter()
+            .zip(&quiet)
+            .map(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()))
+            .fold(0.0, f32::max);
+        let peak = 20.0 * peak.log10();
+        assert!((-20.0..-8.0).contains(&peak), "{peak}");
+        assert!(
+            peak > decibels(&quiet) + 20.0,
+            "{peak} {}",
+            decibels(&quiet)
+        );
     }
 
     #[test]
