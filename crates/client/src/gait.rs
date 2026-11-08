@@ -99,9 +99,10 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     let shift = dwell((time * SHIFT_RATE).sin() + 0.3 * (time * SHIFT_RATE * 2.7 + 1.1).sin());
     let free = [shift.max(0.0), (-shift).max(0.0)];
     let roll = SHIFT_ROLL * shift * rest - WALK_ROLL * (phase + ROLL_LEAD).sin() * motion;
-    let twist = -blend(0.105, 0.16) * cos;
+    let turn = blend(0.105, 0.16);
+    let twist = -turn * cos;
     let surge = blend(WALK_SURGE, RUN_SURGE) + lean.surge;
-    let walk = stride(phase, pace, twist, roll, surge);
+    let walk = stride(phase, pace, turn, roll, surge);
     let relaxed = |leg: usize| (RELAXED_THIGH * free[leg], RELAXED_KNEE * free[leg]);
     let leg = |index: usize| {
         let (thigh, knee) = relaxed(index);
@@ -153,18 +154,26 @@ struct Footing {
     pitch: f32,
 }
 
-fn stride(phase: f32, pace: f32, twist: f32, roll: f32, surge: f32) -> Walk {
+fn stride(phase: f32, pace: f32, turn: f32, roll: f32, surge: f32) -> Walk {
     let feet = [footing(phase, pace), footing(phase + PI, pace)];
+    let twist = -turn * phase.cos();
     let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin() + surge);
     let (sin, cos) = roll.sin_cos();
     let length = REACH * (THIGH + ANKLE);
     let rest = THIGH + ANKLE + ANKLE_HEIGHT;
+    let raise = |ankle: Vec2, hip: f32| {
+        ankle.y + (length * length - (ankle.x - hip).powi(2)).max(0.0).sqrt()
+    };
+    let lead = |moment: f32| surge + HIP.x * (turn * (TAU * moment).cos()).sin();
     let strike = footing(0.0, pace).ankle;
-    let contact = strike.y + (length * length - strike.x * strike.x).max(0.0).sqrt();
+    let contact = raise(strike, 0.0);
     let crest = ANKLE_HEIGHT + length;
     let walking =
         contact + (crest - contact) * (0.5 - 0.5 * (2.0 * (phase - WALK_LOWEST * TAU)).cos());
-    let running = crest - RUN_DIP * (0.5 + 0.5 * (2.0 * (phase - RUN_LOWEST * TAU)).cos());
+    let push = footing(TAU * duty(pace), pace).ankle;
+    let ends = 0.5 + 0.5 * (2.0 * RUN_LOWEST * TAU).cos();
+    let top = raise(strike, lead(0.0)).min(raise(push, lead(duty(pace)))) + RUN_DIP * ends;
+    let running = top - RUN_DIP * (0.5 + 0.5 * (2.0 * (phase - RUN_LOWEST * TAU)).cos());
     let height = walking + (running - walking) * pace;
     let legs = [0, 1].map(|index| {
         let foot = feet[index];
@@ -303,11 +312,13 @@ mod tests {
 
     #[test]
     fn planted_feet_stay_on_the_ground() {
-        for (bone, lag) in FEET {
-            for (moment, [soles, _]) in strides(0.0, bone, lag) {
-                let low = soles[lowest(soles)].y;
-                if moment < duty(0.0) {
-                    assert!(low < 0.002, "{bone:?} at {moment}: {low}");
+        for pace in [0.0, 1.0] {
+            for (bone, lag) in FEET {
+                for (moment, [soles, _]) in strides(pace, bone, lag) {
+                    let low = soles[lowest(soles)].y;
+                    if moment < duty(pace) {
+                        assert!(low < 0.002, "pace {pace} {bone:?} at {moment}: {low}");
+                    }
                 }
             }
         }
