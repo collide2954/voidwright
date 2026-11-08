@@ -129,7 +129,7 @@ const ARM_SPLAY: f32 = 0.1;
 const HEAD_STEADY: f32 = 0.6;
 const HEAD_LEVEL: f32 = 0.85;
 const COUNTER_TWIST: f32 = 0.8;
-const SKIRT_FOLLOW: f32 = 0.6;
+const SKIRT_FOLLOW: f32 = 0.85;
 
 impl Bone {
     #[must_use]

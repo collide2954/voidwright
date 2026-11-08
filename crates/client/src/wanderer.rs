@@ -396,7 +396,7 @@ fn arm(clay: &mut Sculpt, side: Side) {
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(0.64, Vec2::new(0.15, 0.26), 0.022, Vec2::new(9.0, 0.07));
+        let panel = tube(0.64, Vec2::new(0.16, 0.28), 0.022, Vec2::new(9.0, 0.05));
         clay.add(
             stroke(side.skirt(), panel, COAT)
                 .lined(LINING)
@@ -957,6 +957,44 @@ mod tests {
             }
         }
         longest
+    }
+
+    #[test]
+    fn the_coat_covers_the_legs_while_walking() {
+        use crate::figure::{skeleton, skin};
+        use crate::gait::pose_at;
+        use glam::Vec3;
+        let garments = super::garments();
+        let covered = |rest: Vec3| {
+            let outward = Vec3::new(rest.x, 0.0, rest.z).normalize();
+            garments.distance(rest) > 0.005
+                && (0..300).any(|step| {
+                    let reach = f32::from(u16::try_from(step).unwrap()) * 0.001;
+                    garments.distance(rest + outward * reach) < 0.0
+                })
+        };
+        for step in 0..48 {
+            let phase = std::f32::consts::TAU * f32::from(u8::try_from(step).unwrap()) / 48.0;
+            let pose = pose_at(phase, 1.0, 0.0, 0.0);
+            let (bones, skins) = (skeleton(&pose), skin(&pose));
+            for (thigh, shin, skirt, side) in [
+                (Bone::LeftThigh, Bone::LeftShin, Bone::LeftSkirt, -1.0),
+                (Bone::RightThigh, Bone::RightShin, Bone::RightSkirt, 1.0),
+            ] {
+                let points = [
+                    bones[shin.index()].transform_point3(Vec3::new(0.0, 0.0, -0.06)),
+                    bones[shin.index()].transform_point3(Vec3::new(side * 0.06, 0.0, 0.0)),
+                    bones[thigh.index()].transform_point3(Vec3::new(side * 0.065, -0.2, 0.0)),
+                ];
+                for (index, point) in points.into_iter().enumerate() {
+                    let rest = skins[skirt.index()].inverse().transform_point3(point);
+                    assert!(
+                        covered(rest),
+                        "{skirt:?} point {index} at phase step {step}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
