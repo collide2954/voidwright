@@ -107,3 +107,29 @@ fn invalid_walk_orders_are_refused_and_the_player_stays() {
     }
     assert_eq!(server.stats().refused, 2);
 }
+
+#[test]
+fn a_flood_of_walk_orders_closes_the_connection() {
+    let mut server = server(Config::default());
+    let (mut ash, welcome) = Client::join(&mut server, "Ash");
+    for _ in 0..40 {
+        ash.send(&ClientMessage::Walk(welcome.spawn));
+    }
+    assert!(ash.is_closed(&mut server));
+    assert_eq!(server.stats().dropped, 1);
+}
+
+#[test]
+fn a_steady_stream_of_walk_orders_stays_connected() {
+    let mut server = server(Config::default());
+    let (mut ash, welcome) = Client::join(&mut server, "Ash");
+    for _ in 0..20 {
+        for _ in 0..4 {
+            ash.send(&ClientMessage::Walk(welcome.spawn));
+        }
+        server.poll();
+        server.tick();
+        ash.update(&mut server);
+    }
+    assert_eq!(server.stats().dropped, 0);
+}

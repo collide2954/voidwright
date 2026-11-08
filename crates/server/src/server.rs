@@ -9,6 +9,8 @@ use voidwright_protocol::{
     Update, Welcome,
 };
 
+use crate::budget::Budget;
+
 const CAPACITY: usize = 2_000;
 const GREETERS: usize = 64;
 const GREETING: Duration = Duration::from_secs(5);
@@ -69,6 +71,7 @@ enum Stage {
         id: PlayerId,
         name: Name,
         order: Option<Tile>,
+        budget: Budget,
     },
 }
 
@@ -143,11 +146,7 @@ impl Connection {
             ClientMessage::Walk(_) if self.greeting() => {
                 self.close = Some(Close::Fault("a walk order before the hello"));
             }
-            ClientMessage::Walk(target) => {
-                if let Stage::Playing { order, .. } = &mut self.stage {
-                    *order = Some(target);
-                }
-            }
+            ClientMessage::Walk(target) => self.order(target),
         }
     }
 
@@ -172,7 +171,19 @@ impl Connection {
             id,
             name,
             order: None,
+            budget: Budget::default(),
         };
+    }
+
+    fn order(&mut self, target: Tile) {
+        let Stage::Playing { order, budget, .. } = &mut self.stage else {
+            return;
+        };
+        if budget.spend() {
+            *order = Some(target);
+        } else {
+            self.close = Some(Close::Fault("too many messages"));
+        }
     }
 
     fn refuse(&mut self, reason: Reason) {
@@ -197,9 +208,10 @@ impl Connection {
     }
 
     fn update(&mut self, world: &World, tick: u32, view: u16) {
-        let Stage::Playing { id, .. } = &self.stage else {
+        let Stage::Playing { id, budget, .. } = &mut self.stage else {
             return;
         };
+        budget.refill();
         let Some(me) = world.player(*id).filter(|_| self.close.is_none()) else {
             return;
         };
