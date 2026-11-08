@@ -225,7 +225,8 @@ impl Renderer {
             &baked::Uniforms::new(view_projection, Mat4::IDENTITY, camera.eye())
                 .marked(marker)
                 .shadowed(to_texture(figure.sun_view))
-                .lit(&figure.lamp, &VAEL),
+                .lit(&figure.lamp, &VAEL)
+                .blocked_by(game.player_position()),
         ));
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.skinned);

@@ -41,6 +41,7 @@ uniform vec3 fog_color;
 uniform highp vec4 marker;
 uniform highp vec4 lantern;
 uniform vec3 lantern_light;
+uniform highp vec2 body;
 uniform highp sampler2D shadow_map;
 varying mediump vec3 color;
 varying mediump float fog;
@@ -52,6 +53,7 @@ const float SHADE = 0.55;
 const highp float BIAS = 0.002;
 const highp float SPREAD = 3.0 / 1024.0;
 const highp vec4 UNPACK = 1.0 / vec4(1.0, 255.0, 65025.0, 16581375.0);
+const vec2 BODY = vec2(0.12, 0.24);
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
@@ -82,11 +84,20 @@ float sunlight() {
         + hidden(vec2(-0.45, -0.86), depth);
     return 1.0 - (1.0 - SHADE) * shade / 8.0;
 }
+float unblocked() {
+    highp vec2 ray = world.xz - lantern.xz;
+    highp vec2 axis = body - lantern.xz;
+    highp float along = clamp(dot(axis, ray) / max(dot(ray, ray), 0.0001), 0.0, 1.0);
+    return smoothstep(BODY.x, BODY.y, length(axis - ray * along));
+}
 vec3 pool() {
     highp vec3 toward = (lantern.xyz - world) * lantern.w;
     highp float near = dot(toward, toward);
+    if (near >= 1.0) {
+        return vec3(0.0);
+    }
     float fade = max(1.0 - near, 0.0);
-    return lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001);
+    return lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001) * unblocked();
 }
 void main() {
     vec3 shaded = mix(mix(color * (sunlight() + pool()), TEAL * 2.5, ring()), fog_color, fog);
@@ -109,6 +120,7 @@ pub fn meta() -> ShaderMeta {
                 UniformDesc::new("marker", UniformType::Float4),
                 UniformDesc::new("lantern", UniformType::Float4),
                 UniformDesc::new("lantern_light", UniformType::Float3),
+                UniformDesc::new("body", UniformType::Float2),
             ],
         },
     }
@@ -126,6 +138,7 @@ pub struct Uniforms {
     pub marker: [f32; 4],
     pub lantern: [f32; 4],
     pub lantern_light: [f32; 3],
+    pub body: [f32; 2],
 }
 
 impl Uniforms {
@@ -141,6 +154,7 @@ impl Uniforms {
             marker: [0.0; 4],
             lantern: [0.0; 4],
             lantern_light: [0.0; 3],
+            body: [0.0; 2],
         }
     }
 
@@ -168,6 +182,12 @@ impl Uniforms {
         self.lantern_light = (lamp.color / bake.shade(Vec3::ONE, Vec3::Y)).to_array();
         self
     }
+
+    #[must_use]
+    pub const fn blocked_by(mut self, body: Vec3) -> Self {
+        self.body = [body.x, body.z];
+        self
+    }
 }
 
 #[cfg(test)]
@@ -175,8 +195,8 @@ mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::particles::LANTERN;
     use crate::shadow::{DIGITS, MAP_SIZE};
-    use crate::{Lamp, VAEL};
-    use glam::{Mat4, Vec3, Vec4};
+    use crate::{Lamp, VAEL, smoothstep};
+    use glam::{Mat4, Vec2, Vec3, Vec4};
     use miniquad::{UniformDesc, UniformType};
 
     fn declared(name: &str) -> UniformDesc {
@@ -227,12 +247,33 @@ mod tests {
         assert!(light.distance(lamp().color) < 1e-6, "{light}");
     }
 
-    fn pool(lantern: [f32; 4], world: Vec3) -> f32 {
-        let [x, y, z, inverse] = lantern;
+    const BODY: Vec2 = Vec2::new(0.12, 0.24);
+
+    fn unblocked(uniforms: &Uniforms, world: Vec3) -> f32 {
+        let [x, _, z, _] = uniforms.lantern;
+        let ray = Vec2::new(world.x - x, world.z - z);
+        let axis = Vec2::from(uniforms.body) - Vec2::new(x, z);
+        let along = (axis.dot(ray) / ray.length_squared().max(0.0001)).clamp(0.0, 1.0);
+        smoothstep(BODY.x, BODY.y, (axis - ray * along).length())
+    }
+
+    fn pool(uniforms: &Uniforms, world: Vec3) -> f32 {
+        let [x, y, z, inverse] = uniforms.lantern;
         let toward = (Vec3::new(x, y, z) - world) * inverse;
         let near = toward.length_squared();
+        if near >= 1.0 {
+            return 0.0;
+        }
         let fade = (1.0 - near).max(0.0);
-        fade * fade * toward.y.max(0.0) / (near + 0.0001).sqrt()
+        fade * fade * toward.y.max(0.0) / (near + 0.0001).sqrt() * unblocked(uniforms, world)
+    }
+
+    fn body() -> Vec3 {
+        lamp().position + Vec3::new(-0.15, -1.45, -0.284)
+    }
+
+    fn blocked() -> Uniforms {
+        lit().blocked_by(body())
     }
 
     #[test]
@@ -240,11 +281,64 @@ mod tests {
         for line in [
             "highp vec3 toward = (lantern.xyz - world) * lantern.w;",
             "highp float near = dot(toward, toward);",
+            "if (near >= 1.0) {",
             "float fade = max(1.0 - near, 0.0);",
-            "lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001);",
+            "lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001) * unblocked();",
         ] {
             assert!(FRAGMENT.contains(line), "{line}");
         }
+    }
+
+    #[test]
+    fn the_body_check_follows_the_rust_mirror() {
+        for line in [
+            &format!("const vec2 BODY = vec2({:?}, {:?});", BODY.x, BODY.y),
+            "highp vec2 ray = world.xz - lantern.xz;",
+            "highp vec2 axis = body - lantern.xz;",
+            "highp float along = clamp(dot(axis, ray) / max(dot(ray, ray), 0.0001), 0.0, 1.0);",
+            "return smoothstep(BODY.x, BODY.y, length(axis - ray * along));",
+        ] {
+            assert!(FRAGMENT.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_fragment_shader_declares_the_body() {
+        assert!(matches!(declared("body").uniform_type, UniformType::Float2));
+        assert!(FRAGMENT.contains("uniform highp vec2 body;"));
+    }
+
+    #[test]
+    fn blocked_uniforms_carry_the_axis_of_the_body() {
+        let body = body();
+        assert_eq!(blocked().body, [body.x, body.z]);
+    }
+
+    #[test]
+    fn the_body_hides_the_ground_straight_past_it() {
+        let lamp = lamp();
+        let past = lamp.position + (body() - lamp.position) * Vec3::new(5.0, 1.0, 5.0);
+        assert!(pool(&lit(), past) > 0.05);
+        assert!(pool(&blocked(), past).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_body_leaves_the_ground_behind_and_beside_it_lit() {
+        let lamp = lamp();
+        let away = (lamp.position - body()) * Vec3::new(1.0, 0.0, 1.0);
+        let side = away.cross(Vec3::Y);
+        for offset in [Vec3::ZERO, away * 3.0, side * 4.0, -side * 4.0] {
+            let ground = lamp.position + offset - Vec3::Y * 1.45;
+            let open = pool(&lit(), ground);
+            assert!((pool(&blocked(), ground) - open).abs() < 1e-6, "{offset}");
+        }
+    }
+
+    #[test]
+    fn the_body_check_stays_finite_without_a_lantern() {
+        let dark = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
+        assert!(unblocked(&dark, Vec3::ZERO).is_finite());
+        assert!(unblocked(&dark.blocked_by(Vec3::ZERO), Vec3::new(3.0, 0.0, 4.0)).is_finite());
     }
 
     #[test]
@@ -255,7 +349,7 @@ mod tests {
     #[test]
     fn the_pool_has_full_strength_near_the_lantern() {
         let below = lamp().position - Vec3::Y * 0.25;
-        assert!(pool(lit().lantern, below) > 0.97);
+        assert!(pool(&lit(), below) > 0.97);
     }
 
     #[test]
@@ -268,7 +362,7 @@ mod tests {
         ];
         for direction in down {
             for distance in [lamp.reach, lamp.reach + 0.4, lamp.reach * 3.0] {
-                let strength = pool(lit().lantern, lamp.position + direction * distance);
+                let strength = pool(&lit(), lamp.position + direction * distance);
                 assert!(strength.abs() < 1e-6, "{direction} {distance}");
             }
         }
@@ -278,7 +372,7 @@ mod tests {
     fn the_pool_fades_softly_across_the_ground() {
         let below = lamp().position - Vec3::Y * 1.45;
         let strengths: Vec<f32> = (0_u8..=30)
-            .map(|step| pool(lit().lantern, below + Vec3::X * f32::from(step) * 0.1))
+            .map(|step| pool(&lit(), below + Vec3::X * f32::from(step) * 0.1))
             .collect();
         for pair in strengths.windows(2) {
             assert!(pair[1] <= pair[0] && pair[0] - pair[1] < 0.05, "{pair:?}");
@@ -291,21 +385,21 @@ mod tests {
     fn the_pool_stays_dimmer_than_the_sun_on_flat_ground() {
         let lamp = lamp();
         let below = lamp.position - Vec3::Y * LANTERN.y;
-        let pool = pool(lit().lantern, below) * lamp.color.element_sum();
+        let pool = pool(&lit(), below) * lamp.color.element_sum();
         assert!(pool < VAEL.sun.element_sum() * VAEL.toward_sun.y, "{pool}");
     }
 
     #[test]
     fn the_pool_lights_no_ground_above_the_lantern() {
         let above = lamp().position + Vec3::new(0.8, 0.2, 0.0);
-        assert!(pool(lit().lantern, above).abs() < 1e-6);
+        assert!(pool(&lit(), above).abs() < 1e-6);
     }
 
     #[test]
     fn a_dark_lantern_lights_nothing() {
         let dark = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
         for point in [Vec3::ZERO, Vec3::new(28.6, 1.5, -28.2), Vec3::splat(300.0)] {
-            let strength = pool(dark.lantern, point);
+            let strength = pool(&dark, point);
             assert!(strength.is_finite() && strength.abs() < 1e-6, "{point}");
         }
     }
