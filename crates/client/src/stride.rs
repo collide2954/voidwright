@@ -6,7 +6,7 @@ use crate::Pose;
 use crate::gait::{Lean, cycle, pose_leaning};
 use crate::spring::Spring;
 
-const TURN_RATE: f32 = 9.0;
+const TURN_FREQUENCY: f32 = 1.1;
 const WALK_SPEED: f32 = 1.0 / 0.6;
 const RUN_SPEED: f32 = 2.0 / 0.6;
 const EASE_RATE: f32 = 8.0;
@@ -16,7 +16,8 @@ const BANK_LIMIT: f32 = 0.07;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stride {
-    facing: f32,
+    facing: Spring,
+    heading: f32,
     phase: f32,
     motion: f32,
     pace: f32,
@@ -29,16 +30,16 @@ impl Stride {
     pub fn update(&mut self, from: Vec2, to: Vec2, seconds: f32) {
         let step = to - from;
         let distance = step.length();
-        let before = self.facing;
+        let before = self.facing.value();
         if distance > f32::EPSILON {
-            let turn = shortest((-step.x).atan2(step.y) - self.facing);
-            let limit = TURN_RATE * seconds;
-            self.facing = shortest(self.facing + turn.clamp(-limit, limit));
+            self.heading = (-step.x).atan2(step.y);
             self.phase = (self.phase + distance * TAU / cycle(self.pace)).rem_euclid(TAU);
         }
         if seconds <= 0.0 {
             return;
         }
+        let aim = before + shortest(self.heading - before);
+        self.facing.update(aim, TURN_FREQUENCY, 1.0, seconds);
         let speed = distance / seconds;
         let ease = (EASE_RATE * seconds).min(1.0);
         let pace = ((speed - WALK_SPEED) / (RUN_SPEED - WALK_SPEED)).clamp(0.0, 1.0);
@@ -49,7 +50,7 @@ impl Stride {
         self.speed = smoothed;
         self.surge
             .update(SURGE_PER_PUSH * push.clamp(-8.0, 8.0), 1.6, 0.55, seconds);
-        let turning = shortest(self.facing - before) / seconds;
+        let turning = (self.facing.value() - before) / seconds;
         let bank = (self.speed * turning / GRAVITY)
             .atan()
             .clamp(-BANK_LIMIT, BANK_LIMIT);
@@ -57,8 +58,8 @@ impl Stride {
     }
 
     #[must_use]
-    pub const fn facing(&self) -> f32 {
-        self.facing
+    pub fn facing(&self) -> f32 {
+        shortest(self.facing.value())
     }
 
     #[must_use]
@@ -109,7 +110,7 @@ mod tests {
     #[test]
     fn walking_east_turns_to_face_east() {
         let mut stride = Stride::default();
-        walk(&mut stride, Vec2::ZERO, Vec2::X, 60);
+        walk(&mut stride, Vec2::ZERO, Vec2::X, 120);
         assert!((stride.facing() + FRAC_PI_2).abs() < 1e-3);
     }
 
@@ -119,6 +120,23 @@ mod tests {
         let at = walk(&mut stride, Vec2::ZERO, Vec2::X, 60);
         walk(&mut stride, at, Vec2::ZERO, 60);
         assert!((stride.facing() + FRAC_PI_2).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_quarter_turn_eases_in_and_out_over_a_moment() {
+        let mut stride = Stride::default();
+        let at = walk(&mut stride, Vec2::ZERO, Vec2::Y, 60);
+        let east = -FRAC_PI_2;
+        let mut at = walk(&mut stride, at, Vec2::X, 15);
+        let early = stride.facing();
+        assert!((early - east).abs() > FRAC_PI_2 * 0.3, "{early}");
+        let mut closest = f32::INFINITY;
+        for _ in 0..45 {
+            at = walk(&mut stride, at, Vec2::X, 1);
+            closest = closest.min(stride.facing() - east);
+        }
+        assert!((stride.facing() - east).abs() < 0.1);
+        assert!(closest > -0.03, "{closest}");
     }
 
     #[test]
@@ -192,7 +210,7 @@ mod tests {
         let mut stride = Stride::default();
         let mut at = walk(&mut stride, Vec2::ZERO, Vec2::Y, 60);
         let mut deepest = 0.0_f32;
-        for _ in 0..90 {
+        for _ in 0..150 {
             at = walk(&mut stride, at, Vec2::X, 1);
             deepest = deepest.max(stride.bank.value().abs());
         }

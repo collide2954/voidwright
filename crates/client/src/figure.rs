@@ -541,7 +541,7 @@ mod tests {
     fn the_figure_faces_its_stride() {
         let mut stride = Stride::default();
         let mut at = Vec2::ZERO;
-        for _ in 0..60 {
+        for _ in 0..120 {
             let next = at + Vec2::new(0.03, 0.0);
             stride.update(at, next, 1.0 / 60.0);
             at = next;
