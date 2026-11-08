@@ -39,7 +39,7 @@ This document gives the design of the sound and the music of Voidwright.
 | --- | --- |
 | Living ambience | Each place has layers of ambient sound. They stay far below the footsteps and are never a constant hiss. A faint, dark wind rises in slow gusts and dies down between them. Moss and spores rustle on the islands. The ring groans far away. The layers change with the place and the time of day. |
 | Footsteps | Each foot strike of the gait plays a footstep. The ground under the foot selects the clips: moss, soil, rock, or metal plate. Running plays harder steps than walking. |
-| Lantern | The flame of the lantern hisses quietly. The lantern creaks on its rod when it swings quickly. The swing speed of the lantern strand controls the creak. |
+| Lantern | The flame of the lantern pops softly now and then. The lantern creaks on its rod only when it swings hard, for example when the wanderer sets off or turns sharply. A steady walk does not make it creak. The swing speed of the lantern strand controls the creak. |
 
 ## Music
 

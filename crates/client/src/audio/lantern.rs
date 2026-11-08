@@ -1,17 +1,14 @@
-use super::dsp::{Noise, Phase, Smooth, Svf, sine};
+use super::dsp::{Noise, Phase, Smooth, Svf};
 use crate::smoothstep;
 
-const HISS: f32 = 4_500.0;
-const HISS_Q: f32 = 0.7;
-const HISS_GAIN: f32 = 0.015;
-const FLICKER: [(f32, f32); 2] = [(3.1, 0.12), (6.7, 0.08)];
-const CRACKLES: f32 = 3.0;
-const CRACKLE: f32 = 2_800.0;
+const CRACKLES: f32 = 0.4;
+const CRACKLE: f32 = 2_200.0;
+const CRACKLE_Q: f32 = 1.5;
 const CRACKLE_GAIN: f32 = 0.08;
-const CREAK_START: f32 = 0.15;
-const CREAK_FULL: f32 = 0.6;
+const CREAK_START: f32 = 0.8;
+const CREAK_FULL: f32 = 1.6;
 const CREAK_SETTLE: f32 = 0.08;
-const CREAK_GAIN: f32 = 1.2;
+const CREAK_GAIN: f32 = 0.5;
 const BODY: [(f32, f32); 2] = [(720.0, 14.0), (1_380.0, 10.0)];
 const SLIP: [f32; 2] = [18.0, 70.0];
 
@@ -19,8 +16,6 @@ const SLIP: [f32; 2] = [18.0, 70.0];
 pub struct Lantern {
     rate: f32,
     noise: Noise,
-    hiss: Svf,
-    flicker: [Phase; 2],
     crackle: Svf,
     creak: Smooth,
     slip: Phase,
@@ -35,9 +30,7 @@ impl Lantern {
         Self {
             rate,
             noise: Noise::new(seed),
-            hiss: Svf::new(HISS, HISS_Q, rate),
-            flicker: [Phase::default(); 2],
-            crackle: Svf::new(CRACKLE, 2.0, rate),
+            crackle: Svf::new(CRACKLE, CRACKLE_Q, rate),
             creak: Smooth::new(0.0, CREAK_SETTLE, rate),
             slip: Phase::default(),
             last: 0.0,
@@ -52,16 +45,8 @@ impl Lantern {
 
     pub fn sample(&mut self) -> f32 {
         let rate = self.rate;
-        let white = self.noise.sample();
-        let flicker: f32 = self
-            .flicker
-            .iter_mut()
-            .zip(FLICKER)
-            .map(|(phase, (frequency, depth))| depth * sine(phase.advance(frequency, rate)))
-            .sum();
-        let hiss = self.hiss.process(white).band * HISS_GAIN * (1.0 + flicker);
         let pop = if 0.5 + 0.5 * self.noise.sample() < CRACKLES / rate {
-            self.noise.sample()
+            self.noise.sample().signum() * (0.7 + 0.3 * self.noise.sample())
         } else {
             0.0
         };
@@ -82,7 +67,7 @@ impl Lantern {
             .iter_mut()
             .map(|filter| filter.process(pulse).band)
             .sum();
-        hiss + crackle + body * intensity * CREAK_GAIN
+        crackle + body * intensity * CREAK_GAIN
     }
 }
 
@@ -105,8 +90,8 @@ mod tests {
 
     fn decibels(samples: &[f32]) -> f32 {
         let sum: f32 = samples.iter().map(|sample| sample * sample).sum();
-        let count = f32::from(u16::try_from(samples.len() / 10).unwrap()) * 10.0;
-        10.0 * (sum / count).log10()
+        let count = f32::from(u16::try_from(samples.len() / 30).unwrap()) * 30.0;
+        10.0 * (sum / count).max(1e-12).log10()
     }
 
     fn creak_band(samples: &[f32]) -> f32 {
@@ -119,43 +104,45 @@ mod tests {
     }
 
     #[test]
-    fn a_still_lantern_hisses_quietly() {
+    fn a_still_lantern_is_almost_silent() {
         let mut lantern = Lantern::new(5, RATE);
-        let samples = render(&mut lantern, 2.0);
-        let level = decibels(&samples);
-        assert!((-60.0..-40.0).contains(&level), "{level}");
+        let level = decibels(&render(&mut lantern, 4.0));
+        assert!(level < -62.0, "{level}");
     }
 
     #[test]
-    fn the_flame_flickers() {
+    fn the_flame_pops_softly_now_and_then() {
         let mut lantern = Lantern::new(5, RATE);
-        let samples = render(&mut lantern, 4.0);
-        let levels: Vec<f32> = samples.chunks(2_400).map(decibels).collect();
-        let loudest = levels.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let softest = levels.iter().copied().fold(f32::INFINITY, f32::min);
-        assert!(loudest - softest > 1.5, "{softest} {loudest}");
-        assert!(loudest - softest < 12.0, "{softest} {loudest}");
+        let samples = render(&mut lantern, 30.0);
+        let loud: Vec<bool> = samples
+            .chunks(480)
+            .map(|window| window.iter().any(|sample| sample.abs() > 0.000_5))
+            .collect();
+        let pops = loud.windows(2).filter(|pair| pair[1] && !pair[0]).count();
+        assert!((3..=30).contains(&pops), "{pops}");
+        let peak = samples
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        assert!(peak < 0.03, "{peak}");
     }
 
     #[test]
-    fn a_swinging_lantern_creaks_and_stops_when_it_settles() {
+    fn a_hard_swing_creaks_and_stops_when_it_settles() {
         let mut lantern = Lantern::new(5, RATE);
-        let still = creak_band(&render(&mut lantern, 1.0));
-        lantern.swing(0.8);
+        lantern.swing(1.4);
         let swinging = creak_band(&render(&mut lantern, 1.0));
-        assert!(swinging > still + 10.0, "{still} {swinging}");
+        assert!(swinging > -50.0, "{swinging}");
         lantern.swing(0.0);
         render(&mut lantern, 0.5);
         let settled = creak_band(&render(&mut lantern, 1.0));
-        assert!(settled < still + 3.0, "{still} {settled}");
+        assert!(settled < -70.0, "{settled}");
     }
 
     #[test]
-    fn a_gentle_sway_does_not_creak() {
+    fn the_sway_of_a_steady_walk_does_not_creak() {
         let mut lantern = Lantern::new(5, RATE);
-        let still = creak_band(&render(&mut lantern, 1.0));
-        lantern.swing(0.08);
+        lantern.swing(0.4);
         let swaying = creak_band(&render(&mut lantern, 1.0));
-        assert!(swaying < still + 3.0, "{still} {swaying}");
+        assert!(swaying < -70.0, "{swaying}");
     }
 }
