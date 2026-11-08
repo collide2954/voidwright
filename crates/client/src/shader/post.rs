@@ -389,6 +389,152 @@ void main() {
     }
 }
 
+pub mod up {
+    use miniquad::{
+        BlendFactor, BlendState, BlendValue, Equation, PipelineParams, ShaderMeta,
+        UniformBlockLayout, UniformDesc, UniformType,
+    };
+
+    pub const SHARE: f32 = 0.5;
+
+    pub const FRAGMENT: &str = "#version 100
+precision mediump float;
+uniform sampler2D source;
+uniform highp vec2 texel;
+uniform float share;
+varying highp vec2 uv;
+void main() {
+    highp vec2 reach = 0.5 * texel;
+    highp vec2 across = vec2(reach.x, -reach.y);
+    vec3 sum = texture2D(source, uv - reach).rgb
+        + texture2D(source, uv + reach).rgb
+        + texture2D(source, uv - across).rgb
+        + texture2D(source, uv + across).rgb;
+    gl_FragColor = vec4(sum / 4.0, share);
+}
+";
+
+    #[must_use]
+    pub fn meta() -> ShaderMeta {
+        ShaderMeta {
+            images: vec!["source".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: vec![
+                    UniformDesc::new("texel", UniformType::Float2),
+                    UniformDesc::new("share", UniformType::Float1),
+                ],
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn params() -> PipelineParams {
+        PipelineParams {
+            color_blend: Some(BlendState::new(
+                Equation::Add,
+                BlendFactor::Value(BlendValue::SourceAlpha),
+                BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+            )),
+            ..PipelineParams::default()
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Uniforms {
+        pub texel: [f32; 2],
+        pub share: f32,
+    }
+
+    impl Uniforms {
+        #[must_use]
+        pub fn new(source: [u16; 2], share: f32) -> Self {
+            Self {
+                texel: super::texel(source),
+                share,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::mirror::{bilinear, declared};
+        use super::{FRAGMENT, SHARE, Uniforms, meta, params};
+        use glam::{IVec2, Vec2, Vec3};
+        use miniquad::{BlendFactor, BlendState, BlendValue, Comparison, Equation};
+        use std::collections::HashMap;
+
+        fn footprint(center: Vec2) -> HashMap<IVec2, f32> {
+            let mut weights = HashMap::new();
+            for offset in [(-0.5, -0.5), (0.5, 0.5), (-0.5, 0.5), (0.5, -0.5)] {
+                for (texel, share) in bilinear(center + Vec2::from(offset)) {
+                    *weights.entry(texel).or_insert(0.0) += share / 4.0;
+                }
+            }
+            weights.retain(|_, weight| *weight > 1e-7);
+            weights
+        }
+
+        #[test]
+        fn the_shader_uses_glsl_100() {
+            assert!(FRAGMENT.starts_with("#version 100"));
+        }
+
+        #[test]
+        fn uniforms_carry_one_texel_of_the_source_and_the_share() {
+            assert_eq!(size_of::<Uniforms>(), declared(FRAGMENT, &meta()));
+            assert!(FRAGMENT.contains("uniform highp vec2 texel;"));
+            assert!(FRAGMENT.contains("uniform float share;"));
+            let uniforms = Uniforms::new([120, 68], 0.4);
+            assert_eq!(uniforms.texel, [1.0 / 120.0, 1.0 / 68.0]);
+            assert!((uniforms.share - 0.4).abs() < 1e-6);
+            assert_eq!(meta().images, ["source"]);
+        }
+
+        #[test]
+        fn the_taps_match_the_rust_copy() {
+            assert!(FRAGMENT.contains("highp vec2 reach = 0.5 * texel;"));
+            assert!(FRAGMENT.contains("highp vec2 across = vec2(reach.x, -reach.y);"));
+            for tap in ["uv - reach", "uv + reach", "uv - across", "uv + across"] {
+                assert!(FRAGMENT.contains(&format!("texture2D(source, {tap}).rgb")));
+            }
+            assert!(FRAGMENT.contains("gl_FragColor = vec4(sum / 4.0, share);"));
+        }
+
+        #[test]
+        fn the_taps_spread_a_tent_over_three_by_three_texels() {
+            let weights = footprint(Vec2::new(5.5, 3.5));
+            assert_eq!(weights.len(), 9);
+            for (texel, weight) in weights {
+                let away = (texel - IVec2::new(5, 3)).abs();
+                let expected = [4.0, 2.0, 1.0][usize::try_from(away.x + away.y).unwrap()] / 16.0;
+                assert!((weight - expected).abs() < 1e-6, "{texel} {weight}");
+            }
+            for center in [Vec2::new(5.25, 3.75), Vec2::new(5.75, 3.25)] {
+                assert!((footprint(center).values().sum::<f32>() - 1.0).abs() < 1e-6);
+            }
+        }
+
+        #[test]
+        fn the_share_mixes_the_wider_light_over_the_level() {
+            let params = params();
+            assert_eq!(
+                params.color_blend,
+                Some(BlendState::new(
+                    Equation::Add,
+                    BlendFactor::Value(BlendValue::SourceAlpha),
+                    BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                ))
+            );
+            assert_eq!(params.depth_test, Comparison::Always);
+            assert!(!params.depth_write);
+            let mix = |level: Vec3, wider: Vec3| wider * SHARE + level * (1.0 - SHARE);
+            assert!(mix(Vec3::ONE, Vec3::ONE).distance(Vec3::ONE) < 1e-6);
+            const { assert!(SHARE > 0.0 && SHARE <= 1.0) };
+        }
+    }
+}
+
 pub mod composite {
     use glam::Vec2;
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
