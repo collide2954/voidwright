@@ -42,7 +42,7 @@ The skeleton has no toe joint, so the boots are shorter than a real foot. A long
 
 ## Athletic build
 
-The wanderer has an athletic build. For the shoulders, the chest, and the muscles of the arms, the neck, and the calves, the game uses the 75th percentile of the men in ANSUR II. For the waist, the game uses the 25th percentile. Thus the chest is wider and deeper than the waist.
+The wanderer has an athletic build. For the shoulders, the chest, the neck, and the muscles of the arms, the game uses the 75th percentile of the men in ANSUR II. For the waist, the game uses the 25th percentile. Thus the chest is wider and deeper than the waist.
 
 | Item | 50th percentile | Wanderer |
 | --- | --- | --- |
@@ -57,9 +57,9 @@ The wanderer has an athletic build. For the shoulders, the chest, and the muscle
 | Biceps circumference, flexed | 0.36 m | 0.38 m |
 | Forearm circumference, flexed | 0.31 m | 0.32 m |
 | Wrist circumference | 0.18 m | 0.18 m |
-| Calf circumference | 0.39 m | 0.41 m |
+| Calf circumference | 0.39 m | 0.38 m |
 
-The coat cloth stays 7.5 cm from the axis of each thigh. Thus the thighs of the wanderer are thinner than the thighs of real men. The coat hides this.
+The coat cloth stays 7.5 cm from the axis of each thigh and 6 cm from the axis of each shin. Thus the legs of the wanderer are thinner than the legs of an athletic man. The coat hides this.
 
 ## Sources
 
