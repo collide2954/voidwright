@@ -118,7 +118,7 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     };
     let [left, right] = [leg(0), leg(1)];
     let drift = |hand: f32, rate: f32| (time * rate + hand * 1.7).sin();
-    let curl = |hand: f32| 0.42 + 0.34 * dwell(drift(hand, 0.53));
+    let curl = |hand: f32| 0.35 + 0.1 * dwell(drift(hand, 0.53));
     Pose {
         surge,
         sway,
@@ -583,12 +583,15 @@ mod tests {
     }
 
     #[test]
-    fn idle_hands_curl_and_open() {
+    fn idle_hands_drift_within_a_relaxed_curl() {
         for hand in 0..2 {
-            let curls: Vec<f32> = idle_poses().map(|pose| pose.curls[hand]).collect();
-            assert!(curls.iter().any(|&curl| curl < 0.3));
-            assert!(curls.iter().any(|&curl| curl > 0.6));
-            assert!(curls.iter().all(|curl| (0.0..1.2).contains(curl)));
+            let (low, high) = idle_poses()
+                .map(|pose| pose.curls[hand])
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), curl| {
+                    (low.min(curl), high.max(curl))
+                });
+            assert!(high - low > 0.15, "{low} {high}");
+            assert!(low > 0.2 && high < 0.5, "{low} {high}");
         }
     }
 
