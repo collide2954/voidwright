@@ -5,6 +5,8 @@ use voidwright_core::TICK;
 use crate::gait::cycle;
 use crate::{Pose, pose_at};
 
+const GRID_REPEAT: f32 = 1.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Gait {
     #[default]
@@ -49,6 +51,16 @@ impl Gait {
     pub fn pose(self, time: f32) -> Pose {
         pose_at(self.phase(time), self.motion(), self.pace(), time)
     }
+
+    #[must_use]
+    pub fn travel(self, time: f32) -> f32 {
+        cycle(self.pace()) * self.phase(time) / TAU
+    }
+
+    #[must_use]
+    pub fn scroll(self, time: f32) -> f32 {
+        self.travel(time).rem_euclid(GRID_REPEAT)
+    }
 }
 
 #[cfg(test)]
@@ -56,6 +68,7 @@ mod tests {
     use super::Gait;
     use crate::gait::cycle;
     use crate::{Pose, pose_at};
+    use std::f32::consts::TAU;
     use voidwright_core::TICK;
 
     fn close(a: f32, b: f32) -> bool {
@@ -89,6 +102,36 @@ mod tests {
             let half = gait.pose(0.1 + period / 2.0);
             assert!(close(start.thighs[0], half.thighs[1]), "{gait:?}");
             assert!(!same_legs(&start, &half));
+        }
+    }
+
+    #[test]
+    fn the_ground_moves_one_cycle_length_for_each_full_phase() {
+        for gait in [Gait::Walk, Gait::Run] {
+            let turn = cycle(gait.pace()) / gait.speed();
+            assert!(close(gait.phase(turn), TAU), "{gait:?}");
+            assert!(close(gait.travel(turn), cycle(gait.pace())), "{gait:?}");
+            assert!(close(gait.travel(3.0 * turn), 3.0 * cycle(gait.pace())));
+        }
+    }
+
+    #[test]
+    fn the_ground_moves_at_the_gait_speed() {
+        let tick = TICK.as_secs_f32();
+        assert!(close(Gait::Walk.travel(tick), 1.0));
+        assert!(close(Gait::Run.travel(tick), 2.0));
+        assert!(close(Gait::Idle.travel(25.0), 0.0));
+    }
+
+    #[test]
+    fn the_scroll_wraps_the_travel_within_one_metre() {
+        for gait in [Gait::Idle, Gait::Walk, Gait::Run] {
+            for time in [-0.4, 0.3, 7.1, 123.4] {
+                let scroll = gait.scroll(time);
+                assert!((0.0..1.0).contains(&scroll), "{gait:?} {time}");
+                let metres = gait.travel(time) - scroll;
+                assert!((metres - metres.round()).abs() < 1e-3, "{gait:?} {time}");
+            }
         }
     }
 
