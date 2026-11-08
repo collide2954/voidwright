@@ -1,8 +1,9 @@
 use std::f32::consts::FRAC_PI_2;
 
-use glam::{Quat, Vec2, Vec3, Vec4};
+use glam::{Mat3, Quat, Vec2, Vec3, Vec3Swizzles, Vec4};
 
 use crate::cloth::{COAT_FEEL, Cloth, Fabric};
+use crate::field::section;
 use crate::figure::{
     ANKLE, Bone, COAT_CUT, COAT_TILT, COAT_TOP, FINGER, FOREARM, HOOD_BONE, HOOD_TAIL, JOINTS,
     LANTERN_BONE, LANTERN_HOOK, SCARF_BONE, SCARF_TAIL, THIGH, UPPER_ARM, rest, waist,
@@ -916,26 +917,62 @@ fn chest() -> Sculpt {
 
 fn belt() -> Sculpt {
     let mut clay = clay();
+    strap(&mut clay);
+    clay.part();
+    buckle(&mut clay);
+    pouches(&mut clay);
+    clay
+}
+
+fn strap(clay: &mut Sculpt) {
     clay.add(waistband(
         tube(&STRAP, BAND, Vec2::ZERO),
         Vec3::ZERO,
         LEATHER,
     ));
-    clay.part();
+}
+
+fn buckle(clay: &mut Sculpt) {
     let low = STRAP[1].z + (STRAP[2].z - STRAP[1].z) * 0.55;
     let front = Vec3::new(0.0, 0.006, -low - BAND / 2.0 - 0.0035);
     clay.add(waistband(block(0.024, 0.017, 0.003, 0.002), front, BRASS));
     clay.add(waistband(block(0.015, 0.009, 0.01, 0.002), front, BRASS).carved());
     clay.add(waistband(limb(0.02, 0.002, 0.002), front + Vec3::Y * 0.01, BRASS).blended(0.002));
+}
+
+fn pouches(clay: &mut Sculpt) {
+    let half = Vec3::new(0.033, 0.041, 0.015);
     for side in Side::BOTH {
         clay.part();
+        let turn = side.sign() * 0.8;
+        let out = Vec3::new(turn.sin(), 0.0, -turn.cos());
+        let reach = |radii: Vec2| 1.0 / Vec2::new(out.x / radii.x, out.z / radii.y).length();
+        let top = Vec3::Y * 0.012 + out * reach(STRAP[0].xz() + BAND / 2.0);
+        let hips = section(&COAT_CUT, -0.07) + SHELL / 2.0 + 0.003;
+        let bottom = Vec3::NEG_Y * 0.07 + out * reach(hips);
+        let up = (top - bottom).normalize();
+        let normal = (out - up * out.dot(up)).normalize();
+        let lay = Quat::from_mat3(&Mat3::from_cols(up.cross(normal), up, normal));
+        let middle = top.midpoint(bottom) + normal * (half.z + 0.0015);
+        let pouch = |form: Form, at: Vec3, material: Material| {
+            let tilt = Quat::from_rotation_x(COAT_TILT);
+            stroke(Bone::Pelvis, form, material)
+                .at(COAT_TOP + tilt * (middle + lay * at))
+                .turned(tilt * lay)
+        };
+        clay.add(pouch(
+            block(half.x, half.y, half.z, 0.01),
+            Vec3::ZERO,
+            LEATHER,
+        ));
+        let flap = Vec3::new(0.0, half.y - 0.016, half.z + 0.002);
         clay.add(
-            stroke(Bone::Pelvis, block(0.034, 0.04, 0.02, 0.012), LEATHER)
-                .at(Vec3::new(side.sign() * 0.11, 0.015, -0.135))
-                .turned(Quat::from_rotation_y(-side.sign() * 0.6)),
+            pouch(block(half.x + 0.002, 0.018, 0.004, 0.003), flap, LEATHER)
+                .wrinkled(0.0015, Vec3::splat(30.0))
+                .blended(0.003),
         );
+        clay.add(pouch(ball(0.0045), flap + Vec3::new(0.0, -0.01, 0.004), BRASS).blended(0.002));
     }
-    clay
 }
 
 fn pauldron() -> Sculpt {
@@ -1679,7 +1716,8 @@ mod tests {
 
     #[test]
     fn the_belt_cinches_the_coat_and_shows_its_buckle() {
-        let (belt, garments) = (super::belt(), super::garments());
+        let (mut belt, garments) = (super::clay(), super::garments());
+        super::strap(&mut belt);
         let waist = crate::figure::waist(crate::figure::rest()[Bone::Pelvis.index()]);
         let last = |solid: &crate::sculpt::Sculpt, ray: &dyn Fn(f32) -> Vec3| {
             (0..400_u16)
@@ -1709,6 +1747,28 @@ mod tests {
             .expect("the figure has a waist");
         let [woven, knitted, grained, brushed] = front.surface;
         assert!(brushed > woven.max(knitted).max(grained), "{front:?}");
+    }
+
+    #[test]
+    fn the_pouches_hang_on_the_outside_of_the_coat() {
+        let garments = super::garments();
+        let mut strap = super::clay();
+        super::strap(&mut strap);
+        let mut pouches = super::clay();
+        super::pouches(&mut pouches);
+        let mesh = pouches.mesh(0.004);
+        for side in [-1.0, 1.0] {
+            let gaps: Vec<f32> = mesh
+                .vertices
+                .iter()
+                .map(|vertex| Vec3::from(vertex.position))
+                .filter(|point| point.x * side > 0.0)
+                .map(|point| garments.distance(point).min(strap.distance(point)))
+                .collect();
+            assert!(gaps.len() > 100, "{side}");
+            let deepest = gaps.iter().copied().fold(f32::INFINITY, f32::min);
+            assert!((-0.002..0.006).contains(&deepest), "{side} {deepest}");
+        }
     }
 
     #[test]
