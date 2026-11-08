@@ -1,9 +1,8 @@
+use crate::deflate::zlib;
+
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
 const RGBA_HEADER: [u8; 5] = [8, 6, 0, 0, 0];
-const ZLIB_HEADER: [u8; 2] = [0x78, 0x01];
-const MAX_STORED: usize = 65_535;
 const CRC_POLYNOMIAL: u32 = 0xedb8_8320;
-const ADLER_MODULUS: u32 = 65_521;
 const FILTERS: [u8; 5] = [0, 1, 2, 3, 4];
 
 #[must_use]
@@ -21,7 +20,7 @@ pub fn encode(width: u16, height: u16, rgba: &[u8]) -> Vec<u8> {
     header.extend_from_slice(&RGBA_HEADER);
     let mut png = SIGNATURE.to_vec();
     chunk(&mut png, *b"IHDR", &header);
-    chunk(&mut png, *b"IDAT", &stored(&raw));
+    chunk(&mut png, *b"IDAT", &zlib(&raw));
     chunk(&mut png, *b"IEND", &[]);
     png
 }
@@ -91,20 +90,6 @@ fn chunk(png: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
     png.extend_from_slice(&crc.to_be_bytes());
 }
 
-fn stored(data: &[u8]) -> Vec<u8> {
-    let mut stream = ZLIB_HEADER.to_vec();
-    let mut blocks = data.chunks(MAX_STORED).peekable();
-    while let Some(block) = blocks.next() {
-        let length = u16::try_from(block.len()).expect("a stored block fits in u16");
-        stream.push(u8::from(blocks.peek().is_none()));
-        stream.extend_from_slice(&length.to_le_bytes());
-        stream.extend_from_slice(&(!length).to_le_bytes());
-        stream.extend_from_slice(block);
-    }
-    stream.extend_from_slice(&adler32(data).to_be_bytes());
-    stream
-}
-
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in bytes {
@@ -117,18 +102,11 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-fn adler32(bytes: &[u8]) -> u32 {
-    let (mut low, mut high) = (1, 0);
-    for &byte in bytes {
-        low = (low + u32::from(byte)) % ADLER_MODULUS;
-        high = (high + low) % ADLER_MODULUS;
-    }
-    (high << 16) | low
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{adler32, crc32, encode, paeth};
+    use super::{crc32, encode, paeth};
+    use crate::deflate::inflate;
+    use glam::{Vec2, Vec3};
 
     fn reference_paeth(a: u8, b: u8, c: u8) -> u8 {
         let estimate = i32::from(a) + i32::from(b) - i32::from(c);
@@ -167,20 +145,46 @@ mod tests {
         pixels
     }
 
-    fn stored_blocks(stream: &[u8]) -> Vec<u8> {
-        let mut data = Vec::new();
-        let mut at = 2;
-        loop {
-            let last = stream[at] & 1 == 1;
-            let length = usize::from(u16::from_le_bytes([stream[at + 1], stream[at + 2]]));
-            let check = u16::from_le_bytes([stream[at + 3], stream[at + 4]]);
-            assert_eq!(check, !u16::try_from(length).unwrap());
-            data.extend_from_slice(&stream[at + 5..at + 5 + length]);
-            at += 5 + length;
-            if last {
-                return data;
-            }
+    fn decode(png: &[u8]) -> Vec<u8> {
+        let header = chunk(png, *b"IHDR");
+        let width = usize::try_from(u32::from_be_bytes(header[..4].try_into().unwrap())).unwrap();
+        let step = match header[9] {
+            6 => 4,
+            2 => 3,
+            kind => panic!("color type {kind}"),
+        };
+        let pixels = unfilter(&inflate::zlib(&chunk(png, *b"IDAT")), width * step, step);
+        if step == 4 {
+            return pixels;
         }
+        pixels
+            .chunks(3)
+            .flat_map(|color| [color[0], color[1], color[2], u8::MAX])
+            .collect()
+    }
+
+    fn picture(width: u16, height: u16) -> Vec<u8> {
+        let size = Vec2::new(f32::from(width), f32::from(height));
+        let toward_light = Vec3::new(0.5, -0.5, 0.7).normalize();
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .flat_map(|(x, y)| {
+                let at = (Vec2::new(f32::from(x), f32::from(y)) + 0.5) / size * 2.0 - 1.0;
+                let room = 0.8 - at.length_squared();
+                let color = if room > 0.0 {
+                    let normal = at.extend(room.sqrt()).normalize();
+                    Vec3::new(0.9, 0.6, 0.3) * normal.dot(toward_light).max(0.0) + 0.05
+                } else {
+                    Vec3::splat(0.06)
+                };
+                let [red, green, blue] = (color.clamp(Vec3::ZERO, Vec3::ONE) * 255.0)
+                    .round()
+                    .as_ivec3()
+                    .to_array()
+                    .map(|channel| u8::try_from(channel).unwrap());
+                [red, green, blue, u8::MAX]
+            })
+            .collect()
     }
 
     fn chunk(png: &[u8], kind: [u8; 4]) -> Vec<u8> {
@@ -199,11 +203,6 @@ mod tests {
     #[test]
     fn crc32_matches_the_reference() {
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
-    }
-
-    #[test]
-    fn adler32_matches_the_reference() {
-        assert_eq!(adler32(b"Wikipedia"), 0x11e6_0398);
     }
 
     #[test]
@@ -232,11 +231,21 @@ mod tests {
         let rgba: Vec<u8> = (0..usize::from(width) * usize::from(height) * 4)
             .map(|index| u8::try_from(index * index % 251).unwrap())
             .collect();
-        let stream = chunk(&encode(width, height, &rgba), *b"IDAT");
-        let raw = stored_blocks(&stream);
-        assert_eq!(unfilter(&raw, usize::from(width) * 4, 4), rgba);
-        let adler = u32::from_be_bytes(stream[stream.len() - 4..].try_into().unwrap());
-        assert_eq!(adler, adler32(&raw));
+        assert_eq!(decode(&encode(width, height, &rgba)), rgba);
+    }
+
+    #[test]
+    fn a_smooth_picture_takes_a_small_part_of_its_raw_size() {
+        let (width, height) = (320, 240);
+        let rgba = picture(width, height);
+        let png = encode(width, height, &rgba);
+        assert!(
+            png.len() < rgba.len() / 5,
+            "{} of {}",
+            png.len(),
+            rgba.len()
+        );
+        assert_eq!(decode(&png), rgba);
     }
 
     #[test]
@@ -251,7 +260,7 @@ mod tests {
     }
 
     fn filters(width: u16, rgba: &[u8]) -> Vec<u8> {
-        let raw = stored_blocks(&chunk(&encode(width, 2, rgba), *b"IDAT"));
+        let raw = inflate::zlib(&chunk(&encode(width, 2, rgba), *b"IDAT"));
         raw.chunks(usize::from(width) * 4 + 1)
             .map(|line| line[0])
             .collect()

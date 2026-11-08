@@ -4,6 +4,7 @@ mod camera;
 mod clock;
 pub mod cloth;
 pub mod contour;
+mod deflate;
 pub mod detail;
 pub mod field;
 mod figure;
