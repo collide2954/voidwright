@@ -14,8 +14,20 @@ const DRONE_SWAYS: [[f32; 2]; 2] = [[34.0, 48.0], [23.0, 33.0]];
 const DRONE_CUTOFF: f32 = 300.0;
 const DRONE_FADES: [f32; 2] = [6.0, 14.0];
 
-const CHORD: [u8; 4] = [53, 57, 60, 64];
-const VOICE_LEVEL: f32 = 0.031;
+const CHORDS: [[u8; 4]; 4] = [
+    // F3 A3 C4 E4: D minor 9 over the drone.
+    [53, 57, 60, 64],
+    // G3 B3 D4 E4: G 6, the bright chord of the dorian mode.
+    [55, 59, 62, 64],
+    // G3 C4 D4 E4: C with an added 9.
+    [55, 60, 62, 64],
+    // A3 C4 E4 G4: A minor 7.
+    [57, 60, 64, 67],
+];
+const CHORD_SECONDS: [f32; 2] = [8.0, 16.0];
+const STAGGER: f32 = 2.5;
+const VOICE_FADES: [f32; 2] = [2.6, 1.8];
+const VOICE_LEVEL: f32 = 0.033;
 const PANS: [f32; 4] = [-0.5, 0.6, -0.7, 0.4];
 const DETUNE: [f32; 2] = [2.0, 6.0];
 const DRIFT: [f32; 2] = [7.0, 14.0];
@@ -74,6 +86,7 @@ impl Time {
 }
 
 struct Bed {
+    dice: Dice,
     playing: bool,
     until: f64,
     drone: Drone,
@@ -83,11 +96,14 @@ struct Bed {
 impl Bed {
     fn new(seed: u32, time: Time) -> Self {
         let mut dice = Dice::new(seed);
+        let drone = Drone::new(&mut dice, time);
+        let pad = Pad::new(&mut dice, time);
         Self {
+            dice,
             playing: false,
             until: ENTRY,
-            drone: Drone::new(&mut dice, time),
-            pad: Pad::new(&mut dice, time),
+            drone,
+            pad,
         }
     }
 
@@ -98,8 +114,11 @@ impl Bed {
         }
         self.drone
             .control(self.playing || self.pad.fade.level > 0.5, time);
-        self.pad
-            .control(self.playing && self.drone.fade.level > 0.5, time);
+        self.pad.control(
+            self.playing && self.drone.fade.level > 0.5,
+            &mut self.dice,
+            time,
+        );
     }
 
     fn render(&mut self, out: &mut [Frame]) {
@@ -166,12 +185,18 @@ struct Pad {
     voices: [Voice; 4],
     filters: [Svf; 2],
     fade: Fade,
+    chord: usize,
+    until: f64,
 }
 
 struct Voice {
     saw: Saw,
     gain: Ramp,
     pan: [f32; 2],
+    note: u8,
+    want: u8,
+    wait: f32,
+    fade: Fade,
     pitch: f32,
     detune: f32,
     drift: Phase,
@@ -184,11 +209,19 @@ impl Pad {
             voices: from_fn(|index| {
                 // Invert every second voice. Then the edges of the saw waves do not add.
                 let polarity = if index % 2 == 0 { 1.0 } else { -1.0 };
+                let note = CHORDS[0][index];
                 Voice {
-                    saw: Saw::new(dice.unit(), hertz(CHORD[index]), time.rate),
+                    saw: Saw::new(dice.unit(), hertz(note), time.rate),
                     gain: Ramp::default(),
                     pan: pan(PANS[index]).map(|side| side * polarity),
-                    pitch: hertz(CHORD[index]),
+                    note,
+                    want: note,
+                    wait: 0.0,
+                    fade: Fade {
+                        level: 1.0,
+                        ..Fade::new(VOICE_FADES, time)
+                    },
+                    pitch: hertz(note),
                     detune: polarity * dice.within(DETUNE),
                     drift: turned(dice.unit()),
                     speed: dice.within(DRIFT).recip(),
@@ -196,18 +229,26 @@ impl Pad {
             }),
             filters: [Svf::new(PAD_CUTOFF, FILTER_Q, time.rate); 2],
             fade: Fade::new(PAD_FADES, time),
+            chord: 0,
+            until: f64::from(dice.within(CHORD_SECONDS)),
         }
     }
 
-    fn control(&mut self, on: bool, time: Time) {
+    fn control(&mut self, on: bool, dice: &mut Dice, time: Time) {
+        if on {
+            self.until -= f64::from(time.step);
+        }
+        if self.until <= 0.0 {
+            self.chord = (self.chord + 1) % CHORDS.len();
+            self.until = f64::from(dice.within(CHORD_SECONDS));
+            for (voice, &note) in self.voices.iter_mut().zip(&CHORDS[self.chord]) {
+                voice.want = note;
+                voice.wait = dice.within([0.0, STAGGER]);
+            }
+        }
         let level = VOICE_LEVEL * self.fade.toward(on);
         for voice in &mut self.voices {
-            let cents =
-                voice.detune + DRIFT_CENTS * sine(voice.drift.advance(voice.speed, time.control));
-            voice
-                .saw
-                .tune(voice.pitch * (cents / 1200.0).exp2(), time.rate);
-            voice.gain.aim(level);
+            voice.control(level, time);
         }
     }
 
@@ -225,6 +266,25 @@ impl Pad {
             frame[0] += self.filters[0].process(mix[0]).low;
             frame[1] += self.filters[1].process(mix[1]).low;
         }
+    }
+}
+
+impl Voice {
+    fn control(&mut self, level: f32, time: Time) {
+        if self.note != self.want {
+            if self.wait > 0.0 {
+                self.wait -= time.step;
+            } else if self.fade.level <= 0.0 {
+                self.note = self.want;
+                self.pitch = hertz(self.note);
+            }
+        }
+        let moving = self.note != self.want && self.wait <= 0.0;
+        let shape = self.fade.toward(!moving);
+        let cents = self.detune + DRIFT_CENTS * sine(self.drift.advance(self.speed, time.control));
+        self.saw
+            .tune(self.pitch * (cents / 1200.0).exp2(), time.rate);
+        self.gain.aim(level * shape);
     }
 }
 
@@ -359,6 +419,8 @@ fn pan(position: f32) -> [f32; 2] {
 
 #[cfg(test)]
 mod tests {
+    use std::f64::consts::TAU;
+
     use super::Music;
     use crate::audio::dsp::Frame;
 
@@ -408,6 +470,46 @@ mod tests {
         one.iter()
             .zip(other)
             .position(|(one, other)| one.map(f32::to_bits) != other.map(f32::to_bits))
+    }
+
+    fn strength(frames: &[Frame], note: u8) -> f64 {
+        let frequency = 440.0 * ((f64::from(note) - 69.0) / 12.0).exp2();
+        let coefficient = 2.0 * (TAU * frequency / f64::from(RATE)).cos();
+        let count = f64::from(u32::try_from(frames.len()).unwrap());
+        let (mut one, mut two) = (0.0, 0.0);
+        for (index, frame) in frames.iter().enumerate() {
+            let along = f64::from(u32::try_from(index).unwrap()) / count;
+            let weight = 0.5 - 0.5 * (TAU * along).cos();
+            let next = weight * f64::from(frame[0] + frame[1]) + coefficient * one - two;
+            two = one;
+            one = next;
+        }
+        (one * one + two * two - coefficient * one * two).sqrt()
+    }
+
+    fn heard(frames: &[Frame], notes: &[u8]) -> Vec<u8> {
+        let strengths: Vec<f64> = notes.iter().map(|&note| strength(frames, note)).collect();
+        let loudest = strengths.iter().copied().fold(0.0, f64::max);
+        notes
+            .iter()
+            .zip(&strengths)
+            .filter(|&(_, &strength)| strength >= 0.3 * loudest)
+            .map(|(&note, _)| note)
+            .collect()
+    }
+
+    #[test]
+    fn the_pad_moves_through_its_chords() {
+        let mut music = Music::new(5, RATE);
+        take(&mut music, 30);
+        let mut chords = Vec::new();
+        for _ in 0..12 {
+            let window = take(&mut music, 10);
+            chords.push(heard(&window[..SECOND / 2], &[53, 55, 59, 60]));
+        }
+        chords.sort();
+        chords.dedup();
+        assert!(chords.len() >= 3, "{chords:?}");
     }
 
     #[test]
