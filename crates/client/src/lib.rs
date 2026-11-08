@@ -18,6 +18,7 @@ pub mod nets;
 mod paint;
 mod palette;
 mod parallel;
+pub mod particles;
 mod picking;
 pub mod png;
 mod render;
