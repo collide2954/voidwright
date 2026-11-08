@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use crate::audio::mixer::Mode;
 
+const PLAYER_NAME: &str = "Wanderer";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sound {
     Live(Mode),
@@ -19,6 +21,8 @@ pub struct Launch {
     pub benchmark: Option<f32>,
     pub record: Option<u16>,
     pub headphones: bool,
+    pub connect: Option<String>,
+    pub name: Option<String>,
 }
 
 impl Launch {
@@ -35,10 +39,17 @@ impl Launch {
                 "--benchmark" => launch.benchmark = values(&mut args).map(|[seconds]| seconds),
                 "--record" => launch.record = values(&mut args).map(|[frames]| frames),
                 "--headphones" => launch.headphones = true,
+                "--connect" => launch.connect = args.next(),
+                "--name" => launch.name = args.next(),
                 _ => {}
             }
         }
         launch
+    }
+
+    #[must_use]
+    pub fn player_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(PLAYER_NAME)
     }
 
     #[must_use]
@@ -178,5 +189,18 @@ mod tests {
     fn rows_flip_from_bottom_up_to_top_down() {
         let bottom_up = [1, 1, 1, 1, 2, 2, 2, 2];
         assert_eq!(flip_rows(&bottom_up, 1, 2), [2, 2, 2, 2, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn connect_takes_the_address_of_a_server() {
+        let launch = parse(&["--connect", "127.0.0.1:8643"]);
+        assert_eq!(launch.connect.as_deref(), Some("127.0.0.1:8643"));
+        assert_eq!(parse(&["--connect"]), Launch::default());
+    }
+
+    #[test]
+    fn name_takes_the_name_of_the_player() {
+        assert_eq!(parse(&["--name", "Ash"]).player_name(), "Ash");
+        assert_eq!(parse(&[]).player_name(), "Wanderer");
     }
 }
