@@ -323,8 +323,9 @@ mod tests {
     #[test]
     fn the_player_moves_smoothly_between_ticks() {
         let mut game = Game::new(3);
-        game.click(CLICK, ASPECT);
-        game.update(TICK);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 4, start.y));
+        game.update(TICK * 2);
         let [from, to] = [0, 1].map(|index| center(game.world().player().trail()[index]));
         game.update(TICK / 2);
         let halfway = from.lerp(to, 0.5);

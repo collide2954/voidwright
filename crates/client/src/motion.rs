@@ -68,14 +68,28 @@ fn sample(
         let at = trail.first().map_or(Vec2::ZERO, |&tile| center(tile));
         return (at, Vec2::ZERO);
     }
-    let along = progress.clamp(0.0, 1.0) * count(steps);
+    let progress = progress.clamp(0.0, 1.0);
+    let (eased, rate) = if before.is_none() {
+        ease_in(progress)
+    } else {
+        (progress, 1.0)
+    };
+    let along = eased * count(steps);
     let index = (0..steps)
         .find(|&index| along <= count(index + 1))
         .unwrap_or(steps - 1);
     let (from, leave) = knot(before, trail, after, index);
     let (to, arrive) = knot(before, trail, after, index + 1);
     let (at, velocity) = hermite([from, leave, to, arrive], along - count(index));
-    (at, velocity * count(steps))
+    (at, velocity * count(steps) * rate)
+}
+
+fn ease_in(progress: f32) -> (f32, f32) {
+    let square = progress * progress;
+    (
+        square * (3.0 - 3.0 * progress + square),
+        progress * (6.0 - 9.0 * progress + 4.0 * square),
+    )
 }
 
 fn knot(before: Option<Tile>, trail: &[Tile], after: Option<Tile>, index: usize) -> (Vec2, Vec2) {
@@ -171,26 +185,28 @@ mod tests {
 
     #[test]
     fn a_step_moves_from_center_to_center() {
+        let (before, after) = (Some(Tile::new(-1, 0)), Some(Tile::new(2, 0)));
         let trail = [Tile::new(0, 0), Tile::new(1, 0)];
         assert!(close(
-            position(None, &trail, None, 0.0),
+            position(before, &trail, after, 0.0),
             center(Tile::new(0, 0))
         ));
         assert!(close(
-            position(None, &trail, None, 0.5),
+            position(before, &trail, after, 0.5),
             Vec2::new(1.0, 0.5)
         ));
         assert!(close(
-            position(None, &trail, None, 1.0),
+            position(before, &trail, after, 1.0),
             center(Tile::new(1, 0))
         ));
     }
 
     #[test]
     fn a_run_passes_the_middle_tile_halfway() {
+        let (before, after) = (Some(Tile::new(-1, 0)), Some(Tile::new(3, 0)));
         let trail = [Tile::new(0, 0), Tile::new(1, 0), Tile::new(2, 0)];
         assert!(close(
-            position(None, &trail, None, 0.5),
+            position(before, &trail, after, 0.5),
             center(Tile::new(1, 0))
         ));
     }
@@ -220,6 +236,29 @@ mod tests {
         let sharp = path(&[(1, 0), (1, 0), (-1, 1), (-1, 1)]);
         let turn = sharpest_turn(&frames(&sharp));
         assert!(turn < 0.2, "{turn}");
+    }
+
+    fn speeds(before: Option<Tile>, trail: &[Tile], after: Option<Tile>) -> Vec<f32> {
+        let step = 1.0 / f32::from(FRAMES);
+        (0..FRAMES)
+            .map(|frame| {
+                let progress = f32::from(frame) * step;
+                let here = position(before, trail, after, progress);
+                position(before, trail, after, progress + step).distance(here) / step
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_walk_from_rest_speeds_up_smoothly() {
+        let trail = [Tile::new(0, 0), Tile::new(1, 0)];
+        let speeds = speeds(None, &trail, Some(Tile::new(2, 0)));
+        assert!(speeds[0] < 0.1, "{speeds:?}");
+        for pair in speeds.windows(2) {
+            assert!((pair[1] - pair[0]).abs() < 0.25, "{speeds:?}");
+        }
+        let cruise = speeds[speeds.len() - 1];
+        assert!((cruise - 1.0).abs() < 0.05, "{cruise}");
     }
 
     #[test]
