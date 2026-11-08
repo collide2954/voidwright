@@ -3,7 +3,7 @@ use glam::{Mat4, Vec3, Vec4};
 
 const MIDDLE: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 const REACH: f32 = 1.1;
-const DIGITS: Vec4 = Vec4::new(1.0, 255.0, 65_025.0, 16_581_375.0);
+pub const DIGITS: Vec4 = Vec4::new(1.0, 255.0, 65_025.0, 16_581_375.0);
 
 #[must_use]
 pub fn sun_view(player: Vec3, toward_sun: Vec3) -> Mat4 {
