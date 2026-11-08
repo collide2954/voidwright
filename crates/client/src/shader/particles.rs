@@ -1,11 +1,11 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use miniquad::{
     BlendFactor, BlendState, Comparison, Equation, PipelineParams, ShaderMeta, UniformBlockLayout,
     UniformDesc, UniformType, VertexAttribute, VertexFormat,
 };
 
 use crate::palette;
-use crate::particles::{Anchor, Anchors, SWARMS};
+use crate::particles::{Anchor, Anchors, EMBER_COUNT, SWARMS};
 
 const FOG_RANGE: [f32; 2] = [30.0, 90.0];
 const KINDS: usize = SWARMS.len();
@@ -26,6 +26,7 @@ uniform vec4 volumes[3];
 uniform vec4 motions[3];
 uniform vec4 tints[3];
 uniform vec4 rhythms[3];
+uniform vec4 embers[6];
 varying mediump vec2 spot;
 varying mediump vec3 glow;
 varying mediump float strength;
@@ -46,6 +47,12 @@ void main() {
     vec3 place = center + offset + sway;
     float life = offset.y / volume.y + 0.5;
     float reach = 2.0 * length(offset.xz / volume.xz);
+    if (kind == 2) {
+        vec4 ember = embers[int(in_seed.x * 6.0)];
+        place = ember.xyz;
+        life = ember.w;
+        reach = 0.0;
+    }
     float shore = smoothstep(island.z - 3.0, island.z, length(place.xz - island.xy));
     float beat = rhythm.y * pace * time + phase;
     float pulse = 0.5 + 0.25 * (sin(beat) + sin(2.7 * beat + phase));
@@ -101,6 +108,7 @@ pub fn meta() -> ShaderMeta {
                 UniformDesc::new("motions", UniformType::Float4).array(KINDS),
                 UniformDesc::new("tints", UniformType::Float4).array(KINDS),
                 UniformDesc::new("rhythms", UniformType::Float4).array(KINDS),
+                UniformDesc::new("embers", UniformType::Float4).array(EMBER_COUNT),
             ],
         },
     }
@@ -145,6 +153,7 @@ pub struct Uniforms {
     pub motions: [[f32; 4]; KINDS],
     pub tints: [[f32; 4]; KINDS],
     pub rhythms: [[f32; 4]; KINDS],
+    pub embers: [[f32; 4]; EMBER_COUNT],
 }
 
 impl Uniforms {
@@ -171,6 +180,7 @@ impl Uniforms {
                 let [beat, depth] = swarm.twinkle.to_array();
                 [swarm.sway.y, beat, depth, flag(swarm.ashore)]
             }),
+            embers: anchors.embers.map(|glow: Vec4| glow.to_array()),
         }
     }
 }
@@ -180,9 +190,9 @@ mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, attributes, meta, params};
     use crate::OrbitCamera;
     use crate::palette::{VOID, linear};
-    use crate::particles::{Anchors, SWARMS, SpeckVertex};
+    use crate::particles::{Anchors, EMBER_COUNT, SWARMS, SpeckVertex};
     use crate::shader::GLOW_RANGE;
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Vec3, Vec4};
     use miniquad::{BlendFactor, BlendState, Comparison, Equation, UniformDesc, UniformType};
 
     const ANCHORS: Anchors = Anchors {
@@ -190,6 +200,14 @@ mod tests {
         lantern: Vec3::new(28.65, 2.96, -28.2),
         island: Vec3::new(28.5, 0.0, -28.5),
         shore: 20.0,
+        embers: [
+            Vec4::new(28.6, 3.1, -28.2, 0.1),
+            Vec4::new(28.7, 3.3, -28.3, 0.5),
+            Vec4::new(28.5, 3.6, -28.4, 0.9),
+            Vec4::new(0.0, 0.0, 0.0, -1.0),
+            Vec4::new(28.6, 3.0, -28.2, 0.0),
+            Vec4::new(28.4, 3.4, -28.1, 0.7),
+        ],
     };
 
     fn camera() -> OrbitCamera {
@@ -307,8 +325,19 @@ mod tests {
     }
 
     #[test]
-    fn spores_and_motes_stay_in_the_world_while_embers_ride_along() {
-        assert_eq!(uniforms().volumes.map(|volume| volume[3]), [1.0, 1.0, 0.0]);
+    fn spores_and_motes_stay_in_the_world() {
+        let volumes = uniforms().volumes;
+        assert_eq!([volumes[0][3], volumes[1][3]], [1.0, 1.0]);
+    }
+
+    #[test]
+    fn embers_take_their_places_from_the_flame() {
+        let uniforms = uniforms();
+        assert_eq!(uniforms.embers, ANCHORS.embers.map(|glow| glow.to_array()));
+        assert_eq!(EMBER_COUNT, SWARMS[2].count);
+        assert!(VERTEX.contains("vec4 ember = embers[int(in_seed.x * 6.0)];"));
+        assert!(VERTEX.contains("place = ember.xyz;"));
+        assert!(VERTEX.contains("life = ember.w;"));
     }
 
     #[test]
@@ -370,15 +399,5 @@ mod tests {
         let place = |center: Vec3| center + wrap(speck - center, span);
         let ahead = place(Vec3::new(30.0, 2.0, -28.0));
         assert!((ahead.x - (speck.x + span.x)).abs() < 1e-4);
-    }
-
-    #[test]
-    fn a_carried_cloud_moves_with_its_center() {
-        let span = Vec3::new(0.2, 0.36, 0.2);
-        let speck = Vec3::new(0.13, 0.5, -0.04);
-        let place = |center: Vec3| center + wrap(speck, span);
-        let moved = Vec3::new(1.2, 0.1, -0.8);
-        let shift = place(ANCHORS.lantern + moved) - place(ANCHORS.lantern);
-        assert!(shift.distance(moved) < 1e-4);
     }
 }

@@ -8,6 +8,7 @@ use crate::figure::Coat;
 use crate::ground::Ground;
 use crate::motion::Course;
 use crate::online::Online;
+use crate::particles::{Embers, lantern};
 use crate::{
     BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, skin, to_ground, to_world,
 };
@@ -50,6 +51,7 @@ pub struct Game {
     course: Course,
     stride: Stride,
     coat: Coat,
+    embers: Embers,
     time: f32,
     online: Option<Online>,
 }
@@ -82,6 +84,7 @@ impl Game {
             course: Course::default(),
             stride: Stride::default(),
             coat: Coat::new(&Pose::default(), Mat4::IDENTITY),
+            embers: Embers::new(1),
             time: 0.0,
             online,
         };
@@ -113,6 +116,11 @@ impl Game {
     #[must_use]
     pub const fn stride(&self) -> &Stride {
         &self.stride
+    }
+
+    #[must_use]
+    pub const fn embers(&self) -> &Embers {
+        &self.embers
     }
 
     #[must_use]
@@ -156,6 +164,8 @@ impl Game {
         self.stride.update(before, to_ground(after), seconds);
         self.time += seconds;
         self.coat.update(&self.pose(), self.placement(), seconds);
+        self.embers
+            .update(lantern(self.placement(), &self.skins()), seconds);
         self.camera.target = after + FOCUS;
         if let Some(online) = &mut self.online {
             online.animate(&self.world, seconds, delta.div_duration_f32(TICK));

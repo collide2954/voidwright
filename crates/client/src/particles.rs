@@ -1,3 +1,6 @@
+use std::array::from_fn;
+use std::f32::consts::TAU;
+
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use voidwright_core::Rng;
 
@@ -5,6 +8,15 @@ use crate::game::ISLAND_RADIUS;
 use crate::{BONES, Game, LANTERN_BONE, to_world};
 
 pub const LANTERN: Vec3 = Vec3::new(0.15, 1.456, 0.284);
+pub const EMBER_COUNT: usize = 6;
+const EMBER_VENT: f32 = 0.08;
+const EMBER_SPARK: f32 = 0.02;
+const EMBER_LIFE: [f32; 2] = [1.2, 2.4];
+const EMBER_GAP: f32 = 0.3;
+const EMBER_RISE: f32 = 0.2;
+const EMBER_DRAG: f32 = 1.6;
+const EMBER_CARRY: f32 = 0.3;
+const EMBER_WANDER: f32 = 0.05;
 const SEED: u64 = 0x5350_4543_4b53;
 const STEP: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
 const QUAD: [u32; 6] = [0, 1, 3, 0, 3, 2];
@@ -21,6 +33,7 @@ pub struct Anchors {
     pub lantern: Vec3,
     pub island: Vec3,
     pub shore: f32,
+    pub embers: [Vec4; EMBER_COUNT],
 }
 
 impl Anchors {
@@ -34,7 +47,101 @@ impl Anchors {
             lantern: lantern(game.placement(), &game.skins()),
             island: to_world(middle, 0.0),
             shore: f32::from(ISLAND_RADIUS),
+            embers: game.embers().glows(),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Ember {
+    at: Vec3,
+    velocity: Vec3,
+    age: f32,
+    life: f32,
+    phase: f32,
+    lit: bool,
+}
+
+impl Ember {
+    fn born(vent: Vec3, carry: Vec3, rng: &mut Rng) -> Self {
+        let mut spread = || unit(rng) * 2.0 - 1.0;
+        let spark = Vec3::new(spread(), 0.0, spread()) * EMBER_SPARK;
+        let push = Vec3::new(
+            spread() * EMBER_WANDER,
+            0.175 + 0.075 * spread(),
+            spread() * EMBER_WANDER,
+        );
+        let life = EMBER_LIFE[0] + (EMBER_LIFE[1] - EMBER_LIFE[0]) * (0.5 + 0.5 * spread());
+        Self {
+            at: vent + spark,
+            velocity: carry + push,
+            age: 0.0,
+            life,
+            phase: TAU * (0.5 + 0.5 * spread()),
+            lit: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Embers {
+    sparks: [Ember; EMBER_COUNT],
+    rng: Rng,
+    last: Option<Vec3>,
+}
+
+impl Embers {
+    #[must_use]
+    pub fn new(seed: u64) -> Self {
+        let mut wait = 0.0;
+        Self {
+            sparks: from_fn(|_| {
+                let ember = Ember {
+                    at: Vec3::ZERO,
+                    velocity: Vec3::ZERO,
+                    age: 0.0,
+                    life: wait,
+                    phase: 0.0,
+                    lit: false,
+                };
+                wait += EMBER_GAP;
+                ember
+            }),
+            rng: Rng::new(seed),
+            last: None,
+        }
+    }
+
+    pub fn update(&mut self, flame: Vec3, seconds: f32) {
+        let vent = flame + Vec3::Y * EMBER_VENT;
+        let carry = self.last.map_or(Vec3::ZERO, |last| {
+            (vent - last) / seconds.max(1e-3) * EMBER_CARRY
+        });
+        self.last = Some(vent);
+        let pull = (EMBER_DRAG * seconds).min(1.0);
+        for ember in &mut self.sparks {
+            ember.age += seconds;
+            if ember.age >= ember.life {
+                *ember = Ember::born(vent, carry, &mut self.rng);
+                continue;
+            }
+            let turn = ember.phase + 1.7 * ember.age;
+            let wander = Vec3::new(turn.sin(), 0.0, (0.8 * turn).cos()) * EMBER_WANDER;
+            ember.velocity += (Vec3::Y * EMBER_RISE + wander - ember.velocity) * pull;
+            ember.at += ember.velocity * seconds;
+        }
+    }
+
+    #[must_use]
+    pub fn glows(&self) -> [Vec4; EMBER_COUNT] {
+        self.sparks.map(|ember| {
+            let life = if ember.lit {
+                (ember.age / ember.life).min(1.0)
+            } else {
+                -1.0
+            };
+            ember.at.extend(life)
+        })
     }
 }
 
@@ -88,7 +195,7 @@ pub const MOTES: Swarm = Swarm {
     ashore: false,
 };
 pub const EMBERS: Swarm = Swarm {
-    count: 6,
+    count: EMBER_COUNT,
     anchor: Anchor::Lantern,
     lift: 0.15,
     span: Vec3::new(0.3, 0.45, 0.3),
@@ -120,7 +227,11 @@ pub fn specks() -> Specks {
     let mut rng = Rng::new(SEED);
     let mut specks = Specks::default();
     for (kind, swarm) in (0_u8..).zip(SWARMS) {
-        for seed in seeds(swarm.count, &mut rng) {
+        let count = f32::from(u16::try_from(swarm.count).expect("a swarm has few specks"));
+        for (index, mut seed) in (0_u16..).zip(seeds(swarm.count, &mut rng)) {
+            if swarm.anchor == Anchor::Lantern {
+                seed.x = (f32::from(index) + 0.5) / count;
+            }
             let base = u32::try_from(specks.vertices.len()).expect("the specks fit in u32");
             specks.indices.extend(QUAD.map(|corner| base + corner));
             specks.vertices.extend((0_u8..4).map(|corner| SpeckVertex {
@@ -157,7 +268,8 @@ fn unit(rng: &mut Rng) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Anchor, Anchors, EMBERS, LANTERN, MOTES, SPORES, SWARMS, Swarm, lantern, seeds, specks,
+        Anchors, EMBER_COUNT, EMBERS, Embers, LANTERN, MOTES, SPORES, SWARMS, Swarm, lantern,
+        seeds, specks,
     };
     use crate::{Game, LANTERN_BONE, Pose, skin, to_ground, voidwright};
     use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -212,10 +324,130 @@ mod tests {
     }
 
     #[test]
-    fn embers_ride_close_to_the_lantern() {
-        assert_eq!(EMBERS.anchor, Anchor::Lantern);
-        assert!(EMBERS.span.max_element() < 0.5);
+    fn embers_flicker_faster_than_spores() {
         const { assert!(EMBERS.twinkle.x > SPORES.twinkle.x * 5.0) };
+    }
+
+    const FRAME: f32 = 1.0 / 60.0;
+    const FLAME: Vec3 = Vec3::new(30.0, 2.5, -28.0);
+
+    #[test]
+    fn each_ember_is_born_at_the_flame() {
+        let mut embers = Embers::new(1);
+        let mut born = 0;
+        for _ in 0..600 {
+            embers.update(FLAME, FRAME);
+            for ember in embers.sparks {
+                if ember.lit && ember.age < FRAME * 1.5 {
+                    born += 1;
+                    assert!(ember.at.distance(FLAME) < 0.15, "{ember:?}");
+                }
+            }
+        }
+        assert!(born >= EMBER_COUNT * 2, "{born}");
+    }
+
+    #[test]
+    fn embers_stay_in_the_world_when_the_lantern_swings() {
+        let mut embers = Embers::new(2);
+        for _ in 0..120 {
+            embers.update(FLAME, FRAME);
+        }
+        let before = embers.sparks;
+        embers.update(FLAME + Vec3::X * 0.3, FRAME);
+        let mut kept = 0;
+        for (old, new) in before.iter().zip(embers.sparks) {
+            if old.lit && new.age > old.age {
+                kept += 1;
+                assert!(new.at.distance(old.at) < 0.01, "{old:?} {new:?}");
+            }
+        }
+        assert!(kept >= EMBER_COUNT / 2, "{kept}");
+    }
+
+    #[test]
+    fn embers_rise_and_fade_out_before_they_die() {
+        let mut embers = Embers::new(3);
+        for _ in 0..900 {
+            embers.update(FLAME, FRAME);
+            for (ember, glow) in embers.sparks.iter().zip(embers.glows()) {
+                if !ember.lit {
+                    assert!(glow.w < 0.0, "{glow}");
+                    continue;
+                }
+                assert!((0.0..=1.0).contains(&glow.w), "{glow}");
+                assert!(glow.truncate().distance(ember.at) < 1e-6);
+                if ember.age > 0.6 {
+                    assert!(ember.at.y > FLAME.y + 0.05, "{ember:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn embers_trail_behind_a_walking_lantern() {
+        let mut embers = Embers::new(4);
+        let mut flame = FLAME;
+        let mut behind = 0.0;
+        for frame in 0..300 {
+            flame.x += 1.4 * FRAME;
+            embers.update(flame, FRAME);
+            if frame > 120 {
+                behind += embers
+                    .sparks
+                    .iter()
+                    .filter(|ember| ember.lit)
+                    .map(|ember| flame.x - ember.at.x)
+                    .sum::<f32>();
+            }
+        }
+        assert!(behind > 0.0, "{behind}");
+    }
+
+    #[test]
+    fn the_same_seed_burns_the_same_embers() {
+        let burn = |seed: u64| {
+            let mut embers = Embers::new(seed);
+            for frame in 0_u16..200 {
+                embers.update(FLAME + Vec3::X * f32::from(frame) * 0.01, FRAME);
+            }
+            embers.glows()
+        };
+        assert_eq!(burn(5), burn(5));
+        assert_ne!(burn(5), burn(6));
+    }
+
+    #[test]
+    fn each_ember_speck_knows_its_ember() {
+        let specks = specks();
+        let mut found: Vec<f32> = specks
+            .vertices
+            .iter()
+            .step_by(4)
+            .filter(|vertex| vertex.kind.to_bits() == 2.0_f32.to_bits())
+            .map(|vertex| (vertex.seed[0] * 6.0).floor())
+            .collect();
+        found.sort_by(f32::total_cmp);
+        assert_eq!(found, [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn the_game_burns_its_embers_at_its_lantern() {
+        let mut game = Game::new(3);
+        for _ in 0..90 {
+            game.update(TICK / 20);
+        }
+        let anchors = Anchors::of(&game);
+        assert_eq!(anchors.embers, game.embers().glows());
+        let lit: Vec<Vec4> = anchors
+            .embers
+            .into_iter()
+            .filter(|glow| glow.w >= 0.0)
+            .collect();
+        assert_ne!(lit.len(), 0);
+        for glow in lit {
+            assert!(glow.truncate().distance(anchors.lantern) < 1.5, "{glow}");
+        }
     }
 
     #[test]
@@ -230,6 +462,7 @@ mod tests {
             lantern: Vec3::new(28.6, 3.0, -28.2),
             island: Vec3::new(28.5, 0.0, -28.5),
             shore: 20.0,
+            embers: [Vec4::ZERO; EMBER_COUNT],
         };
         assert!(
             SPORES
