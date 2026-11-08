@@ -8,7 +8,7 @@ use miniquad::{
 
 use crate::detail::{DETAIL_SIZE, paint};
 use crate::shader::{baked, caster, skinned};
-use crate::shadow::{self, sun_view};
+use crate::shadow::{self, sun_view, to_texture};
 use crate::{
     BONES, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin,
     sky, top, underside, voidwright,
@@ -104,13 +104,15 @@ impl Renderer {
         });
         let shadow = context.new_render_pass(map, Some(depth));
         let backdrop_mesh = sky();
-        let sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
+        let mut sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
+        sky.bindings.images = vec![map];
         let ground = game.ground();
         let painter = Painter::default();
         let mut terrain = top(ground, &painter, &VAEL);
         terrain.append(&cliff(ground, &painter, &VAEL));
         terrain.append(&underside(ground, &painter, &VAEL));
-        let terrain = upload(context, &terrain.vertices, &terrain.indices);
+        let mut terrain = upload(context, &terrain.vertices, &terrain.indices);
+        terrain.bindings.images = vec![map];
         let figure = voidwright();
         let mut avatar = upload(context, &figure.vertices, &figure.indices);
         let detail = paint();
@@ -207,7 +209,9 @@ impl Renderer {
         context.apply_pipeline(&self.baked);
         context.apply_bindings(&self.terrain.bindings);
         context.apply_uniforms(UniformsSource::table(
-            &baked::Uniforms::new(view_projection, Mat4::IDENTITY, camera.eye()).marked(marker),
+            &baked::Uniforms::new(view_projection, Mat4::IDENTITY, camera.eye())
+                .marked(marker)
+                .shadowed(to_texture(figure.sun_view)),
         ));
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.skinned);
