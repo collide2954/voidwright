@@ -7,16 +7,21 @@ use voidwright_protocol::{
     ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Welcome,
 };
 
+const CAPACITY: usize = 2_000;
 const GREETERS: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub seed: u64,
+    pub capacity: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { seed: 1 }
+        Self {
+            seed: 1,
+            capacity: CAPACITY,
+        }
     }
 }
 
@@ -109,7 +114,9 @@ impl Connection {
     }
 
     fn greet(&mut self, name: Name, host: &mut Host<'_>) {
-        let Some(id) = host.world.join(host.spawn) else {
+        let room = host.world.population() < host.config.capacity;
+        let Some(id) = room.then(|| host.world.join(host.spawn)).flatten() else {
+            self.refuse(Reason::Full);
             return;
         };
         let welcome = Welcome {
