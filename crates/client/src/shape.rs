@@ -15,11 +15,34 @@ pub struct LitVertex {
     pub params: [f32; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    Smooth,
+    Woven,
+    Knitted,
+    Grained,
+    Brushed,
+}
+
+impl Surface {
+    #[must_use]
+    pub const fn mask(self) -> [f32; 4] {
+        match self {
+            Self::Smooth => [0.0; 4],
+            Self::Woven => [1.0, 0.0, 0.0, 0.0],
+            Self::Knitted => [0.0, 1.0, 0.0, 0.0],
+            Self::Grained => [0.0, 0.0, 1.0, 0.0],
+            Self::Brushed => [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Material {
     pub color: Vec3,
     pub shine: f32,
     pub glow: f32,
+    pub surface: Surface,
 }
 
 impl Material {
@@ -29,6 +52,7 @@ impl Material {
             color,
             shine,
             glow: 0.0,
+            surface: Surface::Smooth,
         }
     }
 
@@ -38,7 +62,13 @@ impl Material {
             color,
             shine: 0.0,
             glow: 1.0,
+            surface: Surface::Smooth,
         }
+    }
+
+    #[must_use]
+    pub const fn textured(self, surface: Surface) -> Self {
+        Self { surface, ..self }
     }
 }
 
@@ -351,7 +381,7 @@ fn normals(grid: &[Vec<Vec3>], sections: &[Section], closed: bool) -> Vec<Vec<Ve
 
 #[cfg(test)]
 mod tests {
-    use super::{LitMesh, Material, round};
+    use super::{LitMesh, Material, Surface, round};
     use glam::{Mat4, Vec3};
     use std::f32::consts::{PI, TAU};
 
@@ -500,6 +530,27 @@ mod tests {
             assert!((0.299..=0.401).contains(&radius));
             assert!(Vec3::from(vertex.normal).distance(Vec3::Y) < 1e-6);
         }
+    }
+
+    #[test]
+    fn a_textured_material_carries_its_surface() {
+        assert_eq!(PAINT.surface.mask(), [0.0; 4]);
+        assert_eq!(
+            PAINT.textured(Surface::Woven).surface.mask(),
+            [1.0, 0.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            PAINT.textured(Surface::Knitted).surface.mask(),
+            [0.0, 1.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            PAINT.textured(Surface::Grained).surface.mask(),
+            [0.0, 0.0, 1.0, 0.0]
+        );
+        assert_eq!(
+            PAINT.textured(Surface::Brushed).surface.mask(),
+            [0.0, 0.0, 0.0, 1.0]
+        );
     }
 
     #[test]
