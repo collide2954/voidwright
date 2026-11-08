@@ -93,7 +93,7 @@ float unblocked() {
 vec3 pool() {
     highp vec3 toward = (lantern.xyz - world) * lantern.w;
     highp float near = dot(toward, toward);
-    if (near >= 1.0) {
+    if (lantern.w <= 0.0 || near >= 1.0) {
         return vec3(0.0);
     }
     float fade = max(1.0 - near, 0.0);
@@ -261,7 +261,7 @@ mod tests {
         let [x, y, z, inverse] = uniforms.lantern;
         let toward = (Vec3::new(x, y, z) - world) * inverse;
         let near = toward.length_squared();
-        if near >= 1.0 {
+        if inverse <= 0.0 || near >= 1.0 {
             return 0.0;
         }
         let fade = (1.0 - near).max(0.0);
@@ -281,7 +281,7 @@ mod tests {
         for line in [
             "highp vec3 toward = (lantern.xyz - world) * lantern.w;",
             "highp float near = dot(toward, toward);",
-            "if (near >= 1.0) {",
+            "if (lantern.w <= 0.0 || near >= 1.0) {",
             "float fade = max(1.0 - near, 0.0);",
             "lantern_light * fade * fade * max(toward.y, 0.0) * inversesqrt(near + 0.0001) * unblocked();",
         ] {
@@ -332,6 +332,14 @@ mod tests {
             let open = pool(&lit(), ground);
             assert!((pool(&blocked(), ground) - open).abs() < 1e-6, "{offset}");
         }
+    }
+
+    #[test]
+    fn the_sky_skips_the_pool_with_its_dark_lantern() {
+        let eye = Vec3::new(30.0, 12.0, -10.0);
+        let sky = Uniforms::new(Mat4::IDENTITY, Mat4::from_translation(eye), eye).unfogged();
+        assert!(sky.lantern[3] <= 0.0);
+        assert!(FRAGMENT.contains("if (lantern.w <= 0.0 || near >= 1.0) {"));
     }
 
     #[test]
