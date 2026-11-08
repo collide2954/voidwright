@@ -25,6 +25,7 @@ const RETURN: f32 = 0.5;
 const MUSIC_GAIN: f32 = 1.8;
 const SPACE_SEND: f32 = 0.7;
 const SPACE_RETURN: f32 = 0.6;
+const NEARBY: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -73,6 +74,7 @@ pub struct Mixer {
     mode: Mode,
     gain: f32,
     listener: Listener,
+    camera: Option<Vec3>,
     voices: [Option<Voice>; VOICES],
     ears: Box<[Binaural]>,
     bank: Bank,
@@ -105,6 +107,7 @@ impl Mixer {
                 at: Vec3::ZERO,
                 yaw: 0.0,
             },
+            camera: None,
             voices: [None; VOICES],
             ears: (0..VOICES).map(|_| Binaural::new(rate)).collect(),
             bank: Bank::new(),
@@ -153,6 +156,7 @@ impl Mixer {
                 });
             }
             Command::Lantern { at } => self.lantern_at = at,
+            Command::Camera { at } => self.camera = Some(at),
             Command::Discovery => self.music.discover(),
         }
     }
@@ -164,7 +168,10 @@ impl Mixer {
             }
         }
         let azimuth = self.listener.azimuth(self.lantern_at);
-        let level = fade(self.lantern_at.distance(self.listener.at));
+        let nearness = self.camera.map_or(1.0, |camera| {
+            NEARBY / camera.distance(self.lantern_at).max(NEARBY)
+        });
+        let level = fade(self.lantern_at.distance(self.listener.at)) * nearness;
         for (smooth, gain) in self.lantern_gains.iter_mut().zip(pan(azimuth)) {
             smooth.set(gain * level);
         }
@@ -467,6 +474,33 @@ mod tests {
             .fold(0.0, f32::max);
         assert!(peak <= CEILING + 1e-6, "{peak}");
         assert!(peak > CEILING * 0.5, "{peak}");
+    }
+
+    #[test]
+    fn the_lantern_pops_louder_when_the_camera_comes_close() {
+        let lantern = |at: Vec3| Command::Lantern { at };
+        let beside = Vec3::new(0.3, 1.2, 0.0);
+        let camera = |distance: f32| Command::Camera {
+            at: beside + Vec3::new(0.0, 0.6, 1.0).normalize() * distance,
+        };
+        let pops = |distance: f32| {
+            let away = render(
+                &[
+                    listener(),
+                    camera(distance),
+                    lantern(Vec3::new(0.0, 1.6, -200.0)),
+                ],
+                48_000 * 30,
+            );
+            let near = render(
+                &[listener(), camera(distance), lantern(beside)],
+                48_000 * 30,
+            );
+            let [left, right] = energies(&near, &away);
+            left + right
+        };
+        let (close, far) = (pops(2.0), pops(16.0));
+        assert!(close > far * 10.0, "{close} {far}");
     }
 
     #[test]

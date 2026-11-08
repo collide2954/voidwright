@@ -6,6 +6,7 @@ const LISTENER: u32 = 1;
 const STEP: u32 = 2;
 const LANTERN: u32 = 3;
 const DISCOVERY: u32 = 4;
+const CAMERA: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Underfoot {
@@ -44,6 +45,9 @@ pub enum Command {
     Lantern {
         at: Vec3,
     },
+    Camera {
+        at: Vec3,
+    },
     Discovery,
 }
 
@@ -58,6 +62,7 @@ impl Command {
                 strength,
             } => (STEP, underfoot.code(), at, strength),
             Self::Lantern { at } => (LANTERN, 0, at, 0.0),
+            Self::Camera { at } => (CAMERA, 0, at, 0.0),
             Self::Discovery => (DISCOVERY, 0, Vec3::ZERO, 0.0),
         };
         let mut words = [0; WORDS];
@@ -81,6 +86,7 @@ impl Command {
                 strength: number(3),
             }),
             LANTERN => Some(Self::Lantern { at }),
+            CAMERA => Some(Self::Camera { at }),
             DISCOVERY => Some(Self::Discovery),
             _ => None,
         }
@@ -114,6 +120,7 @@ mod tests {
                 strength: 1.0,
             },
             Command::Lantern { at },
+            Command::Camera { at },
             Command::Discovery,
         ];
         for command in commands {

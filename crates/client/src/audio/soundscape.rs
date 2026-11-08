@@ -43,6 +43,9 @@ impl Soundscape {
             at: player + Vec3::Y * HEAD,
             yaw: game.camera().yaw(),
         });
+        self.send(Command::Camera {
+            at: game.camera().eye(),
+        });
         self.steps(game);
         self.send(Command::Lantern {
             at: lantern(game.placement(), &game.skins()),
@@ -232,6 +235,12 @@ mod tests {
         let (at, yaw) = listener.expect("each update places the listener");
         assert!(at.distance(*player + Vec3::Y * 1.6) < 1e-4);
         assert!((yaw - game.camera().yaw()).abs() < 1e-6);
+        let camera = commands.iter().find_map(|command| match command {
+            Command::Camera { at } => Some(*at),
+            _ => None,
+        });
+        let eye = camera.expect("each update tells where the camera is");
+        assert!(eye.distance(game.camera().eye()) < 1e-4);
     }
 
     #[test]

@@ -39,7 +39,7 @@ This document gives the design of the sound and the music of Voidwright.
 | --- | --- |
 | Living ambience | Each place has layers of ambient sound. They stay far below the footsteps and are never a constant hiss. A faint, dark wind rises in slow gusts and dies down between them. Moss and spores rustle on the islands. The ring groans far away. The layers change with the place and the time of day. |
 | Footsteps | Each foot strike of the gait plays a recorded step on stone through a low-pass filter. On moss and soil, a faint layer of a recorded step on sand adds a soft brush. Moss has the lowest filter, so its steps are a soft, padded thud. Soil is a little brighter, and rock is the clearest and hardest. The steps never crunch like snow. Metal plate gets its own steps when walkable plates come into the game. Running plays harder steps than walking. |
-| Lantern | The flame of the lantern pops softly now and then. The lantern does not creak. |
+| Lantern | The flame of the lantern pops softly now and then. The distance from the camera to the flame sets the level of the pops. Within 3 m, the pops have their full level. When the camera moves away, the pops become quieter. The lantern does not creak. |
 
 ## Music
 
@@ -66,7 +66,7 @@ The first playable slice contains these sounds:
 
 - Footsteps on each ground type.
 - The void wind.
-- The hiss and the creak of the lantern.
+- The pops of the lantern flame.
 - The reverb of the open island.
 - One music bed that swells at a discovery.
 
