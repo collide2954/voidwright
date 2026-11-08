@@ -8,14 +8,81 @@ const SEED: u64 = 0x5350_4543_4b53;
 const STEP: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
 const QUAD: [u32; 6] = [0, 1, 3, 0, 3, 2];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    Ground,
+    Lantern,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchors {
+    pub player: Vec3,
+    pub lantern: Vec3,
+    pub island: Vec3,
+    pub shore: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Swarm {
     pub count: usize,
+    pub anchor: Anchor,
+    pub lift: f32,
+    pub span: Vec3,
+    pub drift: Vec3,
+    pub sway: Vec2,
+    pub size: f32,
+    pub color: Vec3,
+    pub twinkle: Vec2,
+    pub ashore: bool,
 }
 
-pub const SPORES: Swarm = Swarm { count: 400 };
-pub const MOTES: Swarm = Swarm { count: 600 };
-pub const EMBERS: Swarm = Swarm { count: 6 };
+impl Swarm {
+    #[must_use]
+    pub fn center(&self, anchors: &Anchors) -> Vec3 {
+        let base = match self.anchor {
+            Anchor::Ground => anchors.player,
+            Anchor::Lantern => anchors.lantern,
+        };
+        base + Vec3::Y * self.lift
+    }
+}
+
+pub const SPORES: Swarm = Swarm {
+    count: 400,
+    anchor: Anchor::Ground,
+    lift: 1.025,
+    span: Vec3::new(16.0, 1.95, 16.0),
+    drift: Vec3::new(0.02, 0.12, 0.01),
+    sway: Vec2::new(0.25, 0.6),
+    size: 0.03,
+    color: Vec3::new(0.1, 1.3, 0.9),
+    twinkle: Vec2::new(0.8, 1.0),
+    ashore: true,
+};
+pub const MOTES: Swarm = Swarm {
+    count: 600,
+    anchor: Anchor::Ground,
+    lift: 2.0,
+    span: Vec3::new(50.0, 20.0, 50.0),
+    drift: Vec3::new(0.05, 0.015, -0.03),
+    sway: Vec2::new(0.3, 0.25),
+    size: 0.014,
+    color: Vec3::new(0.3, 0.33, 0.45),
+    twinkle: Vec2::new(0.4, 0.5),
+    ashore: false,
+};
+pub const EMBERS: Swarm = Swarm {
+    count: 6,
+    anchor: Anchor::Lantern,
+    lift: 0.12,
+    span: Vec3::new(0.2, 0.36, 0.2),
+    drift: Vec3::new(0.013, 0.09, -0.007),
+    sway: Vec2::new(0.025, 2.5),
+    size: 0.01,
+    color: Vec3::new(2.4, 0.6, 0.06),
+    twinkle: Vec2::new(11.0, 0.8),
+    ashore: false,
+};
 pub const SWARMS: [Swarm; 3] = [SPORES, MOTES, EMBERS];
 
 #[repr(C)]
@@ -73,7 +140,9 @@ fn unit(rng: &mut Rng) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LANTERN, SWARMS, lantern, seeds, specks};
+    use super::{
+        Anchor, Anchors, EMBERS, LANTERN, MOTES, SPORES, SWARMS, Swarm, lantern, seeds, specks,
+    };
     use crate::{Pose, skin, voidwright};
     use glam::{Mat4, Vec3, Vec4};
     use std::f32::consts::FRAC_PI_2;
@@ -86,6 +155,78 @@ mod tests {
     #[test]
     fn spores_motes_and_embers_have_their_counts() {
         assert_eq!(SWARMS.map(|swarm| swarm.count), [400, 600, 6]);
+    }
+
+    fn reach(swarm: &Swarm) -> Vec3 {
+        swarm.span / 2.0
+    }
+
+    #[test]
+    fn spores_rise_from_the_moss_to_about_two_meters() {
+        let [low, high] = [-1.0, 1.0].map(|side| SPORES.lift + side * reach(&SPORES).y);
+        assert!((0.02..0.1).contains(&low) && (1.8..2.2).contains(&high));
+        const { assert!(SPORES.drift.y > 0.05) };
+    }
+
+    #[test]
+    fn spores_stay_within_about_eight_meters_of_the_player() {
+        assert!((7.0..9.0).contains(&reach(&SPORES).x));
+        assert!((7.0..9.0).contains(&reach(&SPORES).z));
+    }
+
+    #[test]
+    fn motes_drift_through_a_larger_volume_than_spores() {
+        assert!((20.0..30.0).contains(&reach(&MOTES).x));
+        assert!(reach(&MOTES).y > reach(&SPORES).y * 4.0);
+        assert!(MOTES.drift.length() < SPORES.drift.length());
+    }
+
+    #[test]
+    fn motes_are_smaller_and_dimmer_than_spores() {
+        const { assert!(MOTES.size < SPORES.size) };
+        assert!(MOTES.color.max_element() < SPORES.color.max_element() / 2.0);
+    }
+
+    #[test]
+    fn each_swarm_glows_in_its_own_color() {
+        let [spore, mote, ember] = SWARMS.map(|swarm| swarm.color);
+        assert!(spore.y > spore.z && spore.z > spore.x * 4.0);
+        assert!(mote.z > mote.x && mote.min_element() > mote.max_element() * 0.6);
+        assert!(ember.x > ember.y * 2.0 && ember.y > ember.z);
+    }
+
+    #[test]
+    fn embers_ride_close_to_the_lantern() {
+        assert_eq!(EMBERS.anchor, Anchor::Lantern);
+        assert!(EMBERS.span.max_element() < 0.5);
+        const { assert!(EMBERS.twinkle.x > SPORES.twinkle.x * 5.0) };
+    }
+
+    #[test]
+    fn only_spores_stay_over_the_island() {
+        assert_eq!(SWARMS.map(|swarm| swarm.ashore), [true, false, false]);
+    }
+
+    #[test]
+    fn a_swarm_gathers_around_its_anchor() {
+        let anchors = Anchors {
+            player: Vec3::new(28.5, 1.5, -28.5),
+            lantern: Vec3::new(28.6, 3.0, -28.2),
+            island: Vec3::new(28.5, 0.0, -28.5),
+            shore: 20.0,
+        };
+        assert!(
+            SPORES
+                .center(&anchors)
+                .distance(anchors.player + Vec3::Y * SPORES.lift)
+                < 1e-6
+        );
+        assert!(
+            EMBERS
+                .center(&anchors)
+                .distance(anchors.lantern + Vec3::Y * EMBERS.lift)
+                < 1e-6
+        );
     }
 
     #[test]
