@@ -59,6 +59,23 @@ const TEAL_LIGHT: Material = Material::light(Vec3::new(0.3, 1.0, 0.85)).glowing(
 const AMBER_LIGHT: Material = Material::light(Vec3::new(1.0, 0.6, 0.25)).glowing(GLOW_RANGE);
 const DUST: Vec3 = Vec3::new(0.42, 0.36, 0.28);
 
+pub const MATERIALS: [(&str, Material); 14] = [
+    ("COAT", COAT),
+    ("LINING", LINING),
+    ("CLOTH", CLOTH),
+    ("SCARF", SCARF),
+    ("LEATHER", LEATHER),
+    ("WRAP", WRAP),
+    ("BOOT", BOOT),
+    ("SOLE", SOLE),
+    ("PLATE", PLATE),
+    ("METAL", METAL),
+    ("MASK", MASK),
+    ("BRASS", BRASS),
+    ("TEAL_LIGHT", TEAL_LIGHT),
+    ("AMBER_LIGHT", AMBER_LIGHT),
+];
+
 fn weather(mesh: &mut SkinnedMesh) {
     let dust = linear(DUST);
     let swells: Vec<f32> = mesh
