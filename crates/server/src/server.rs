@@ -239,13 +239,16 @@ impl Connection {
         }
     }
 
-    fn finish(self, stats: &mut Stats) {
+    fn finish(self, world: &mut World, stats: &mut Stats) {
         let close = self.close.unwrap_or(Close::Left);
         if matches!(close, Close::Malformed(_) | Close::Fault(_)) {
             stats.dropped += 1;
         }
         match self.stage {
-            Stage::Playing { id, name, .. } => println!("{} {name} leaves: {close}", id.get()),
+            Stage::Playing { id, name, .. } => {
+                world.leave(id);
+                println!("{} {name} leaves: {close}", id.get());
+            }
             Stage::Greeting { .. } => println!("{} closes: {close}", self.peer),
         }
     }
@@ -359,10 +362,13 @@ impl Server {
 
     fn sweep(&mut self) {
         let Self {
-            connections, stats, ..
+            connections,
+            world,
+            stats,
+            ..
         } = self;
         for connection in connections.extract_if(.., |connection| connection.close.is_some()) {
-            connection.finish(stats);
+            connection.finish(world, stats);
         }
     }
 }
