@@ -864,7 +864,7 @@ mod tests {
             let widest = radii.iter().copied().fold(0.0, f32::max);
             widest - radii.iter().copied().fold(f32::INFINITY, f32::min)
         };
-        assert!(spread(0.1) > spread(0.0) + 0.02);
+        assert!(spread(0.2) > spread(0.0) + 0.02);
     }
 
     #[test]

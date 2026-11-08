@@ -1,5 +1,7 @@
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
+use crate::smoothstep;
+
 #[must_use]
 pub fn ball(point: Vec3, radius: f32) -> f32 {
     point.length() - radius
@@ -103,8 +105,8 @@ fn span(profile: &[Vec3]) -> f32 {
 }
 
 fn unfold(point: Vec3, length: f32, folds: Vec2) -> Vec2 {
-    let down = (-point.y / length).clamp(0.0, 1.0);
-    let fold = 1.0 + folds.y * down * wave(folds.x, point.z.atan2(point.x));
+    let down = smoothstep(0.45, 1.0, -point.y / length);
+    let fold = 1.0 + folds.y * down * wave(folds.x, point.z.atan2(point.x)).max(0.0);
     Vec2::new(point.xz().length() / fold, point.y)
 }
 

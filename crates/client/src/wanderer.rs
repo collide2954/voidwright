@@ -752,7 +752,7 @@ fn tapered(bone: Bone, [from, to]: [Vec3; 2], [start, end]: [f32; 2]) -> Stroke 
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(&COAT_CUT, SHELL, Vec2::new(9.0, 0.05));
+        let panel = tube(&COAT_CUT, SHELL, Vec2::new(9.0, 0.16));
         clay.add(
             waistband(panel, Vec3::ZERO, COAT)
                 .lined(LINING)
@@ -1775,6 +1775,41 @@ mod tests {
         for vertex in top {
             assert!(on_cloth(vertex) < 0.2, "{:?}", vertex.position);
         }
+    }
+
+    #[test]
+    fn the_skirt_falls_in_deep_folds_toward_the_hem() {
+        use crate::figure::{COAT_CUT, rest, waist};
+        let garments = super::garments();
+        let frame = waist(rest()[Bone::Pelvis.index()]);
+        let folds = |drop: f32| {
+            let oval = super::section(&COAT_CUT, -drop) + super::SHELL / 2.0;
+            let ratios: Vec<f32> = (0..180_u16)
+                .filter_map(|step| {
+                    let angle = (f32::from(step) * 2.0).to_radians();
+                    let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+                    if direction.z.abs() > 0.9 {
+                        return None;
+                    }
+                    let reach = (0..500_u16)
+                        .map(|index| 0.5 - f32::from(index) * 0.001)
+                        .find(|&reach| {
+                            let point = direction * reach - Vec3::Y * drop;
+                            garments.distance(frame.transform_point3(point)) < 0.0
+                        })?;
+                    let around =
+                        glam::Vec2::new(direction.x / oval.x, direction.z / oval.y).length();
+                    Some(reach * around)
+                })
+                .collect();
+            let low = ratios.iter().copied().fold(f32::INFINITY, f32::min);
+            let high = ratios.iter().copied().fold(0.0, f32::max);
+            (low, high)
+        };
+        let (low, high) = folds(0.58);
+        assert!(low > 0.98 && high - low > 0.12, "hem {low} {high}");
+        let (low, high) = folds(0.15);
+        assert!(low > 0.98 && high - low < 0.03, "hips {low} {high}");
     }
 
     #[test]
