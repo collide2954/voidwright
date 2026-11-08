@@ -1,7 +1,7 @@
 use std::array::from_fn;
 use std::f32::consts::FRAC_PI_4;
 
-use super::dsp::{Frame, Phase, Svf, sine};
+use super::dsp::{Frame, Noise, OnePole, Phase, Svf, decay, sine};
 use crate::spline::smoothstep;
 
 const CONTROL: u16 = 32;
@@ -37,10 +37,35 @@ const DRIFT_CENTS: f32 = 2.5;
 const PAD_CUTOFF: f32 = 850.0;
 const PAD_FADES: [f32; 2] = [10.0, 12.0];
 
+// D dorian from D4 to D6.
+const SCALE: [u8; 15] = [62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86];
+// The steps of the scale on D and A, where a phrase can end.
+const HOMES: [usize; 5] = [0, 4, 7, 11, 14];
+const STEPS: [isize; 6] = [-2, -1, -1, 1, 1, 2];
+const BEAT: f32 = 0.3;
+const PAUSE: f32 = 1.8;
+const REPEAT_SPAN: f32 = 6.0;
+const ECHO: f32 = 0.6;
+const MOTIF_FADE: [f32; 2] = [16.0, 20.0];
+
+const PLUCK_RANGE: [usize; 2] = [4, 14];
+const PLUCK_STARTS: [usize; 4] = [4, 7, 9, 11];
+const PLUCK_BEATS: [u8; 5] = [2, 2, 3, 3, 4];
+const PLUCK_LEVEL: f32 = 0.17;
+const PLUCK_RING: f32 = 2.6;
+const PLUCK_LIFE: f32 = 3.5;
+const PLUCK_END: f32 = 0.3;
+const PLUCK_POINT: f32 = 0.27;
+const PLUCK_NOISE: f32 = 0.3;
+const PLUCK_TONE: f32 = 3_000.0;
+const PLUCK_PANS: [f32; 2] = [-0.25, 0.3];
+const LINE: u16 = 1_024;
+
 pub struct Music {
     time: Time,
     countdown: usize,
     bed: Bed,
+    motif: Motif,
 }
 
 impl Music {
@@ -51,18 +76,25 @@ impl Music {
             time,
             countdown: 0,
             bed: Bed::new(seed, time),
+            motif: Motif::new(seed),
         }
+    }
+
+    pub fn discover(&mut self) {
+        self.motif.start();
     }
 
     pub fn render(&mut self, out: &mut [Frame]) {
         let mut start = 0;
         while start < out.len() {
             if self.countdown == 0 {
+                self.motif.control(self.time);
                 self.bed.control(self.time);
                 self.countdown = usize::from(CONTROL);
             }
             let end = out.len().min(start + self.countdown);
             self.bed.render(&mut out[start..end]);
+            self.motif.render(&mut out[start..end]);
             self.countdown -= end - start;
             start = end;
         }
@@ -292,6 +324,201 @@ impl Voice {
     }
 }
 
+struct Motif {
+    dice: Dice,
+    noise: Noise,
+    strings: [Pluck; 2],
+    degrees: [usize; 7],
+    gaps: [f32; 7],
+    length: usize,
+    notes: usize,
+    played: usize,
+    wait: f32,
+    age: f32,
+    active: bool,
+}
+
+impl Motif {
+    fn new(seed: u32) -> Self {
+        Self {
+            dice: Dice::new(seed ^ 0x6D6F_7466),
+            noise: Noise::new(seed),
+            strings: PLUCK_PANS.map(Pluck::new),
+            degrees: [0; 7],
+            gaps: [0.0; 7],
+            length: 0,
+            notes: 0,
+            played: 0,
+            wait: 0.0,
+            age: 0.0,
+            active: false,
+        }
+    }
+
+    fn start(&mut self) {
+        if self.active {
+            return;
+        }
+        self.length = 4 + self.dice.pick(4);
+        let mut degree = PLUCK_STARTS[self.dice.pick(PLUCK_STARTS.len())];
+        for (slot, gap) in self
+            .degrees
+            .iter_mut()
+            .zip(&mut self.gaps)
+            .take(self.length)
+        {
+            *slot = degree;
+            *gap = BEAT * f32::from(PLUCK_BEATS[self.dice.pick(PLUCK_BEATS.len())]);
+            let step = STEPS[self.dice.pick(STEPS.len())];
+            degree = degree
+                .saturating_add_signed(step)
+                .clamp(PLUCK_RANGE[0], PLUCK_RANGE[1]);
+        }
+        let last = self.length - 1;
+        self.degrees[last] = home(self.degrees[last]);
+        self.gaps[last] = PAUSE;
+        let span: f32 = self.gaps[..last].iter().sum();
+        let passes = if span <= REPEAT_SPAN && self.dice.pick(2) == 0 {
+            2
+        } else {
+            1
+        };
+        self.notes = self.length * passes;
+        self.played = 0;
+        self.wait = 0.0;
+        self.age = 0.0;
+        self.active = true;
+    }
+
+    fn control(&mut self, time: Time) {
+        if !self.active {
+            return;
+        }
+        self.age += time.step;
+        self.wait -= time.step;
+        if self.wait <= 0.0 && self.played < self.notes {
+            let slot = self.played % self.length;
+            let echo = if self.played < self.length { 1.0 } else { ECHO };
+            let level = PLUCK_LEVEL * echo * (0.85 + 0.15 * self.dice.unit());
+            let frequency = hertz(SCALE[self.degrees[slot]]);
+            self.strings[self.played % 2].pluck(frequency, level, &mut self.noise, time.rate);
+            self.wait += self.gaps[slot];
+            self.played += 1;
+        }
+        let master = 1.0 - smoothstep(MOTIF_FADE[0], MOTIF_FADE[1], self.age);
+        for string in &mut self.strings {
+            string.control(master, time);
+        }
+        self.active = self.age < MOTIF_FADE[1] || !self.strings.iter().all(Pluck::silent);
+    }
+
+    fn render(&mut self, out: &mut [Frame]) {
+        if self.active {
+            for string in &mut self.strings {
+                string.render(out);
+            }
+        }
+    }
+}
+
+struct Pluck {
+    line: Box<[f32]>,
+    length: usize,
+    index: usize,
+    last: f32,
+    tuning: f32,
+    held: [f32; 2],
+    loss: f32,
+    life: f32,
+    gain: Ramp,
+    pan: [f32; 2],
+}
+
+impl Pluck {
+    fn new(position: f32) -> Self {
+        Self {
+            line: vec![0.0; usize::from(LINE)].into_boxed_slice(),
+            length: 2,
+            index: 0,
+            last: 0.0,
+            tuning: 0.0,
+            held: [0.0; 2],
+            loss: 0.0,
+            life: 0.0,
+            gain: Ramp::default(),
+            pan: pan(position),
+        }
+    }
+
+    fn pluck(&mut self, frequency: f32, level: f32, noise: &mut Noise, rate: f32) {
+        let period = rate / frequency;
+        let whole = whole(period - 0.6).clamp(2, LINE - 1);
+        // The mean of two frames delays the loop by half a frame.
+        // The all-pass gives the remaining fraction of the period.
+        let fraction = period - 0.5 - f32::from(whole);
+        self.tuning = (1.0 - fraction) / (1.0 + fraction);
+        self.loss = decay(PLUCK_RING, frequency);
+        self.length = usize::from(whole);
+        let line = &mut self.line[..self.length];
+        let span = f32::from(whole);
+        let apex = PLUCK_POINT * span;
+        let mut tone = OnePole::low(PLUCK_TONE, rate);
+        let mut position = 0.0;
+        for slot in line.iter_mut() {
+            let shape = if position < apex {
+                position / apex
+            } else {
+                (span - position) / (span - apex)
+            };
+            *slot = shape + PLUCK_NOISE * tone.process(noise.sample());
+            position += 1.0;
+        }
+        let mean = line.iter().sum::<f32>() / span;
+        let loudest = line
+            .iter()
+            .fold(0.0_f32, |loudest, value| loudest.max((value - mean).abs()));
+        let scale = level / loudest.max(1e-6);
+        for slot in line.iter_mut() {
+            *slot = (*slot - mean) * scale;
+        }
+        self.index = 0;
+        self.last = 0.0;
+        self.held = [0.0; 2];
+        self.life = PLUCK_LIFE;
+    }
+
+    fn control(&mut self, master: f32, time: Time) {
+        self.life = (self.life - time.step).max(0.0);
+        self.gain.aim(master * (self.life / PLUCK_END).min(1.0));
+    }
+
+    fn silent(&self) -> bool {
+        self.gain.silent()
+    }
+
+    fn render(&mut self, out: &mut [Frame]) {
+        if self.gain.silent() {
+            return;
+        }
+        for frame in out {
+            let old = self.line[self.index];
+            let averaged = old.midpoint(self.last);
+            self.last = old;
+            let [input, output] = self.held;
+            let tuned = self.tuning * (averaged - output) + input;
+            self.held = [averaged, tuned];
+            self.line[self.index] = tuned * self.loss;
+            self.index += 1;
+            if self.index == self.length {
+                self.index = 0;
+            }
+            let sound = old * self.gain.next();
+            frame[0] += sound * self.pan[0];
+            frame[1] += sound * self.pan[1];
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct Saw {
     phase: f32,
@@ -404,6 +631,28 @@ impl Dice {
     fn within(&mut self, [low, high]: [f32; 2]) -> f32 {
         low + (high - low) * self.unit()
     }
+
+    fn pick(&mut self, count: usize) -> usize {
+        usize::try_from(self.roll()).unwrap_or(0) % count
+    }
+}
+
+fn whole(value: f32) -> u16 {
+    (0..16).rev().fold(0, |whole, bit| {
+        let next = whole | (1 << bit);
+        if f32::from(next) <= value {
+            next
+        } else {
+            whole
+        }
+    })
+}
+
+fn home(degree: usize) -> usize {
+    HOMES
+        .into_iter()
+        .min_by_key(|home| home.abs_diff(degree))
+        .unwrap_or(degree)
 }
 
 fn turned(turns: f32) -> Phase {
@@ -500,6 +749,66 @@ mod tests {
             .filter(|&(_, &strength)| strength >= 0.3 * loudest)
             .map(|(&note, _)| note)
             .collect()
+    }
+
+    fn difference(one: &[Frame], other: &[Frame]) -> Vec<Frame> {
+        one.iter()
+            .zip(other)
+            .map(|(one, other)| [one[0] - other[0], one[1] - other[1]])
+            .collect()
+    }
+
+    #[test]
+    fn a_discovery_surfaces_a_motif_that_is_gone_within_thirty_seconds() {
+        let mut with = Music::new(6, RATE);
+        let mut without = Music::new(6, RATE);
+        take(&mut with, 30);
+        take(&mut without, 30);
+        with.discover();
+        let motif = difference(&take(&mut with, 32), &take(&mut without, 32));
+        let rise = decibels(rms(&motif[..2 * SECOND]));
+        assert!(rise > -40.0, "{rise} dBFS");
+        let loudest = peak(&motif);
+        assert!(loudest < 10.0_f32.powf(-12.0 / 20.0), "{loudest}");
+        let after = peak(&motif[30 * SECOND..]);
+        assert!(after < 1e-6, "{after}");
+    }
+
+    #[test]
+    fn a_discovery_plays_even_while_the_bed_rests() {
+        let mut music = Music::new(6, RATE);
+        take(&mut music, 30);
+        let mut quiet = 0;
+        for _ in 0..600 {
+            quiet = if peak(&take(&mut music, 1)) < 1e-5 {
+                quiet + 1
+            } else {
+                0
+            };
+            if quiet == 3 {
+                break;
+            }
+        }
+        assert_eq!(quiet, 3);
+        music.discover();
+        let loudest = peak(&take(&mut music, 2));
+        assert!(loudest > 0.05, "{loudest}");
+    }
+
+    #[test]
+    fn the_peak_stays_below_half_scale_through_ten_minutes_of_discoveries() {
+        let mut with = Music::new(7, RATE);
+        let mut without = Music::new(7, RATE);
+        let (mut loudest, mut bed) = (0.0_f32, 0.0_f32);
+        for second in 0..600 {
+            if second % 40 == 0 {
+                with.discover();
+            }
+            loudest = loudest.max(peak(&take(&mut with, 1)));
+            bed = bed.max(peak(&take(&mut without, 1)));
+        }
+        assert!(loudest > bed, "{loudest} {bed}");
+        assert!(loudest < 0.5, "{loudest}");
     }
 
     #[test]
