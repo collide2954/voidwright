@@ -9,11 +9,12 @@ use crate::ground::Ground;
 use crate::motion::Course;
 use crate::online::Online;
 use crate::{
-    BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, to_ground, to_world,
+    BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, skin, to_ground, to_world,
 };
 
 pub(crate) use voidwright_core::ISLAND_RADIUS;
 const FOCUS: Vec3 = Vec3::new(0.0, 0.9, 0.0);
+const FIGURES: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Local<'a> {
@@ -156,6 +157,30 @@ impl Game {
         self.time += seconds;
         self.coat.update(&self.pose(), self.placement(), seconds);
         self.camera.target = after + FOCUS;
+        if let Some(online) = &mut self.online {
+            online.animate(&self.world, seconds, delta.div_duration_f32(TICK));
+        }
+    }
+
+    #[must_use]
+    pub fn others(&self) -> Vec<(Mat4, [Mat4; BONES])> {
+        let Some(online) = &self.online else {
+            return Vec::new();
+        };
+        let here = to_ground(self.player_position());
+        let mut figures: Vec<(Vec2, &Stride)> = online.figures().collect();
+        figures.sort_by(|a, b| {
+            let (a, b) = (a.0.distance_squared(here), b.0.distance_squared(here));
+            a.total_cmp(&b)
+        });
+        figures
+            .into_iter()
+            .take(FIGURES)
+            .map(|(at, stride)| {
+                let position = to_world(at, self.ground.height_at(at));
+                (placement(position, stride), skin(&stride.pose(self.time)))
+            })
+            .collect()
     }
 
     pub fn click(&mut self, screen: Vec2, aspect: f32) {
@@ -510,5 +535,38 @@ mod tests {
         let mut game = Game::new(3);
         game.walk_to(east(2));
         assert_eq!(game.take_orders(), []);
+    }
+
+    #[test]
+    fn other_players_show_while_the_server_sees_them() {
+        let mut game = Game::online(&welcome());
+        game.apply(&update(1, &[(ME, east(0), None), (6, east(2), None)]));
+        game.update(TICK / 10);
+        assert_eq!(game.others().len(), 1);
+        game.apply(&update(2, &[(ME, east(0), None)]));
+        game.update(TICK / 10);
+        assert_eq!(game.others(), Vec::new());
+    }
+
+    #[test]
+    fn another_player_walks_smoothly_between_updates() {
+        let mut game = Game::online(&welcome());
+        let step = Some(Direction::East);
+        for tick in 1..=3 {
+            let other = east(i32::try_from(tick).unwrap());
+            game.apply(&update(tick, &[(ME, east(0), None), (6, other, step)]));
+            game.update(if tick < 3 { TICK } else { TICK / 2 });
+        }
+        let (placement, _) = game.others()[0];
+        let at = to_ground(placement.w_axis.truncate());
+        let halfway = center(east(2)).lerp(center(east(3)), 0.5);
+        assert!(at.distance(halfway) < 1e-3, "{at}");
+    }
+
+    #[test]
+    fn an_offline_game_shows_no_other_players() {
+        let mut game = Game::new(3);
+        game.update(TICK);
+        assert_eq!(game.others(), Vec::new());
     }
 }

@@ -419,6 +419,13 @@ impl Renderer {
             .lit(&figure.lamp),
         ));
         context.draw(0, self.avatar.count, 1);
+        for (placement, bones) in game.others() {
+            context.apply_uniforms(UniformsSource::table(
+                &skinned::Uniforms::new(view_projection, placement, &bones, camera.eye(), &VAEL)
+                    .lit(&figure.lamp),
+            ));
+            context.draw(0, self.avatar.count, 1);
+        }
         context.apply_pipeline(&self.particles);
         context.apply_bindings(&self.specks.bindings);
         context.apply_uniforms(UniformsSource::table(&particles::Uniforms::new(

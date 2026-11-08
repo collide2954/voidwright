@@ -1,13 +1,16 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use glam::Vec2;
 use voidwright_core::{PlayerId, TICK, Tile, Walker, World};
 use voidwright_protocol::{
     ClientMessage, Error, Inbox, Name, Outbox, Reason, ServerMessage, Update, Welcome,
 };
 
+use crate::Stride;
 use crate::motion::Course;
 
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -140,11 +143,19 @@ fn open(address: &str) -> Result<TcpStream, Failure> {
     Err(Failure::Io(failure))
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct Figure {
+    course: Course,
+    stride: Stride,
+    at: Option<Vec2>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Online {
     phase: Duration,
     goal: Option<Tile>,
     orders: Vec<Tile>,
+    figures: BTreeMap<PlayerId, Figure>,
 }
 
 impl Online {
@@ -171,19 +182,55 @@ impl Online {
         std::mem::take(&mut self.orders)
     }
 
-    pub fn apply(&mut self, update: &Update, world: &mut World, me: PlayerId, course: &mut Course) {
+    pub fn apply(&mut self, update: &Update, world: &mut World, me: PlayerId, mine: &mut Course) {
         let progress = self.alpha();
-        if let Some(mine) = update.players.iter().find(|sighting| sighting.id == me) {
-            let next = mine.step.map(|step| mine.tile.step(step));
-            if let Some(walker) = world.player(me) {
-                follow(course, walker, mine.tile, progress);
+        for sighting in &update.players {
+            let next = sighting.step.map(|step| sighting.tile.step(step));
+            let course = if sighting.id == me {
+                &mut *mine
+            } else {
+                &mut self.figures.entry(sighting.id).or_default().course
+            };
+            if let Some(walker) = world.player(sighting.id) {
+                follow(course, walker, sighting.tile, progress);
             }
-            world.sync(me, mine.tile, next);
-            if Some(mine.tile) == self.goal {
-                self.goal = None;
+            world.sync(sighting.id, sighting.tile, next);
+        }
+        let seen: BTreeSet<PlayerId> = update.players.iter().map(|sighting| sighting.id).collect();
+        self.figures.retain(|id, _| {
+            let stays = seen.contains(id);
+            if !stays {
+                world.leave(*id);
             }
+            stays
+        });
+        if world.player(me).map(Walker::tile) == self.goal {
+            self.goal = None;
         }
         self.phase = Duration::ZERO;
+    }
+
+    pub fn animate(&mut self, world: &World, seconds: f32, ticks: f32) {
+        let progress = self.alpha();
+        for (id, figure) in &mut self.figures {
+            let Some(walker) = world.player(*id) else {
+                continue;
+            };
+            figure.course.update(ticks);
+            let at = figure
+                .course
+                .position(walker.trail(), walker.next_step(), progress);
+            if let Some(before) = figure.at {
+                figure.stride.update(before, at, seconds);
+            }
+            figure.at = Some(at);
+        }
+    }
+
+    pub fn figures(&self) -> impl Iterator<Item = (Vec2, &Stride)> {
+        self.figures
+            .values()
+            .filter_map(|figure| figure.at.map(|at| (at, &figure.stride)))
     }
 }
 
