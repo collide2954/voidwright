@@ -25,6 +25,7 @@ The game is not complete. The offline prototype is playable: one player walks on
 | Save one frame as a PNG file | `cargo run --release -p voidwright-client -- --capture shot.png` |
 | Set the camera for a capture | `cargo run --release -p voidwright-client -- --capture shot.png --orbit 0.7 0.45 40` |
 | Measure the frame rate | `cargo run --release -p voidwright-client -- --benchmark 10` |
+| Start the model inspector | `cargo run --release -p voidwright-client --bin inspect` |
 
 The three values after `--orbit` are the yaw and the pitch in radians, and the distance in tiles.
 
