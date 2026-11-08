@@ -46,7 +46,6 @@ impl Soundscape {
         self.steps(game);
         self.send(Command::Lantern {
             at: lantern(game.placement(), &game.skins()),
-            swing: game.coat().lantern_swing(),
         });
         self.explore(player, seconds);
     }

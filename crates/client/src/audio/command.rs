@@ -43,7 +43,6 @@ pub enum Command {
     },
     Lantern {
         at: Vec3,
-        swing: f32,
     },
     Discovery,
 }
@@ -58,7 +57,7 @@ impl Command {
                 underfoot,
                 strength,
             } => (STEP, underfoot.code(), at, strength),
-            Self::Lantern { at, swing } => (LANTERN, 0, at, swing),
+            Self::Lantern { at } => (LANTERN, 0, at, 0.0),
             Self::Discovery => (DISCOVERY, 0, Vec3::ZERO, 0.0),
         };
         let mut words = [0; WORDS];
@@ -81,10 +80,7 @@ impl Command {
                 underfoot: Underfoot::from_code(words[1])?,
                 strength: number(3),
             }),
-            LANTERN => Some(Self::Lantern {
-                at,
-                swing: number(3),
-            }),
+            LANTERN => Some(Self::Lantern { at }),
             DISCOVERY => Some(Self::Discovery),
             _ => None,
         }
@@ -117,7 +113,7 @@ mod tests {
                 underfoot: Underfoot::Rock,
                 strength: 1.0,
             },
-            Command::Lantern { at, swing: 0.3 },
+            Command::Lantern { at },
             Command::Discovery,
         ];
         for command in commands {

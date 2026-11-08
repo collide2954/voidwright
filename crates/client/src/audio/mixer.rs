@@ -152,10 +152,7 @@ impl Mixer {
                     air: OnePole::low(air(distance), self.rate),
                 });
             }
-            Command::Lantern { at, swing } => {
-                self.lantern_at = at;
-                self.lantern.swing(swing);
-            }
+            Command::Lantern { at } => self.lantern_at = at,
             Command::Discovery => self.music.discover(),
         }
     }
@@ -473,15 +470,17 @@ mod tests {
     }
 
     #[test]
-    fn a_swinging_lantern_beside_the_listener_creaks() {
-        let lantern = |swing: f32| Command::Lantern {
-            at: Vec3::new(0.3, 1.2, 0.0),
-            swing,
-        };
-        let still = render(&[listener(), lantern(0.0)], 48_000);
-        let swinging = render(&[listener(), lantern(1.5)], 48_000);
-        let [left, right] = energies(&swinging, &still);
-        assert!(right > left, "{left} {right}");
-        assert!(decibels(&swinging) > decibels(&still) + 1.0);
+    fn the_lantern_pops_on_its_side_of_the_listener() {
+        let lantern = |at: Vec3| Command::Lantern { at };
+        let away = render(
+            &[listener(), lantern(Vec3::new(0.0, 1.6, -200.0))],
+            48_000 * 30,
+        );
+        let beside = render(
+            &[listener(), lantern(Vec3::new(0.3, 1.2, 0.0))],
+            48_000 * 30,
+        );
+        let [left, right] = energies(&beside, &away);
+        assert!(right > left * 3.0, "{left} {right}");
     }
 }
