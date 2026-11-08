@@ -71,6 +71,7 @@ varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
 varying mediump vec3 toward_lantern;
 const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
+const float BEND = 0.12;
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
 const vec4 STRENGTH = vec4(0.55, 0.75, 0.6, 0.85);
@@ -94,6 +95,7 @@ void main() {
     vec3 weights = pow(abs(resting), vec3(4.0));
     weights /= dot(weights, vec3(1.0));
     highp vec3 scaled = rest * tiling(surface);
+    scaled += BEND * sin(scaled.yzx * 0.83 + 2.0 * sin(scaled.zxy * 0.37));
     vec4 kinds = surface * STRENGTH;
     vec3 side = slope(scaled.zy, kinds);
     vec3 top = slope(scaled.xz, kinds);
@@ -185,7 +187,7 @@ mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
     use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
-    use glam::{Mat4, Vec3, Vec4};
+    use glam::{Mat4, Vec3, Vec3Swizzles, Vec4};
     use miniquad::{UniformDesc, UniformType};
 
     fn declared(name: &str) -> UniformDesc {
@@ -340,6 +342,67 @@ mod tests {
         let [woven, knitted, grained, brushed] = [Vec4::X, Vec4::Y, Vec4::Z, Vec4::W].map(tiling);
         assert_eq!([woven, knitted, grained, brushed], TILES.to_array());
         assert!(woven > grained && grained > knitted && knitted > brushed);
+    }
+
+    const BEND: f32 = 0.12;
+
+    fn bent(scaled: Vec3) -> Vec3 {
+        let inner = (scaled.zxy() * 0.37).map(f32::sin) * 2.0;
+        scaled + BEND * (scaled.yzx() * 0.83 + inner).map(f32::sin)
+    }
+
+    fn samples() -> impl Iterator<Item = Vec3> {
+        (0..400_u16).map(|index| {
+            let step = f32::from(index);
+            Vec3::new(
+                (step * 0.618).fract() * 30.0,
+                (step * 0.754).fract() * 30.0,
+                (step * 0.569).fract() * 30.0,
+            )
+        })
+    }
+
+    #[test]
+    fn the_shader_bends_the_tiles_like_the_reference() {
+        assert!(FRAGMENT.contains(&format!("const float BEND = {BEND:?};")));
+        assert!(
+            FRAGMENT.contains(
+                "scaled += BEND * sin(scaled.yzx * 0.83 + 2.0 * sin(scaled.zxy * 0.37));"
+            )
+        );
+    }
+
+    #[test]
+    fn the_bend_moves_the_pattern_less_than_a_quarter_tile() {
+        for point in samples() {
+            let moved = bent(point) - point;
+            assert!(moved.abs().max_element() <= BEND + 1e-5, "{point}");
+            assert!(moved.length() < 0.25, "{point}");
+        }
+    }
+
+    #[test]
+    fn the_bend_stretches_the_pattern_less_than_a_fifth() {
+        let step = 1e-2;
+        for point in samples() {
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z, Vec3::ONE.normalize()] {
+                let stretch = (bent(point + axis * step) - bent(point)).length() / step;
+                assert!((stretch - 1.0).abs() < 0.2, "{point} {stretch}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_bend_shifts_repeats_of_the_tile_against_each_other() {
+        let shifts: Vec<f32> = samples()
+            .map(|point| {
+                let repeat = point + Vec3::X * 4.0;
+                (bent(repeat) - bent(point) - Vec3::X * 4.0).length()
+            })
+            .collect();
+        let widest = shifts.iter().copied().fold(0.0, f32::max);
+        let mean = shifts.iter().sum::<f32>() / 400.0;
+        assert!(widest > 0.15 && mean > 0.05, "{widest} {mean}");
     }
 
     #[test]
