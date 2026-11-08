@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 use voidwright_core::{ISLAND_RADIUS, Island, PlayerId, Tile, World};
 use voidwright_protocol::{
@@ -9,11 +10,13 @@ use voidwright_protocol::{
 
 const CAPACITY: usize = 2_000;
 const GREETERS: usize = 64;
+const GREETING: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub seed: u64,
     pub capacity: usize,
+    pub greeting: Duration,
 }
 
 impl Default for Config {
@@ -21,6 +24,7 @@ impl Default for Config {
         Self {
             seed: 1,
             capacity: CAPACITY,
+            greeting: GREETING,
         }
     }
 }
@@ -29,6 +33,7 @@ impl Default for Config {
 pub struct Stats {
     pub players: usize,
     pub messages: u64,
+    pub dropped: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +41,7 @@ enum Close {
     Left,
     Refused(Reason),
     Malformed(Error),
+    Fault(&'static str),
 }
 
 impl fmt::Display for Close {
@@ -44,12 +50,13 @@ impl fmt::Display for Close {
             Self::Left => formatter.write_str("left"),
             Self::Refused(reason) => write!(formatter, "refused ({reason:?})"),
             Self::Malformed(error) => write!(formatter, "malformed data: {error}"),
+            Self::Fault(fault) => formatter.write_str(fault),
         }
     }
 }
 
 enum Stage {
-    Greeting,
+    Greeting { since: Instant },
     Playing { id: PlayerId, name: Name },
 }
 
@@ -76,12 +83,18 @@ impl Connection {
             peer,
             inbox: Inbox::default(),
             outbox: Outbox::default(),
-            stage: Stage::Greeting,
+            stage: Stage::Greeting {
+                since: Instant::now(),
+            },
             close: None,
         }
     }
 
-    fn receive(&mut self, host: &mut Host<'_>) {
+    const fn greeting(&self) -> bool {
+        matches!(self.stage, Stage::Greeting { .. })
+    }
+
+    fn receive(&mut self, host: &mut Host<'_>, now: Instant) {
         while self.close.is_none() {
             match self.inbox.pop() {
                 Ok(Some(message)) => {
@@ -103,13 +116,22 @@ impl Connection {
                 Err(_) => self.close = Some(Close::Left),
             }
         }
+        if let Stage::Greeting { since } = self.stage
+            && self.close.is_none()
+            && now.saturating_duration_since(since) > host.config.greeting
+        {
+            self.close = Some(Close::Fault("no hello in time"));
+        }
     }
 
     fn handle(&mut self, message: ClientMessage, host: &mut Host<'_>) {
-        if let ClientMessage::Hello(name) = message
-            && matches!(self.stage, Stage::Greeting)
-        {
-            self.greet(name, host);
+        match message {
+            ClientMessage::Hello(name) if self.greeting() => self.greet(name, host),
+            ClientMessage::Hello(_) => self.close = Some(Close::Fault("a second hello")),
+            ClientMessage::Walk(_) if self.greeting() => {
+                self.close = Some(Close::Fault("a walk order before the hello"));
+            }
+            ClientMessage::Walk(_) => {}
         }
     }
 
@@ -139,7 +161,7 @@ impl Connection {
     }
 
     fn reject(&mut self, error: Error) {
-        let greeting = matches!(self.stage, Stage::Greeting);
+        let greeting = self.greeting();
         match error {
             Error::Version(_) if greeting => self.refuse(Reason::Version),
             Error::Name if greeting => self.refuse(Reason::Name),
@@ -153,11 +175,14 @@ impl Connection {
         }
     }
 
-    fn finish(self) {
+    fn finish(self, stats: &mut Stats) {
         let close = self.close.unwrap_or(Close::Left);
+        if matches!(close, Close::Malformed(_) | Close::Fault(_)) {
+            stats.dropped += 1;
+        }
         match self.stage {
             Stage::Playing { id, name } => println!("{} {name} leaves: {close}", id.get()),
-            Stage::Greeting => println!("{} closes: {close}", self.peer),
+            Stage::Greeting { .. } => println!("{} closes: {close}", self.peer),
         }
     }
 }
@@ -205,6 +230,7 @@ impl Server {
 
     pub fn poll(&mut self) {
         self.accept();
+        let now = Instant::now();
         let Self {
             connections,
             world,
@@ -220,7 +246,7 @@ impl Server {
             spawn: *spawn,
         };
         for connection in connections.iter_mut() {
-            connection.receive(&mut host);
+            connection.receive(&mut host, now);
             connection.flush();
         }
         self.sweep();
@@ -230,7 +256,7 @@ impl Server {
         let mut greeters = self
             .connections
             .iter()
-            .filter(|connection| matches!(connection.stage, Stage::Greeting))
+            .filter(|connection| connection.greeting())
             .count();
         while greeters < GREETERS {
             match self.listener.accept() {
@@ -251,11 +277,11 @@ impl Server {
     }
 
     fn sweep(&mut self) {
-        for connection in self
-            .connections
-            .extract_if(.., |connection| connection.close.is_some())
-        {
-            connection.finish();
+        let Self {
+            connections, stats, ..
+        } = self;
+        for connection in connections.extract_if(.., |connection| connection.close.is_some()) {
+            connection.finish(stats);
         }
     }
 }

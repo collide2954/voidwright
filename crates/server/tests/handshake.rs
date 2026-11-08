@@ -1,5 +1,7 @@
 mod common;
 
+use std::time::Duration;
+
 use common::{Client, server};
 use voidwright_core::{ISLAND_RADIUS, Island};
 use voidwright_protocol::{ClientMessage, Name, Reason, ServerMessage, VERSION};
@@ -76,4 +78,45 @@ fn a_full_world_refuses_a_new_player() {
 #[test]
 fn a_world_holds_2000_players() {
     assert_eq!(Config::default().capacity, 2_000);
+}
+
+#[test]
+fn malformed_data_closes_the_connection() {
+    let mut server = server(Config::default());
+    let version = VERSION.to_le_bytes();
+    let frames = [
+        vec![0, 0],
+        vec![0xff, 0xff],
+        vec![1, 0, 0x7f],
+        vec![3, 0, 0x01, version[0], version[1]],
+        vec![2, 0, 0x02, 1],
+        vec![5, 0, 0x02, 1, 0, 1, 0],
+    ];
+    for frame in &frames {
+        let mut client = Client::connect(&server);
+        client.send_raw(frame);
+        assert!(client.is_closed(&mut server), "{frame:?}");
+    }
+    assert_eq!(server.stats().dropped, 6);
+    assert_eq!(server.stats().players, 0);
+}
+
+#[test]
+fn a_second_hello_closes_the_connection() {
+    let mut server = server(Config::default());
+    let (mut ash, _) = Client::join(&mut server, "Ash");
+    ash.send(&ClientMessage::Hello(Name::new("Ash").unwrap()));
+    assert!(ash.is_closed(&mut server));
+    assert_eq!(server.stats().dropped, 1);
+}
+
+#[test]
+fn a_connection_without_a_hello_closes_in_time() {
+    let mut server = server(Config {
+        greeting: Duration::from_millis(50),
+        ..Config::default()
+    });
+    let mut silent = Client::connect(&server);
+    assert!(silent.is_closed(&mut server));
+    assert_eq!(server.stats().dropped, 1);
 }
