@@ -3,6 +3,22 @@ use voidwright_core::Tile;
 
 const CUT: f32 = 0.25;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Course {
+    before: Option<Tile>,
+}
+
+impl Course {
+    pub fn advance(&mut self, trail: &[Tile]) {
+        self.before = trail.iter().nth_back(1).copied();
+    }
+
+    #[must_use]
+    pub fn position(&self, trail: &[Tile], after: Option<Tile>, progress: f32) -> Vec2 {
+        position(self.before, trail, after, progress)
+    }
+}
+
 #[must_use]
 pub fn center(tile: Tile) -> Vec2 {
     IVec2::new(tile.x, tile.y).as_vec2() + Vec2::splat(0.5)
@@ -55,7 +71,7 @@ fn count(steps: usize) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{center, position};
+    use super::{Course, center, position};
     use glam::Vec2;
     use voidwright_core::Tile;
 
@@ -185,6 +201,23 @@ mod tests {
                 assert!(close(at, center(run[tick])), "{at}");
             }
         }
+    }
+
+    #[test]
+    fn the_course_turns_from_the_tile_it_came_from() {
+        let mut course = Course::default();
+        course.advance(&[Tile::new(0, 0), Tile::new(1, 0)]);
+        let trail = [Tile::new(1, 0), Tile::new(1, 1)];
+        let at = course.position(&trail, None, 0.0);
+        assert!(close(
+            at,
+            position(Some(Tile::new(0, 0)), &trail, None, 0.0)
+        ));
+        assert!(at.distance(center(Tile::new(1, 0))) > 0.2);
+        course.advance(&[Tile::new(1, 1)]);
+        let trail = [Tile::new(1, 1), Tile::new(2, 1)];
+        let at = course.position(&trail, None, 0.0);
+        assert!(close(at, center(Tile::new(1, 1))));
     }
 
     #[test]

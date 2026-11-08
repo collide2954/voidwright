@@ -5,9 +5,9 @@ use voidwright_core::{Island, TICK, Tile, World};
 
 use crate::figure::Coat;
 use crate::ground::Ground;
+use crate::motion::Course;
 use crate::{
-    BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, position, to_ground,
-    to_world,
+    BONES, OrbitCamera, Pose, Stride, Ticker, center, pick, placement, to_ground, to_world,
 };
 
 pub(crate) const ISLAND_RADIUS: u8 = 20;
@@ -19,6 +19,7 @@ pub struct Game {
     ground: Ground,
     camera: OrbitCamera,
     ticker: Ticker,
+    course: Course,
     stride: Stride,
     coat: Coat,
     time: f32,
@@ -34,6 +35,7 @@ impl Game {
             ground,
             camera: OrbitCamera::new(Vec3::ZERO),
             ticker: Ticker::new(TICK),
+            course: Course::default(),
             stride: Stride::default(),
             coat: Coat::new(&Pose::default(), Mat4::IDENTITY),
             time: 0.0,
@@ -95,6 +97,7 @@ impl Game {
     pub fn update(&mut self, delta: Duration) {
         let before = to_ground(self.player_position());
         for _ in 0..self.ticker.advance(delta) {
+            self.course.advance(self.world.player().trail());
             self.world.tick();
         }
         let after = self.player_position();
@@ -126,7 +129,10 @@ impl Game {
 
     #[must_use]
     pub fn player_position(&self) -> Vec3 {
-        let below = position(None, self.world.player().trail(), None, self.ticker.alpha());
+        let player = self.world.player();
+        let below = self
+            .course
+            .position(player.trail(), player.next_step(), self.ticker.alpha());
         to_world(below, self.ground.height_at(below))
     }
 }
@@ -141,6 +147,38 @@ mod tests {
 
     const ASPECT: f32 = 16.0 / 9.0;
     const CLICK: Vec2 = Vec2::new(0.2, -0.1);
+    const FRAMES: u32 = 36;
+
+    fn walk_frames(game: &mut Game, frames: u32) -> Vec<Vec2> {
+        (0..frames)
+            .map(|_| {
+                game.update(TICK / FRAMES);
+                to_ground(game.player_position())
+            })
+            .collect()
+    }
+
+    fn sharpest_turn(points: &[Vec2]) -> f32 {
+        let moves: Vec<Vec2> = points
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .filter(|step| step.length() > 1e-6)
+            .collect();
+        moves
+            .windows(2)
+            .map(|pair| pair[0].angle_to(pair[1]).abs())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_bend_in_the_route_turns_gradually() {
+        let mut game = Game::new(3);
+        let start = game.world().player().tile();
+        game.walk_to(Tile::new(start.x + 5, start.y + 2));
+        let points = walk_frames(&mut game, FRAMES * 7);
+        let turn = sharpest_turn(&points);
+        assert!(turn < 0.05, "{turn}");
+    }
 
     #[test]
     fn the_camera_looks_at_the_chest_of_the_player() {
