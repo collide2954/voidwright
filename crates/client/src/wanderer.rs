@@ -63,22 +63,24 @@ fn weather(mesh: &mut SkinnedMesh) {
         let warmth = 2.0 * noise3(at * 3.3, 15) - 1.0;
         let tone = Vec3::ONE + 0.07 * warmth * Vec3::new(1.0, 0.2, -0.8);
         let fade = 0.6 * noise3(at * 2.2, 13) + 0.4 * noise3(at * 5.0, 14);
+        let weathering = ((fade - 0.5) * 3.5).clamp(-1.0, 1.0) * (1.0 - vertex.surface[3]);
         let sun = 0.55 + 0.45 * vertex.normal[1].max(0.0);
-        let bleach = ((fade - 0.5) * 2.2 + 0.5).clamp(0.0, 1.0) * sun * (1.0 - vertex.surface[3]);
+        let (bleach, soiling) = (weathering.max(0.0) * sun, (-weathering).max(0.0));
         let edge = smoothstep(25.0, 70.0, bend)
             * (0.35 + 0.65 * smoothstep(0.3, 0.7, noise3(at * 40.0, 16)));
         let (scuff, polish) = (edge * vertex.surface[2], edge * vertex.surface[3]);
         let crease = smoothstep(10.0, 60.0, -bend);
         let base = Vec3::from(vertex.color) * mottle * tone;
         let grey = Vec3::splat(base.dot(Vec3::new(0.3, 0.59, 0.11)));
-        let faded = grey.lerp(base, 0.55) * 1.3;
+        let faded = grey.lerp(base, 0.5) * 1.45;
         let (grime, dusting) = soil(at, Vec3::from(vertex.normal));
         let color = base
-            .lerp(faded, 0.45 * bleach)
+            .lerp(faded, 0.7 * bleach)
             .lerp(grey.lerp(base, 0.6) * 1.7, 0.6 * scuff)
             .lerp(base * 1.6 + 0.02, 0.6 * polish)
             * grime
-            * (1.0 - 0.3 * crease);
+            * (1.0 - 0.3 * crease)
+            * (1.0 - 0.25 * soiling);
         vertex.color = color.lerp(dust, dusting).to_array();
         let shine = vertex.params[0] * (1.0 - 0.5 * scuff) * (1.0 - 0.3 * crease);
         vertex.params[0] = (shine + 0.25 * polish).min(1.0);
@@ -1161,6 +1163,34 @@ mod tests {
             .iter()
             .map(|vertex| Vec3::from(vertex.color))
             .collect()
+    }
+
+    fn blocks(values: &[f32]) -> Vec<f32> {
+        let side = usize::from(SIDE);
+        (0..36)
+            .map(|block| {
+                let (row, column) = (block / 6 * 10, block % 6 * 10);
+                let cells: Vec<f32> = (0..100)
+                    .map(|cell| values[(row + cell / 10) * side + column + cell % 10])
+                    .collect();
+                mean_of(&cells)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn weather_lightens_and_darkens_large_patches() {
+        let mut areas = Vec::new();
+        for depth in [-0.15, 0.9, 2.1] {
+            let mut mesh = sheet([1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0], depth);
+            weather(&mut mesh);
+            let lumas: Vec<f32> = mesh.vertices.iter().map(luma).collect();
+            areas.extend(blocks(&lumas));
+        }
+        let (low, high) = spread(areas.iter().copied());
+        let middle = mean_of(&areas);
+        assert!((high - low) / middle > 0.3, "{low} {high} {middle}");
+        assert!(high / low < 2.0, "{low} {high}");
     }
 
     #[test]
