@@ -32,6 +32,11 @@ impl View {
     }
 
     #[must_use]
+    pub const fn target(&self) -> Vec3 {
+        self.target
+    }
+
+    #[must_use]
     pub const fn distance(&self) -> f32 {
         self.distance
     }
@@ -44,6 +49,11 @@ impl View {
     pub fn turn(&mut self, pixels: Vec2) {
         self.yaw = (self.yaw - pixels.x * TURN_PER_PIXEL).rem_euclid(TAU);
         self.pitch = (self.pitch + pixels.y * TURN_PER_PIXEL).clamp(-FRAC_PI_2, FRAC_PI_2);
+    }
+
+    pub fn pan(&mut self, pixels: Vec2, height: f32) {
+        let size = 2.0 * self.distance * (FIELD_OF_VIEW / 2.0).tan() / height.max(1.0);
+        self.target += self.orientation() * Vec3::new(-pixels.x, pixels.y, 0.0) * size;
     }
 
     #[must_use]
@@ -149,6 +159,26 @@ mod tests {
     fn the_view_keeps_the_world_upright() {
         let above = screen(&view(), TARGET + Vec3::Y * 0.2);
         assert!(above.y > 0.05 && above.x.abs() < 0.05);
+    }
+
+    #[test]
+    fn a_pan_keeps_the_target_under_the_cursor() {
+        let mut view = view();
+        let height = 720.0;
+        let pixels = Vec2::new(120.0, -45.0);
+        view.pan(pixels, height);
+        let moved = screen(&view, TARGET);
+        let expected = Vec2::new(2.0 * pixels.x / (height * ASPECT), -2.0 * pixels.y / height);
+        assert!(moved.truncate().distance(expected) < 1e-4, "{moved}");
+    }
+
+    #[test]
+    fn a_pan_keeps_the_angles_and_the_distance() {
+        let mut view = view();
+        let before = view.eye() - TARGET;
+        view.pan(Vec2::new(-300.0, 200.0), 720.0);
+        assert!(view.target().distance(TARGET) > 0.5);
+        assert!((view.eye() - view.target()).distance(before) < 1e-4);
     }
 
     #[test]
