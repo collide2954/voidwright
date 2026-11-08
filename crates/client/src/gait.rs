@@ -16,7 +16,7 @@ const TOE_OFF: f32 = 0.55;
 const TOE: Vec2 = Vec2::new(0.13, -ANKLE_HEIGHT);
 const HEEL: Vec2 = Vec2::new(-0.06, -ANKLE_HEIGHT);
 const REACH: f32 = 0.985;
-const SOFTEN: f32 = 0.04;
+const RUN_DIP: f32 = 0.06;
 const WALK_ROLL: f32 = 0.04;
 const ARM_LAG: f32 = 0.3;
 const ARM_FORWARD: f32 = 0.06;
@@ -119,7 +119,6 @@ struct Walk {
 struct Footing {
     ankle: Vec2,
     pitch: f32,
-    planted: f32,
 }
 
 fn stride(phase: f32, pace: f32, twist: f32) -> Walk {
@@ -127,14 +126,21 @@ fn stride(phase: f32, pace: f32, twist: f32) -> Walk {
     let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin());
     let length = REACH * (THIGH + ANKLE);
     let rest = THIGH + ANKLE + ANKLE_HEIGHT;
-    let needed = |index: usize| {
-        let foot = feet[index];
-        let ahead = foot.ankle.x - hips[index];
-        foot.ankle.y
-            + (length * length - ahead * ahead).max(0.0).sqrt()
-            + (1.0 - foot.planted) * 0.3
+    let strike = footing(0.0, pace).ankle;
+    let contact = strike.y + (length * length - strike.x * strike.x).max(0.0).sqrt();
+    let crest = ANKLE_HEIGHT + length;
+    let duty = WALK_DUTY + (RUN_DUTY - WALK_DUTY) * pace;
+    let half = phase.rem_euclid(PI);
+    let peak = PI * duty;
+    let rise = if half < peak {
+        half / peak
+    } else {
+        (PI - half) / (PI - peak)
     };
-    let height = soft_min(needed(0), needed(1)).min(rest);
+    let shape = 0.5 - 0.5 * (PI * rise).cos();
+    let walking = contact + (crest - contact) * shape;
+    let running = crest - RUN_DIP * shape;
+    let height = walking + (running - walking) * pace;
     let legs = [0, 1].map(|index| {
         let foot = feet[index];
         let (thigh, knee) = reach(foot.ankle.x - hips[index], height - foot.ankle.y);
@@ -165,7 +171,6 @@ fn footing(phase: f32, pace: f32) -> Footing {
         Footing {
             ankle,
             pitch: strike - roll,
-            planted: 1.0,
         }
     } else {
         let swing = (moment - duty) / (1.0 - duty);
@@ -174,11 +179,7 @@ fn footing(phase: f32, pace: f32) -> Footing {
         let ankle = start.lerp(end, smoothstep(0.0, 1.0, swing))
             + Vec2::new(0.0, lift * (PI * swing).sin());
         let pitch = -TOE_OFF + (HEEL_STRIKE + TOE_OFF) * smoothstep(0.0, 0.7, swing);
-        Footing {
-            ankle,
-            pitch,
-            planted: 1.0 - smoothstep(0.0, 0.1, swing.min(1.0 - swing)),
-        }
+        Footing { ankle, pitch }
     }
 }
 
@@ -198,18 +199,13 @@ fn reach(ahead: f32, drop: f32) -> (f32, f32) {
     (thigh, knee)
 }
 
-fn soft_min(first: f32, second: f32) -> f32 {
-    let keep = (0.5 + 0.5 * (second - first) / SOFTEN).clamp(0.0, 1.0);
-    second + (first - second) * keep - SOFTEN * keep * (1.0 - keep)
-}
-
 fn dwell(value: f32) -> f32 {
     value.signum() * smoothstep(0.05, 0.75, value.abs())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Pose, pose_at};
+    use super::{Pose, footing, pose_at};
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     const WALKING: f32 = 1.0;
@@ -224,6 +220,21 @@ mod tests {
                 f32::from(u16::try_from(step).unwrap()) * 0.05,
             )
         })
+    }
+
+    #[test]
+    fn the_body_rises_and_falls_without_jumps() {
+        for pace in [0.0, 0.5, 1.0] {
+            let bobs: Vec<f32> = (0..=720)
+                .map(|step| {
+                    let phase = TAU * f32::from(u16::try_from(step).unwrap()) / 720.0;
+                    pose_at(phase, WALKING, pace, 0.0).bob
+                })
+                .collect();
+            for pair in bobs.windows(2) {
+                assert!((pair[1] - pair[0]).abs() < 0.003, "pace {pace}");
+            }
+        }
     }
 
     #[test]
@@ -334,7 +345,7 @@ mod tests {
         let walk = pose_at(0.0, WALKING, 0.0, 0.0);
         let run = pose_at(0.0, WALKING, 1.0, 0.0);
         assert!(run.lean > walk.lean);
-        assert!(run.thighs[0] > walk.thighs[0]);
+        assert!(footing(0.0, 1.0).ankle.x > footing(0.0, 0.0).ankle.x + 0.05);
     }
 
     #[test]
