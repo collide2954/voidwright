@@ -28,32 +28,61 @@ pub enum Kind {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Treatment {
+struct Layer {
     kind: Kind,
-    pitch: f32,
     cutoff: f32,
+    pitch: f32,
+    level: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Treatment {
+    body: Layer,
+    brush: Option<Layer>,
     gain: f32,
 }
 
 const MOSS: Treatment = Treatment {
-    kind: Kind::Sand,
-    pitch: 0.92,
-    cutoff: 1_200.0,
-    gain: 1.3,
+    body: Layer {
+        kind: Kind::Stone,
+        cutoff: 450.0,
+        pitch: 0.88,
+        level: 1.0,
+    },
+    brush: Some(Layer {
+        kind: Kind::Sand,
+        cutoff: 900.0,
+        pitch: 0.9,
+        level: 0.2,
+    }),
+    gain: 2.2,
 };
 
 const SOIL: Treatment = Treatment {
-    kind: Kind::Sand,
-    pitch: 1.0,
-    cutoff: 9_000.0,
-    gain: 0.9,
+    body: Layer {
+        kind: Kind::Stone,
+        cutoff: 900.0,
+        pitch: 0.92,
+        level: 1.0,
+    },
+    brush: Some(Layer {
+        kind: Kind::Sand,
+        cutoff: 1_600.0,
+        pitch: 0.94,
+        level: 0.25,
+    }),
+    gain: 1.9,
 };
 
 const ROCK: Treatment = Treatment {
-    kind: Kind::Stone,
-    pitch: 1.0,
-    cutoff: 18_000.0,
-    gain: 0.65,
+    body: Layer {
+        kind: Kind::Stone,
+        cutoff: 3_000.0,
+        pitch: 0.97,
+        level: 1.0,
+    },
+    brush: None,
+    gain: 0.9,
 };
 
 struct Take {
@@ -97,6 +126,16 @@ impl Bank {
     pub fn kind(&self, take: usize) -> Kind {
         self.takes[take].kind
     }
+
+    fn choose(&self, kind: Kind, last: Option<usize>, noise: &mut Noise) -> usize {
+        let candidates = || {
+            (0..self.takes.len())
+                .filter(move |&take| self.takes[take].kind == kind && Some(take) != last)
+        };
+        candidates()
+            .nth(noise.index(candidates().count()))
+            .unwrap_or(0)
+    }
 }
 
 impl Default for Bank {
@@ -106,13 +145,47 @@ impl Default for Bank {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Footstep {
+struct Playhead {
     take: usize,
     index: usize,
     fraction: f32,
     step: f32,
+    level: f32,
+    filters: [Svf; 2],
+}
+
+impl Playhead {
+    fn new(bank: &Bank, layer: Layer, take: usize, tune: f32, bright: f32, rate: f32) -> Self {
+        let filter = Svf::new(layer.cutoff * bright, 0.707, rate);
+        Self {
+            take,
+            index: 0,
+            fraction: 0.0,
+            step: layer.pitch * tune * bank.takes[take].rate / rate,
+            level: layer.level,
+            filters: [filter; 2],
+        }
+    }
+
+    fn sample(&mut self, bank: &Bank) -> Option<f32> {
+        let samples = &bank.takes[self.take].samples;
+        let (&now, &next) = (samples.get(self.index)?, samples.get(self.index + 1)?);
+        let value = now + (next - now) * self.fraction;
+        self.fraction += self.step;
+        while self.fraction >= 1.0 {
+            self.fraction -= 1.0;
+            self.index += 1;
+        }
+        let [first, second] = &mut self.filters;
+        Some(second.process(first.process(value).low).low * self.level)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Footstep {
+    body: Playhead,
+    brush: Option<Playhead>,
     gain: f32,
-    filter: Svf,
 }
 
 impl Footstep {
@@ -131,41 +204,38 @@ impl Footstep {
             Underfoot::Rock => ROCK,
         };
         let mut noise = Noise::new(seed);
-        let candidates = || {
-            (0..bank.takes.len())
-                .filter(move |&take| bank.takes[take].kind == treatment.kind && Some(take) != last)
-        };
-        let pick = noise.index(candidates().count());
-        let take = candidates().nth(pick).unwrap_or(0);
-        let mut draw = || 0.5 + 0.5 * noise.sample();
+        let body = bank.choose(treatment.body.kind, last, &mut noise);
+        let brush = treatment
+            .brush
+            .map(|layer| (layer, bank.choose(layer.kind, None, &mut noise)));
+        let tune = 1.0 + SPREAD * noise.sample();
         let strength = strength.clamp(0.0, 1.0);
-        let pitch = treatment.pitch * (1.0 + SPREAD * (2.0 * draw() - 1.0));
-        let loudness = (0.25 + 0.75 * strength * strength) * (0.85 + 0.15 * draw());
+        let bright = 0.85 + 0.3 * strength;
+        let loudness = (0.25 + 0.75 * strength * strength) * (0.925 + 0.075 * noise.sample());
         Self {
-            take,
-            index: 0,
-            fraction: 0.0,
-            step: pitch * bank.takes[take].rate / rate,
+            body: Playhead::new(bank, treatment.body, body, tune, bright, rate),
+            brush: brush.map(|(layer, take)| Playhead::new(bank, layer, take, tune, bright, rate)),
             gain: loudness * treatment.gain,
-            filter: Svf::new(treatment.cutoff * (0.85 + 0.3 * strength), 0.707, rate),
         }
     }
 
     #[must_use]
     pub const fn take(&self) -> usize {
-        self.take
+        self.body.take
+    }
+
+    #[must_use]
+    pub fn brush(&self) -> Option<usize> {
+        self.brush.map(|brush| brush.take)
     }
 
     pub fn sample(&mut self, bank: &Bank) -> Option<f32> {
-        let samples = &bank.takes[self.take].samples;
-        let (&now, &next) = (samples.get(self.index)?, samples.get(self.index + 1)?);
-        let value = now + (next - now) * self.fraction;
-        self.fraction += self.step;
-        while self.fraction >= 1.0 {
-            self.fraction -= 1.0;
-            self.index += 1;
+        let body = self.body.sample(bank);
+        let brush = self.brush.as_mut().and_then(|brush| brush.sample(bank));
+        if body.is_none() && brush.is_none() {
+            return None;
         }
-        Some(self.filter.process(value).low * self.gain)
+        Some((body.unwrap_or(0.0) + brush.unwrap_or(0.0)) * self.gain)
     }
 }
 
@@ -222,29 +292,57 @@ mod tests {
     }
 
     #[test]
-    fn a_step_plays_one_take_once_and_ends() {
+    fn a_step_plays_its_takes_once_and_ends() {
         let bank = Bank::new();
-        let mut step = Footstep::new(&bank, Underfoot::Rock, 0.7, 3, RATE, None);
-        let length = bank.takes(Kind::Stone)[step.take() % 6].len();
-        let played = std::iter::from_fn(|| step.sample(&bank)).count();
-        let ratio =
-            f32::from(u16::try_from(played).unwrap()) / f32::from(u16::try_from(length).unwrap());
-        assert!((0.9..1.1).contains(&ratio), "{played} {length}");
-        assert_eq!(step.sample(&bank), None);
+        for underfoot in [Underfoot::Moss, Underfoot::Soil, Underfoot::Rock] {
+            let mut step = Footstep::new(&bank, underfoot, 0.7, 3, RATE, None);
+            let played = std::iter::from_fn(|| step.sample(&bank)).count();
+            let seconds = f32::from(u16::try_from(played).unwrap()) / RATE;
+            assert!((0.25..0.6).contains(&seconds), "{underfoot:?} {seconds}");
+            assert_eq!(step.sample(&bank), None);
+        }
     }
 
     #[test]
-    fn rock_plays_stone_and_moss_and_soil_play_sand() {
+    fn every_step_lands_on_stone_and_soft_ground_adds_a_sand_brush() {
         let bank = Bank::new();
         for seed in 1..=20 {
-            let kind = |underfoot| {
+            let kinds = |underfoot| {
                 let step = Footstep::new(&bank, underfoot, 0.7, seed, RATE, None);
-                bank.kind(step.take())
+                (
+                    bank.kind(step.take()),
+                    step.brush().map(|take| bank.kind(take)),
+                )
             };
-            assert_eq!(kind(Underfoot::Rock), Kind::Stone);
-            assert_eq!(kind(Underfoot::Soil), Kind::Sand);
-            assert_eq!(kind(Underfoot::Moss), Kind::Sand);
+            assert_eq!(kinds(Underfoot::Moss), (Kind::Stone, Some(Kind::Sand)));
+            assert_eq!(kinds(Underfoot::Soil), (Kind::Stone, Some(Kind::Sand)));
+            assert_eq!(kinds(Underfoot::Rock), (Kind::Stone, None));
         }
+    }
+
+    #[test]
+    fn soft_ground_steps_have_no_snowy_crunch() {
+        let bank = Bank::new();
+        let crunch = |samples: &[f32]| {
+            let mut low = OnePole::low(2_500.0, RATE);
+            let high: Vec<f32> = samples
+                .iter()
+                .map(|&sample| sample - low.process(sample))
+                .collect();
+            energy(&high) / energy(samples)
+        };
+        let moss = average(&bank, Underfoot::Moss, crunch);
+        let soil = average(&bank, Underfoot::Soil, crunch);
+        assert!(moss < 0.02, "{moss}");
+        assert!(soil < 0.05, "{soil}");
+    }
+
+    #[test]
+    fn soil_steps_are_duller_than_rock_steps() {
+        let bank = Bank::new();
+        let soil = average(&bank, Underfoot::Soil, brightness);
+        let rock = average(&bank, Underfoot::Rock, brightness);
+        assert!(soil < rock * 0.7, "{soil} {rock}");
     }
 
     #[test]
