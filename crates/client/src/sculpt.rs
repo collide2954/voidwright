@@ -1,6 +1,6 @@
 use std::array::from_fn;
 
-use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::field::{ball, block, drape, egg, inside_drape, limb, ring, smooth_carve, smooth_union};
 use crate::nets::{Lattice, mesh};
@@ -32,6 +32,7 @@ pub struct SkinnedVertex {
     pub params: [f32; 2],
     pub bones: [f32; INFLUENCES],
     pub weights: [f32; INFLUENCES],
+    pub surface: [f32; 4],
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -359,6 +360,7 @@ struct Paint {
     distance: f32,
     color: Vec3,
     params: Vec2,
+    surface: Vec4,
     weights: [f32; MAX_BONES],
 }
 
@@ -367,6 +369,7 @@ impl Paint {
         distance: FAR,
         color: Vec3::ZERO,
         params: Vec2::ZERO,
+        surface: Vec4::ZERO,
         weights: [0.0; MAX_BONES],
     };
 
@@ -376,6 +379,7 @@ impl Paint {
         self.params = self
             .params
             .lerp(Vec2::new(material.shine, material.glow), mix);
+        self.surface = self.surface.lerp(Vec4::from(material.surface.mask()), mix);
         for (bone, weight) in self.weights.iter_mut().enumerate() {
             let goal = if bone == stroke.bone { 1.0 } else { 0.0 };
             *weight += (goal - *weight) * mix;
@@ -498,6 +502,7 @@ impl Sculpt {
             params: paint.params.to_array(),
             bones,
             weights,
+            surface: paint.surface.to_array(),
         }
     }
 }
@@ -515,8 +520,8 @@ fn strongest(weights: &[f32; MAX_BONES]) -> ([f32; INFLUENCES], [f32; INFLUENCES
 mod tests {
     use super::{Form, INFLUENCES, Sculpt, SkinnedMesh, SkinnedVertex, Stroke};
     use crate::palette::linear;
-    use crate::shape::Material;
-    use glam::{Mat4, Quat, Vec2, Vec3};
+    use crate::shape::{Material, Surface};
+    use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
     use std::f32::consts::FRAC_PI_2;
 
     const PAINT: Material = Material::matte(Vec3::splat(0.5), 0.2);
@@ -546,6 +551,18 @@ mod tests {
             assert!((position.length() - 0.2).abs() < 0.002);
             assert!(Vec3::from(vertex.normal).dot(position.normalize()) > 0.99);
         }
+    }
+
+    #[test]
+    fn a_stroke_paints_its_surface() {
+        let woven = PAINT.textured(Surface::Woven);
+        let mesh = single(Stroke::new(0, Form::Ball(0.2), woven));
+        assert!(mesh.triangles() > 200);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| Vec4::from(vertex.surface).distance(Vec4::X) < 1e-6)
+        );
     }
 
     #[test]

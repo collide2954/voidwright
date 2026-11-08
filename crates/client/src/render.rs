@@ -68,6 +68,7 @@ impl Renderer {
         skinned_attributes.extend([
             VertexAttribute::new("in_bones", VertexFormat::Float4),
             VertexAttribute::new("in_weights", VertexFormat::Float4),
+            VertexAttribute::new("in_surface", VertexFormat::Float4),
         ]);
         let skinned = pipeline(
             context,

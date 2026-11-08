@@ -739,6 +739,7 @@ mod tests {
                     params: [0.1, glow],
                     bones: [0.0; 4],
                     weights: [1.0, 0.0, 0.0, 0.0],
+                    surface: [0.0; 4],
                 }
             })
             .collect()

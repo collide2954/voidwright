@@ -9,6 +9,7 @@ const TONE_LIMIT: f32 = 0.06;
 const SHINE_LIMIT: f32 = 0.05;
 const GLOW_LIMIT: f32 = 0.01;
 const SKIN_LIMIT: f32 = 0.3;
+const SURFACE_LIMIT: f32 = 0.1;
 const TURN_LIMIT: f32 = 0.4;
 
 impl SkinnedMesh {
@@ -271,6 +272,10 @@ fn compatible(a: &SkinnedVertex, b: &SkinnedVertex) -> bool {
         && (a.params[0] - b.params[0]).abs() < SHINE_LIMIT
         && (a.params[1] - b.params[1]).abs() < GLOW_LIMIT
         && skin_difference(a, b) < SKIN_LIMIT
+        && a.surface
+            .iter()
+            .zip(&b.surface)
+            .all(|(first, second)| (first - second).abs() < SURFACE_LIMIT)
 }
 
 fn skin_difference(a: &SkinnedVertex, b: &SkinnedVertex) -> f32 {
@@ -293,7 +298,7 @@ fn skin_difference(a: &SkinnedVertex, b: &SkinnedVertex) -> f32 {
 #[cfg(test)]
 mod tests {
     use crate::sculpt::{Form, Sculpt, SkinnedMesh, Stroke};
-    use crate::shape::Material;
+    use crate::shape::{Material, Surface};
     use glam::{Mat4, Vec3};
     use std::collections::HashMap;
 
@@ -365,6 +370,32 @@ mod tests {
         assert!((area(&mesh) / before - 1.0).abs() < 0.05);
         for [a, b, c] in corners(&mesh) {
             assert!(((a + b + c) / 3.0).length() > 0.28);
+        }
+    }
+
+    #[test]
+    fn simplification_keeps_surface_borders_in_place() {
+        let mut sculpt = Sculpt::new(vec![Mat4::IDENTITY]);
+        sculpt.add(Stroke::new(0, Form::Ball(0.2), PAINT).at(Vec3::X * -0.15));
+        sculpt.part();
+        sculpt.add(
+            Stroke::new(0, Form::Ball(0.2), PAINT.textured(Surface::Woven)).at(Vec3::X * 0.15),
+        );
+        let mut mesh = sculpt.mesh(CELL);
+        mesh.simplify(mesh.triangles() / 4);
+        for face in mesh.indices.as_chunks::<3>().0 {
+            let vertices = face.map(|index| mesh.vertices[index as usize]);
+            let woven = vertices
+                .iter()
+                .filter(|vertex| vertex.surface[0] > 0.5)
+                .count();
+            if woven % 3 != 0 {
+                assert!(
+                    vertices
+                        .iter()
+                        .all(|vertex| vertex.position[0].abs() < 0.08)
+                );
+            }
         }
     }
 
