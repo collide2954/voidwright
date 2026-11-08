@@ -15,6 +15,7 @@ const CAPACITY: usize = 2_000;
 const GREETERS: usize = 64;
 const GREETING: Duration = Duration::from_secs(5);
 const VIEW: u16 = 32;
+const BACKLOG: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -22,6 +23,7 @@ pub struct Config {
     pub capacity: usize,
     pub greeting: Duration,
     pub view: u16,
+    pub backlog: usize,
 }
 
 impl Default for Config {
@@ -31,6 +33,7 @@ impl Default for Config {
             capacity: CAPACITY,
             greeting: GREETING,
             view: VIEW,
+            backlog: BACKLOG,
         }
     }
 }
@@ -207,7 +210,7 @@ impl Connection {
         }
     }
 
-    fn update(&mut self, world: &World, tick: u32, view: u16) {
+    fn update(&mut self, world: &World, tick: u32, config: &Config) {
         let Stage::Playing { id, budget, .. } = &mut self.stage else {
             return;
         };
@@ -216,7 +219,7 @@ impl Connection {
             return;
         };
         let players = world
-            .near(me.tile(), view)
+            .near(me.tile(), config.view)
             .into_iter()
             .take(MAX_SIGHTINGS)
             .map(|(id, walker)| Sighting {
@@ -230,6 +233,8 @@ impl Connection {
         let update = ServerMessage::Update(Update { tick, players });
         if let Err(error) = self.outbox.push(&update) {
             self.close = Some(Close::Malformed(error));
+        } else if self.outbox.len() > config.backlog {
+            self.close = Some(Close::Fault("too slow to read"));
         }
     }
 
@@ -330,7 +335,7 @@ impl Server {
         self.world.tick();
         self.stats.tick = self.stats.tick.wrapping_add(1);
         for connection in &mut self.connections {
-            connection.update(&self.world, self.stats.tick, self.config.view);
+            connection.update(&self.world, self.stats.tick, &self.config);
             connection.flush();
         }
         self.sweep();
