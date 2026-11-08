@@ -91,7 +91,8 @@ fn knitted(at: Vec2) -> f32 {
     let offset = (inside.x - 0.5).abs();
     let leg = (offset - 0.32 * inside.y - 0.06).abs();
     let strand = (1.0 - (leg / 0.15).powi(2)).max(0.0).sqrt();
-    strand * (PI * inside.y).sin().sqrt() * (0.85 + 0.15 * noise(at, IVec2::splat(24), 41))
+    let plump = 0.65 + 0.7 * noise(at, IVec2::new(6, 5), 42);
+    strand * (PI * inside.y).sin().sqrt() * plump * (0.85 + 0.15 * noise(at, IVec2::splat(24), 41))
 }
 
 fn grained(at: Vec2) -> f32 {
@@ -205,6 +206,14 @@ mod tests {
         total / f32::from(DETAIL_SIZE).powi(2)
     }
 
+    fn variation(peaks: &[f32]) -> f32 {
+        let count = f32::from(u16::try_from(peaks.len()).unwrap());
+        let mean = peaks.iter().sum::<f32>() / count;
+        let deviation =
+            (peaks.iter().map(|peak| (peak - mean).powi(2)).sum::<f32>() / count).sqrt();
+        deviation / mean
+    }
+
     #[test]
     fn woven_threads_vary_in_thickness() {
         let peaks: Vec<f32> = (0..256_u16)
@@ -213,10 +222,18 @@ mod tests {
                 woven(middle / 16.0)
             })
             .collect();
-        let mean = peaks.iter().sum::<f32>() / 256.0;
-        let deviation =
-            (peaks.iter().map(|peak| (peak - mean).powi(2)).sum::<f32>() / 256.0).sqrt();
-        assert!(deviation / mean > 0.12, "{}", deviation / mean);
+        assert!(variation(&peaks) > 0.12, "{}", variation(&peaks));
+    }
+
+    #[test]
+    fn knitted_stitches_vary_in_height() {
+        let peaks: Vec<f32> = (0..30_u16)
+            .map(|stitch| {
+                let leg = Vec2::new(f32::from(stitch % 6) + 0.28, f32::from(stitch / 6) + 0.5);
+                knitted(leg / Vec2::new(6.0, 5.0))
+            })
+            .collect();
+        assert!(variation(&peaks) > 0.08, "{}", variation(&peaks));
     }
 
     #[test]
