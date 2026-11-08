@@ -60,16 +60,27 @@ const THROB_Q: f32 = 0.7;
 const DUCK: [f32; 2] = [0.06, 2.0];
 const DUCK_FLOOR: f32 = 0.6;
 
+// D2 D2 D2 E-flat2: one low note on each beat.
+const FIGURE: [u8; 4] = [38, 38, 38, 39];
+const FIGURE_DETUNE: f32 = -5.0;
+const FIGURE_HIT: [f32; 2] = [0.03, 1.6];
+const FIGURE_CUTOFF: f32 = 140.0;
+const FIGURE_OPEN: f32 = 2.0;
+const FIGURE_Q: f32 = 0.9;
+const FIGURE_FLOOR: f32 = 0.45;
+
 #[derive(Clone, Copy, Debug)]
 struct Character {
     throb: f32,
     duck: f32,
+    ostinato: f32,
     bed: f32,
 }
 
 const CHARACTER: Character = Character {
     throb: 0.06,
     duck: 0.3,
+    ostinato: 0.0,
     bed: 1.0,
 };
 
@@ -85,6 +96,7 @@ pub struct Pulse {
     drone: Drone,
     pad: Pad,
     throb: Throb,
+    ostinato: Ostinato,
 }
 
 impl Pulse {
@@ -99,6 +111,7 @@ impl Pulse {
         let drone = Drone::new(&mut dice, time);
         let pad = Pad::new(&mut dice, time);
         let throb = Throb::new(&mut dice, time);
+        let ostinato = Ostinato::new(&mut dice, time);
         Self {
             time,
             countdown: 0,
@@ -111,6 +124,7 @@ impl Pulse {
             drone,
             pad,
             throb,
+            ostinato,
         }
     }
 
@@ -126,6 +140,7 @@ impl Pulse {
             self.drone.render(block);
             self.pad.render(block);
             self.throb.render(block, self.time.rate);
+            self.ostinato.render(block);
             self.countdown -= end - start;
             start = end;
         }
@@ -138,6 +153,7 @@ impl Pulse {
             self.build.count(&mut self.dice);
             self.throb.strike();
             self.duck.strike(1.0);
+            self.ostinato.strike(time);
         }
         let drive = self.build.drive(self.clock.phase);
         if reaches(beat, DUB_AT) {
@@ -159,6 +175,8 @@ impl Pulse {
         );
         self.throb
             .control(entry * character.throb * lift(THROB_FLOOR, drive), time);
+        self.ostinato
+            .control(entry * character.ostinato * lift(FIGURE_FLOOR, drive), time);
     }
 }
 
@@ -506,6 +524,52 @@ impl Throb {
     }
 }
 
+struct Ostinato {
+    saw: Saw,
+    gain: Ramp,
+    hit: Hit,
+    filter: Svf,
+    step: usize,
+}
+
+impl Ostinato {
+    fn new(dice: &mut Dice, time: Time) -> Self {
+        Self {
+            saw: Saw::new(dice.unit(), hertz(FIGURE[0]), time.rate),
+            gain: Ramp::default(),
+            hit: Hit::new(FIGURE_HIT, time),
+            filter: Svf::new(FIGURE_CUTOFF, FIGURE_Q, time.rate),
+            step: 0,
+        }
+    }
+
+    fn strike(&mut self, time: Time) {
+        let note = FIGURE[self.step];
+        self.step = (self.step + 1) % FIGURE.len();
+        self.saw
+            .tune(hertz(note) * (FIGURE_DETUNE / 1200.0).exp2(), time.rate);
+        self.hit.strike(1.0);
+    }
+
+    fn control(&mut self, level: f32, time: Time) {
+        let envelope = self.hit.next(time);
+        self.gain.aim(level * envelope);
+        let cutoff = FIGURE_CUTOFF * (1.0 + FIGURE_OPEN * envelope);
+        self.filter.set(cutoff, FIGURE_Q, time.rate);
+    }
+
+    fn render(&mut self, out: &mut [Frame]) {
+        if self.gain.silent() {
+            return;
+        }
+        for frame in out {
+            let low = self.filter.process(self.saw.next() * self.gain.next()).low;
+            frame[0] += low;
+            frame[1] += low;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f64::consts::TAU;
@@ -519,7 +583,14 @@ mod tests {
     const BREATH: Character = Character {
         throb: 0.0,
         duck: 0.8,
+        ostinato: 0.0,
         bed: 1.33,
+    };
+    const OSTINATO: Character = Character {
+        throb: 0.0,
+        duck: 0.25,
+        ostinato: 0.09,
+        bed: 1.0,
     };
 
     fn take(pulse: &mut Pulse, seconds: usize) -> Vec<Frame> {
@@ -595,19 +666,43 @@ mod tests {
 
     #[test]
     fn the_level_swells_and_falls_once_each_beat() {
-        for (seed, character) in [(3, CHARACTER), (7, CHARACTER), (3, BREATH), (7, BREATH)] {
-            let mut pulse = Pulse::with(seed, RATE, character);
-            take(&mut pulse, 10);
-            let levels = detrended(&envelope(&take(&mut pulse, 60)), BEAT);
-            let (lag, strength) = (40..=125)
-                .map(|lag| (lag, correlation(&levels, lag)))
-                .max_by(|one, other| one.1.total_cmp(&other.1))
-                .unwrap();
-            assert!((BEAT - 1..=BEAT + 3).contains(&lag), "{character:?}: {lag}");
-            assert!(strength > 0.65, "{character:?}: {strength}");
-            let half = correlation(&levels, BEAT / 2);
-            assert!(half < 0.0, "{character:?}: {half}");
+        for character in [CHARACTER, BREATH, OSTINATO] {
+            for seed in [3, 7] {
+                let mut pulse = Pulse::with(seed, RATE, character);
+                take(&mut pulse, 10);
+                let levels = detrended(&envelope(&take(&mut pulse, 60)), BEAT);
+                let (lag, strength) = (40..=125)
+                    .map(|lag| (lag, correlation(&levels, lag)))
+                    .max_by(|one, other| one.1.total_cmp(&other.1))
+                    .unwrap();
+                assert!((BEAT - 1..=BEAT + 3).contains(&lag), "{character:?}: {lag}");
+                assert!(strength > 0.65, "{character:?}: {strength}");
+                let half = correlation(&levels, BEAT / 2);
+                assert!(half < 0.0, "{character:?}: {half}");
+            }
         }
+    }
+
+    #[test]
+    fn an_ostinato_plays_a_low_two_note_figure() {
+        let mut with = Pulse::with(3, RATE, OSTINATO);
+        let mut without = Pulse::with(
+            3,
+            RATE,
+            Character {
+                ostinato: 0.0,
+                ..OSTINATO
+            },
+        );
+        let figure = |frames: &[Frame]| -> f64 {
+            frames
+                .chunks(2 * SECOND)
+                .map(|window| strength(window, 39))
+                .sum()
+        };
+        let played = figure(&take(&mut with, 40));
+        let plain = figure(&take(&mut without, 40));
+        assert!(played > 4.0 * plain, "{played} {plain}");
     }
 
     #[test]
