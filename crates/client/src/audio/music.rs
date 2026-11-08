@@ -7,7 +7,7 @@ use crate::spline::smoothstep;
 const CONTROL: u16 = 32;
 const ENTRY: f64 = 8.0;
 const SESSION: [f32; 2] = [130.0, 220.0];
-const REST: [f32; 2] = [110.0, 200.0];
+const REST: [f32; 2] = [145.0, 265.0];
 const FILTER_Q: f32 = 0.6;
 
 const DRONE: [u8; 2] = [38, 45];
@@ -1002,25 +1002,28 @@ mod tests {
     }
 
     #[test]
-    fn the_bed_rests_in_silence_and_then_returns() {
-        let mut music = Music::new(2, RATE);
+    fn the_bed_rests_in_silence_for_minutes_and_then_returns() {
+        let mut music = Music::new(4, RATE);
         let mut last = [0.0; 2];
         let mut jump = 0.0_f32;
-        let (mut quiet, mut longest, mut returned) = (0, 0, false);
-        for _ in 0..600 {
+        let (mut quiet, mut rests) = (0, Vec::new());
+        for second in 0..600 {
             let window = take(&mut music, 1);
             jump = jump.max(largest_step(last, &window));
             last = window[window.len() - 1];
             if peak(&window) < 1e-5 {
                 quiet += 1;
             } else {
-                returned |= longest >= 60;
+                if second > 20 && quiet > 0 {
+                    rests.push(quiet);
+                }
                 quiet = 0;
             }
-            longest = longest.max(quiet);
         }
-        assert!(longest >= 60, "{longest} s");
-        assert!(returned);
+        assert!(
+            !rests.is_empty() && rests.iter().all(|&rest| rest >= 120),
+            "{rests:?} s"
+        );
         assert!(jump < 0.01, "{jump}");
     }
 
