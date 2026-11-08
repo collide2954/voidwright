@@ -1,6 +1,7 @@
 mod options;
 mod playback;
 mod session;
+pub mod stage;
 mod treadmill;
 mod view;
 
