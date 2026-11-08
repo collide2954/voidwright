@@ -1,9 +1,23 @@
 use glam::camera::rh::{proj::opengl, view};
 use glam::{Mat4, Vec3, Vec4};
+use miniquad::{FilterMode, TextureFormat, TextureParams};
 
+pub const MAP_SIZE: u32 = 1024;
 const MIDDLE: Vec3 = Vec3::new(0.0, 0.9, 0.0);
 const REACH: f32 = 1.1;
 pub const DIGITS: Vec4 = Vec4::new(1.0, 255.0, 65_025.0, 16_581_375.0);
+
+#[must_use]
+pub fn map() -> TextureParams {
+    TextureParams {
+        format: TextureFormat::RGBA8,
+        min_filter: FilterMode::Nearest,
+        mag_filter: FilterMode::Nearest,
+        width: MAP_SIZE,
+        height: MAP_SIZE,
+        ..TextureParams::default()
+    }
+}
 
 #[must_use]
 pub fn sun_view(player: Vec3, toward_sun: Vec3) -> Mat4 {
@@ -35,9 +49,21 @@ pub fn unpack(bytes: [u8; 4]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{pack, sun_view, to_texture, unpack};
+    use super::{map, pack, sun_view, to_texture, unpack};
     use crate::VAEL;
     use glam::{Mat4, Vec3};
+    use miniquad::{FilterMode, MipmapFilterMode, TextureFormat, TextureWrap};
+
+    #[test]
+    fn the_map_holds_packed_depth_without_filtering() {
+        let map = map();
+        assert_eq!((map.width, map.height), (1024, 1024));
+        assert_eq!(map.format, TextureFormat::RGBA8);
+        assert_eq!(map.min_filter, FilterMode::Nearest);
+        assert_eq!(map.mag_filter, FilterMode::Nearest);
+        assert_eq!(map.mipmap_filter, MipmapFilterMode::None);
+        assert_eq!(map.wrap, TextureWrap::Clamp);
+    }
 
     const PLAYER: Vec3 = Vec3::new(3.0, 1.2, -4.0);
     const MIDDLE: Vec3 = Vec3::new(3.0, 2.1, -4.0);

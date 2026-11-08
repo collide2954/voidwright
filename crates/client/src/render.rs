@@ -1,16 +1,17 @@
 use glam::{Mat4, Vec4};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
-    FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderingBackend,
-    ShaderMeta, ShaderSource, TextureFormat, TextureId, TextureParams, TextureWrap, UniformsSource,
-    VertexAttribute, VertexFormat,
+    FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderPass,
+    RenderingBackend, ShaderMeta, ShaderSource, TextureFormat, TextureId, TextureParams,
+    TextureWrap, UniformsSource, VertexAttribute, VertexFormat,
 };
 
 use crate::detail::{DETAIL_SIZE, paint};
-use crate::shader::{baked, skinned};
+use crate::shader::{baked, caster, skinned};
+use crate::shadow::{self, sun_view};
 use crate::{
-    Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin, sky,
-    top, underside, voidwright,
+    BONES, Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin,
+    sky, top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -21,10 +22,29 @@ struct Model {
     count: i32,
 }
 
+struct Figure {
+    placement: Mat4,
+    bones: [Mat4; BONES],
+    sun_view: Mat4,
+}
+
+impl Figure {
+    fn new(game: &Game) -> Self {
+        let position = game.player_position();
+        Self {
+            placement: placement(position, game.stride()),
+            bones: skin(&game.stride().pose(game.time())),
+            sun_view: sun_view(position, VAEL.toward_sun),
+        }
+    }
+}
+
 pub struct Renderer {
     backdrop: Pipeline,
     baked: Pipeline,
     skinned: Pipeline,
+    caster: Pipeline,
+    shadow: RenderPass,
     sky: Model,
     terrain: Model,
     avatar: Model,
@@ -70,6 +90,19 @@ impl Renderer {
             &skinned_attributes,
             solid(),
         );
+        let caster = pipeline(
+            context,
+            [caster::VERTEX, caster::FRAGMENT],
+            caster::meta(),
+            &skinned_attributes,
+            solid(),
+        );
+        let map = context.new_render_texture(shadow::map());
+        let depth = context.new_render_texture(TextureParams {
+            format: TextureFormat::Depth,
+            ..shadow::map()
+        });
+        let shadow = context.new_render_pass(map, Some(depth));
         let backdrop_mesh = sky();
         let sky = upload(context, &backdrop_mesh.vertices, &backdrop_mesh.indices);
         let ground = game.ground();
@@ -88,6 +121,8 @@ impl Renderer {
             backdrop,
             baked,
             skinned,
+            caster,
+            shadow,
             sky,
             terrain,
             avatar,
@@ -95,8 +130,10 @@ impl Renderer {
     }
 
     pub fn draw(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
+        let figure = Figure::new(game);
+        self.cast(context, &figure);
         context.begin_default_pass(clear());
-        self.scene(context, game, aspect);
+        self.scene(context, game, aspect, &figure);
         context.end_render_pass();
         context.commit_frame();
     }
@@ -112,11 +149,14 @@ impl Renderer {
         let color = context.new_render_texture(target(TextureFormat::RGBA8));
         let depth = context.new_render_texture(target(TextureFormat::Depth));
         let pass = context.new_render_pass(color, Some(depth));
+        let figure = Figure::new(game);
+        self.cast(context, &figure);
         context.begin_pass(Some(pass), clear());
         self.scene(
             context,
             game,
             f32::from(CAPTURE_WIDTH) / f32::from(CAPTURE_HEIGHT),
+            &figure,
         );
         context.end_render_pass();
         let mut pixels = vec![0; usize::from(CAPTURE_WIDTH) * usize::from(CAPTURE_HEIGHT) * 4];
@@ -131,7 +171,23 @@ impl Renderer {
         )
     }
 
-    fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32) {
+    fn cast(&self, context: &mut dyn RenderingBackend, figure: &Figure) {
+        context.begin_pass(
+            Some(self.shadow),
+            PassAction::clear_color(1.0, 1.0, 1.0, 1.0),
+        );
+        context.apply_pipeline(&self.caster);
+        context.apply_bindings(&self.avatar.bindings);
+        context.apply_uniforms(UniformsSource::table(&caster::Uniforms::new(
+            figure.sun_view,
+            figure.placement,
+            &figure.bones,
+        )));
+        context.draw(0, self.avatar.count, 1);
+        context.end_render_pass();
+    }
+
+    fn scene(&self, context: &mut dyn RenderingBackend, game: &Game, aspect: f32, figure: &Figure) {
         let camera = game.camera();
         let view_projection = projection(aspect) * camera.view();
         context.apply_pipeline(&self.backdrop);
@@ -158,8 +214,8 @@ impl Renderer {
         context.apply_bindings(&self.avatar.bindings);
         context.apply_uniforms(UniformsSource::table(&skinned::Uniforms::new(
             view_projection,
-            placement(game.player_position(), game.stride()),
-            &skin(&game.stride().pose(game.time())),
+            figure.placement,
+            &figure.bones,
             camera.eye(),
             &VAEL,
         )));
