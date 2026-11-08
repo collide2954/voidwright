@@ -33,6 +33,7 @@ The three values after `--orbit` are the yaw and the pitch in radians, and the d
 | --- | --- |
 | `--walk <dx> <dy>` | At start, the player walks to the tile at this offset. |
 | `--capture-at <seconds>` | The capture waits for this game time. |
+| `--record <frames>` | With `--capture`, the game moves 1/30 s for each frame and saves this number of frames. Each file name gets a frame number. |
 
 ## Controls
 
