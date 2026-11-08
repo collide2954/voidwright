@@ -26,6 +26,7 @@ varying mediump float fog;
 varying highp vec3 rest;
 varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
+varying mediump vec3 toward_lantern;
 void main() {
     mat4 skin = bones[int(in_bones.x)] * in_weights.x
         + bones[int(in_bones.y)] * in_weights.y
@@ -34,6 +35,7 @@ void main() {
     mat4 placement = model * skin;
     vec4 placed = placement * vec4(in_position, 1.0);
     toward_eye = eye - placed.xyz;
+    toward_lantern = (lantern.xyz - placed.xyz) * lantern.w;
     normal = (placement * vec4(in_normal, 0.0)).xyz;
     albedo = in_color;
     params = in_params;
@@ -67,6 +69,7 @@ varying mediump float fog;
 varying highp vec3 rest;
 varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
+varying mediump vec3 toward_lantern;
 const float TILES = 12.0;
 const float BUMP = 1.6;
 const float CAVITY = 0.35;
@@ -105,8 +108,11 @@ void main() {
     float diffuse = max(dot(facing, toward_sun), 0.0);
     float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
     float rim = pow(1.0 - abs(dot(facing, view)), 4.0);
+    float near = dot(toward_lantern, toward_lantern);
+    float fade = max(1.0 - near, 0.0);
+    float lamp = fade * fade * max(dot(facing, toward_lantern), 0.0) * inversesqrt(near + 0.0001);
     vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
-    vec3 lit = tinted * (sun * diffuse + ambient) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
+    vec3 lit = tinted * (sun * diffuse + ambient + lantern_light * lamp) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
     vec3 shaded = mix(mix(lit, albedo * 2.5, params.y), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
@@ -173,6 +179,7 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
+    use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
     use glam::{Mat4, Vec3};
     use miniquad::{UniformDesc, UniformType};
@@ -223,6 +230,81 @@ mod tests {
         assert_eq!(Vec3::new(x, y, z), lamp.position);
         assert!((inverse * lamp.reach - 1.0).abs() < 1e-6);
         assert_eq!(uniforms.lantern_light, lamp.color.to_array());
+    }
+
+    fn lamplight(lantern: [f32; 4], point: Vec3, facing: Vec3) -> f32 {
+        let [x, y, z, inverse] = lantern;
+        let toward = (Vec3::new(x, y, z) - point) * inverse;
+        let near = toward.length_squared();
+        let fade = (1.0 - near).max(0.0);
+        fade * fade * facing.dot(toward).max(0.0) / (near + 0.0001).sqrt()
+    }
+
+    #[test]
+    fn the_lantern_term_follows_the_rust_mirror() {
+        assert!(VERTEX.contains("toward_lantern = (lantern.xyz - placed.xyz) * lantern.w;"));
+        for line in [
+            "float near = dot(toward_lantern, toward_lantern);",
+            "float fade = max(1.0 - near, 0.0);",
+            "fade * fade * max(dot(facing, toward_lantern), 0.0) * inversesqrt(near + 0.0001);",
+        ] {
+            assert!(FRAGMENT.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn the_figure_and_the_ground_share_the_falloff() {
+        for line in [
+            "float fade = max(1.0 - near, 0.0);",
+            "inversesqrt(near + 0.0001)",
+        ] {
+            assert!(
+                FRAGMENT.contains(line) && baked::FRAGMENT.contains(line),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_varying_carries_the_lantern_to_the_fragment_shader() {
+        let varying = "varying mediump vec3 toward_lantern;";
+        assert!(VERTEX.contains(varying) && FRAGMENT.contains(varying));
+    }
+
+    #[test]
+    fn the_lantern_adds_to_the_diffuse_light_of_the_surface() {
+        assert!(FRAGMENT.contains("tinted * (sun * diffuse + ambient + lantern_light * lamp)"));
+    }
+
+    #[test]
+    fn a_coat_near_the_lantern_and_facing_it_gets_full_strength() {
+        let lamp = lamp();
+        let coat = lamp.position + Vec3::new(-0.1, -0.25, -0.15);
+        let facing = (lamp.position - coat).normalize();
+        assert!(lamplight(dark().lit(&lamp).lantern, coat, facing) > 0.95);
+    }
+
+    #[test]
+    fn a_surface_turned_away_from_the_lantern_gets_none() {
+        let lamp = lamp();
+        let front = lamp.position + Vec3::new(0.0, -0.4, -0.3);
+        let facing = (front - lamp.position).normalize();
+        assert!(lamplight(dark().lit(&lamp).lantern, front, facing).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_lantern_does_not_reach_beyond_its_reach() {
+        let lamp = lamp();
+        let far = lamp.position + Vec3::new(0.0, -lamp.reach, 0.2);
+        assert!(lamplight(dark().lit(&lamp).lantern, far, Vec3::Y).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_dark_lantern_lights_no_part_of_the_figure() {
+        for point in [Vec3::ZERO, Vec3::new(0.2, 1.1, 0.1)] {
+            let strength = lamplight(dark().lantern, point, Vec3::Y);
+            assert!(strength.is_finite() && strength.abs() < 1e-6, "{point}");
+        }
     }
 
     #[test]

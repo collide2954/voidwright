@@ -230,13 +230,16 @@ impl Renderer {
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.skinned);
         context.apply_bindings(&self.avatar.bindings);
-        context.apply_uniforms(UniformsSource::table(&skinned::Uniforms::new(
-            view_projection,
-            figure.placement,
-            &figure.bones,
-            camera.eye(),
-            &VAEL,
-        )));
+        context.apply_uniforms(UniformsSource::table(
+            &skinned::Uniforms::new(
+                view_projection,
+                figure.placement,
+                &figure.bones,
+                camera.eye(),
+                &VAEL,
+            )
+            .lit(&figure.lamp),
+        ));
         context.draw(0, self.avatar.count, 1);
         context.apply_pipeline(&self.particles);
         context.apply_bindings(&self.specks.bindings);
