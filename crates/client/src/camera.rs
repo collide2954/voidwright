@@ -40,6 +40,11 @@ impl OrbitCamera {
     }
 
     #[must_use]
+    pub const fn yaw(&self) -> f32 {
+        self.yaw
+    }
+
+    #[must_use]
     pub const fn pitch(&self) -> f32 {
         self.pitch
     }

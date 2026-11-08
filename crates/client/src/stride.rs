@@ -68,6 +68,16 @@ impl Stride {
     }
 
     #[must_use]
+    pub const fn phase(&self) -> f32 {
+        self.phase
+    }
+
+    #[must_use]
+    pub const fn pace(&self) -> f32 {
+        self.pace
+    }
+
+    #[must_use]
     pub fn pose(&self, time: f32) -> Pose {
         let lean = Lean {
             surge: self.surge.value(),

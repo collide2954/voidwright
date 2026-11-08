@@ -4,5 +4,6 @@ pub mod footstep;
 pub mod lantern;
 pub mod mixer;
 pub mod ring;
+pub mod soundscape;
 pub mod space;
 pub mod wind;
