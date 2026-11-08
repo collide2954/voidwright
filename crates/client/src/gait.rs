@@ -103,7 +103,10 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     let turn = blend(0.105, 0.16);
     let twist = -turn * cos;
     let surge = blend(WALK_SURGE, RUN_SURGE) + lean.surge;
-    let walk = stride(phase, pace, turn, roll, surge);
+    let sway = -SWAY * (phase - SWAY_LAG).sin() * motion
+        + SHIFT_SWAY * shift * rest
+        + BANK_SWAY * lean.bank;
+    let walk = stride(phase, pace, turn, roll, sway, surge);
     let relaxed = |leg: usize| (RELAXED_THIGH * free[leg], RELAXED_KNEE * free[leg]);
     let leg = |index: usize| {
         let (thigh, knee) = relaxed(index);
@@ -117,9 +120,7 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
     let curl = |hand: f32| 0.42 + 0.34 * dwell(drift(hand, 0.53));
     Pose {
         surge,
-        sway: -SWAY * (phase - SWAY_LAG).sin() * motion
-            + SHIFT_SWAY * shift * rest
-            + BANK_SWAY * lean.bank,
+        sway,
         bob: walk.bob * motion,
         twist,
         lean: blend(0.0, 0.127) + 0.012 * (time * 0.9).sin() * rest,
@@ -155,10 +156,9 @@ struct Footing {
     pitch: f32,
 }
 
-fn stride(phase: f32, pace: f32, turn: f32, roll: f32, surge: f32) -> Walk {
+fn stride(phase: f32, pace: f32, turn: f32, roll: f32, sway: f32, surge: f32) -> Walk {
     let feet = [footing(phase, pace), footing(phase + PI, pace)];
     let twist = -turn * phase.cos();
-    let hips = [-1.0, 1.0].map(|side: f32| side * HIP.x * twist.sin() + surge);
     let (sin, cos) = roll.sin_cos();
     let length = REACH * (THIGH + ANKLE);
     let rest = THIGH + ANKLE + ANKLE_HEIGHT;
@@ -179,8 +179,12 @@ fn stride(phase: f32, pace: f32, turn: f32, roll: f32, surge: f32) -> Walk {
     let legs = [0, 1].map(|index| {
         let foot = feet[index];
         let side = [-1.0, 1.0][index];
+        let across = side * HIP.x * cos - HIP.y * sin;
+        let tilt = (side * HIP.x - sway - across) / rest;
         let hip = height + HIP.x * (side * sin - sin.abs()) + HIP.y * (cos - 1.0);
-        let (thigh, knee) = reach(foot.ankle.x - hips[index], hip - foot.ankle.y);
+        let drop = (hip - foot.ankle.y) / (1.0 - tilt * tilt).sqrt();
+        let ahead = (foot.ankle.x - surge - (across + drop * tilt) * twist.sin()) / twist.cos();
+        let (thigh, knee) = reach(ahead, drop);
         (thigh, knee, foot.pitch)
     });
     Walk {
@@ -321,6 +325,22 @@ mod tests {
                         assert!(low < 0.002, "pace {pace} {bone:?} at {moment}: {low}");
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn each_planted_step_slides_less_than_two_millimetres() {
+        for pace in [0.0, 1.0] {
+            for (bone, lag) in FEET {
+                let slid: f32 = strides(pace, bone, lag)
+                    .filter(|&(moment, _)| moment < duty(pace))
+                    .map(|(_, [soles, next])| {
+                        let point = lowest(soles);
+                        (next[point].z - soles[point].z).abs()
+                    })
+                    .sum();
+                assert!(slid < 0.002, "pace {pace} {bone:?}: {slid}");
             }
         }
     }
