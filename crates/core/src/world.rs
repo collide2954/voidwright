@@ -26,6 +26,7 @@ impl PlayerId {
 pub enum Refusal {
     Absent,
     Void,
+    Unreachable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,7 +101,11 @@ impl World {
         if !self.map.is_walkable(target) {
             return Err(Refusal::Void);
         }
-        let route = find_path(&self.map, player.walker.tile(), target);
+        let from = player.walker.tile();
+        let route = find_path(&self.map, from, target);
+        if route.last().copied().unwrap_or(from) != target {
+            return Err(Refusal::Unreachable);
+        }
         player.walker.follow(route);
         Ok(())
     }
@@ -284,5 +289,24 @@ mod tests {
         let (mut world, id) = corridor();
         world.leave(id);
         assert_eq!(world.try_walk_to(id, Tile::new(1, 0)), Err(Refusal::Absent));
+    }
+
+    #[test]
+    fn an_order_to_cut_off_ground_is_refused() {
+        let mut world = World::new(fixtures::map(&["..#.."]));
+        let id = world.join(Tile::new(0, 0)).unwrap();
+        assert_eq!(
+            world.try_walk_to(id, Tile::new(4, 0)),
+            Err(Refusal::Unreachable)
+        );
+        assert_eq!(destination(&world, id), None);
+    }
+
+    #[test]
+    fn an_order_to_the_own_tile_stops_the_player() {
+        let (mut world, id) = corridor();
+        world.walk_to(id, Tile::new(5, 0));
+        assert_eq!(world.try_walk_to(id, Tile::new(0, 0)), Ok(()));
+        assert_eq!(destination(&world, id), None);
     }
 }
