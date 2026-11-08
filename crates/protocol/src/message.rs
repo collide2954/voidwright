@@ -42,7 +42,10 @@ impl Message for ClientMessage {
         let mut cursor = Cursor::new(payload);
         let message = match cursor.u8()? {
             HELLO => {
-                cursor.u16()?;
+                let version = cursor.u16()?;
+                if version != VERSION {
+                    return Err(Error::Version(version));
+                }
                 Self::Hello(Name::decode(&mut cursor)?)
             }
             WALK => Self::Walk(cursor.tile()?),
@@ -129,6 +132,16 @@ mod tests {
         for name in [&b""[..], b"A!h", b"Ash\xff", b"thirteen_long"] {
             let bytes = hello_payload(VERSION, name);
             assert_eq!(ClientMessage::decode(&bytes), Err(Error::Name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_hello_with_another_version_is_rejected_before_its_name() {
+        for version in [0, VERSION + 1, u16::MAX] {
+            let mut bytes = vec![0x01];
+            bytes.extend_from_slice(&version.to_le_bytes());
+            bytes.push(0xff);
+            assert_eq!(ClientMessage::decode(&bytes), Err(Error::Version(version)));
         }
     }
 }

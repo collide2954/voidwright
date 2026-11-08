@@ -7,6 +7,7 @@ pub enum Error {
     Truncated,
     Trailing,
     Tag(u8),
+    Version(u16),
     Name,
     Range,
 }
@@ -21,6 +22,9 @@ impl fmt::Display for Error {
             Self::Truncated => formatter.write_str("the message ends too early"),
             Self::Trailing => formatter.write_str("the message has bytes after its end"),
             Self::Tag(tag) => write!(formatter, "the message tag {tag:#04x} is not known"),
+            Self::Version(version) => {
+                write!(formatter, "the protocol version {version} is not known")
+            }
             Self::Name => formatter.write_str("the name breaks the rules for names"),
             Self::Range => formatter.write_str("a tile is outside the range of the protocol"),
         }
