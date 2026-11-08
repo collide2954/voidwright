@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 
 use crate::palette;
@@ -15,25 +15,38 @@ uniform vec3 eye;
 uniform vec2 fog_range;
 varying mediump vec3 color;
 varying mediump float fog;
+varying highp vec3 world;
 void main() {
-    vec4 world = model * vec4(in_position, 1.0);
-    gl_Position = view_projection * world;
-    float depth = length(world.xyz - eye) - fog_range.x;
+    vec4 placed = model * vec4(in_position, 1.0);
+    gl_Position = view_projection * placed;
+    float depth = length(placed.xyz - eye) - fog_range.x;
     fog = clamp(depth / (fog_range.y - fog_range.x), 0.0, 1.0);
     color = in_color;
+    world = placed.xyz;
 }
 ";
 
 pub const FRAGMENT: &str = "#version 100
 precision mediump float;
 uniform vec3 fog_color;
+uniform highp vec4 marker;
 varying mediump vec3 color;
 varying mediump float fog;
+varying highp vec3 world;
+const vec3 TEAL = vec3(0.071, 1.0, 0.7);
+const float SOFT = 0.02;
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
+float ring() {
+    highp vec2 radius = vec2(0.26, 0.36) * marker.w;
+    highp float reach = length(world.xz - marker.xz);
+    float band = smoothstep(radius.x - SOFT, radius.x + SOFT, reach)
+        - smoothstep(radius.y - SOFT, radius.y + SOFT, reach);
+    return band * (1.0 - smoothstep(0.25, 0.5, abs(world.y - marker.y)));
+}
 void main() {
-    vec3 shaded = mix(color, fog_color, fog);
+    vec3 shaded = mix(mix(color, TEAL * 2.5, ring()), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0);
 }
 ";
@@ -49,6 +62,7 @@ pub fn meta() -> ShaderMeta {
                 UniformDesc::new("eye", UniformType::Float3),
                 UniformDesc::new("fog_color", UniformType::Float3),
                 UniformDesc::new("fog_range", UniformType::Float2),
+                UniformDesc::new("marker", UniformType::Float4),
             ],
         },
     }
@@ -62,6 +76,7 @@ pub struct Uniforms {
     pub eye: [f32; 3],
     pub fog_color: [f32; 3],
     pub fog_range: [f32; 2],
+    pub marker: [f32; 4],
 }
 
 impl Uniforms {
@@ -73,6 +88,7 @@ impl Uniforms {
             eye: eye.to_array(),
             fog_color: palette::linear(palette::VOID).to_array(),
             fog_range: FOG_RANGE,
+            marker: [0.0; 4],
         }
     }
 
@@ -81,12 +97,18 @@ impl Uniforms {
         self.fog_range = NO_FOG;
         self
     }
+
+    #[must_use]
+    pub const fn marked(mut self, marker: Vec4) -> Self {
+        self.marker = marker.to_array();
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Vec3, Vec4};
 
     #[test]
     fn uniforms_match_the_shader_layout_in_size() {
@@ -131,5 +153,31 @@ mod tests {
         assert_eq!(uniforms.view_projection, view_projection.to_cols_array());
         assert_eq!(uniforms.model, model.to_cols_array());
         assert_eq!(uniforms.eye, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn new_uniforms_hide_the_marker() {
+        let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO);
+        assert_eq!(uniforms.marker, [0.0; 4]);
+    }
+
+    #[test]
+    fn marked_uniforms_carry_the_center_and_the_pulse() {
+        let marker = Vec4::new(1.0, 2.0, 3.0, 1.1);
+        let uniforms = Uniforms::new(Mat4::IDENTITY, Mat4::IDENTITY, Vec3::ZERO).marked(marker);
+        assert_eq!(uniforms.marker, marker.to_array());
+    }
+
+    #[test]
+    fn the_marker_rings_the_world_position_by_horizontal_distance() {
+        assert!(VERTEX.contains("world = placed.xyz;"));
+        assert!(FRAGMENT.contains("varying highp vec3 world;"));
+        assert!(FRAGMENT.contains("length(world.xz - marker.xz)"));
+        assert!(FRAGMENT.contains("vec2(0.26, 0.36) * marker.w"));
+    }
+
+    #[test]
+    fn the_marker_glows_like_a_light() {
+        assert!(FRAGMENT.contains("mix(color, TEAL * 2.5, ring())"));
     }
 }

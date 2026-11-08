@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec4};
 use miniquad::{
     Bindings, BufferLayout, BufferSource, BufferType, BufferUsage, Comparison, CullFace,
     FilterMode, MipmapFilterMode, PassAction, Pipeline, PipelineParams, RenderingBackend,
@@ -7,10 +7,10 @@ use miniquad::{
 };
 
 use crate::detail::{DETAIL_SIZE, paint};
-use crate::shader::{baked, lit, skinned};
+use crate::shader::{baked, skinned};
 use crate::{
-    Game, Painter, VAEL, cliff, flip_rows, marker_ring, palette, placement, png, projection, pulse,
-    skin, sky, top, underside, voidwright,
+    Game, Painter, VAEL, cliff, flip_rows, palette, placement, png, projection, pulse, skin, sky,
+    top, underside, voidwright,
 };
 
 const CAPTURE_WIDTH: u16 = 1280;
@@ -24,12 +24,10 @@ struct Model {
 pub struct Renderer {
     backdrop: Pipeline,
     baked: Pipeline,
-    lit: Pipeline,
     skinned: Pipeline,
     sky: Model,
     terrain: Model,
     avatar: Model,
-    marker: Model,
 }
 
 impl Renderer {
@@ -59,13 +57,6 @@ impl Renderer {
             VertexAttribute::new("in_color", VertexFormat::Float3),
             VertexAttribute::new("in_params", VertexFormat::Float2),
         ];
-        let lit = pipeline(
-            context,
-            [lit::VERTEX, lit::FRAGMENT],
-            lit::meta(),
-            &lit_attributes,
-            solid(),
-        );
         let mut skinned_attributes = lit_attributes.to_vec();
         skinned_attributes.extend([
             VertexAttribute::new("in_bones", VertexFormat::Float4),
@@ -93,17 +84,13 @@ impl Renderer {
         avatar.bindings.images = [&detail.height, &detail.slope_u, &detail.slope_v]
             .map(|bytes| detail_texture(context, bytes))
             .to_vec();
-        let ring = marker_ring();
-        let marker = upload(context, &ring.vertices, &ring.indices);
         Self {
             backdrop,
             baked,
-            lit,
             skinned,
             sky,
             terrain,
             avatar,
-            marker,
         }
     }
 
@@ -158,13 +145,14 @@ impl Renderer {
             .unfogged(),
         ));
         context.draw(0, self.sky.count, 1);
+        let marker = game
+            .marker()
+            .map_or(Vec4::ZERO, |center| center.extend(pulse(game.time())));
         context.apply_pipeline(&self.baked);
         context.apply_bindings(&self.terrain.bindings);
-        context.apply_uniforms(UniformsSource::table(&baked::Uniforms::new(
-            view_projection,
-            Mat4::IDENTITY,
-            camera.eye(),
-        )));
+        context.apply_uniforms(UniformsSource::table(
+            &baked::Uniforms::new(view_projection, Mat4::IDENTITY, camera.eye()).marked(marker),
+        ));
         context.draw(0, self.terrain.count, 1);
         context.apply_pipeline(&self.skinned);
         context.apply_bindings(&self.avatar.bindings);
@@ -176,18 +164,6 @@ impl Renderer {
             &VAEL,
         )));
         context.draw(0, self.avatar.count, 1);
-        if let Some(position) = game.marker() {
-            let scale = Mat4::from_scale(Vec3::splat(pulse(game.time())));
-            context.apply_pipeline(&self.lit);
-            context.apply_bindings(&self.marker.bindings);
-            context.apply_uniforms(UniformsSource::table(&lit::Uniforms::new(
-                view_projection,
-                Mat4::from_translation(position) * scale,
-                camera.eye(),
-                &VAEL,
-            )));
-            context.draw(0, self.marker.count, 1);
-        }
     }
 }
 

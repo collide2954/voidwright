@@ -2,10 +2,8 @@ use std::array::from_fn;
 
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::shape::{LitMesh, Material};
 use crate::{Pose, Stride};
 
-const MARKER: Material = Material::light(Vec3::new(0.3, 1.0, 0.85));
 const PULSE: f32 = 0.12;
 const PULSE_RATE: f32 = 5.0;
 
@@ -218,13 +216,6 @@ pub fn placement(position: Vec3, stride: &Stride) -> Mat4 {
 #[must_use]
 pub fn pulse(time: f32) -> f32 {
     1.0 + PULSE * (time * PULSE_RATE).sin()
-}
-
-#[must_use]
-pub fn marker_ring() -> LitMesh {
-    let mut mesh = LitMesh::default();
-    mesh.ring(0.26, 0.36, MARKER);
-    mesh
 }
 
 #[cfg(test)]
