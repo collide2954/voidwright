@@ -22,6 +22,12 @@ impl PlayerId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    Absent,
+    Void,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Player {
     walker: Walker,
@@ -89,6 +95,16 @@ impl World {
         }
     }
 
+    pub fn try_walk_to(&mut self, id: PlayerId, target: Tile) -> Result<(), Refusal> {
+        let player = self.players.get_mut(&id).ok_or(Refusal::Absent)?;
+        if !self.map.is_walkable(target) {
+            return Err(Refusal::Void);
+        }
+        let route = find_path(&self.map, player.walker.tile(), target);
+        player.walker.follow(route);
+        Ok(())
+    }
+
     pub fn set_running(&mut self, id: PlayerId, running: bool) {
         if let Some(player) = self.players.get_mut(&id) {
             player.running = running;
@@ -108,7 +124,7 @@ impl World {
 }
 #[cfg(test)]
 mod tests {
-    use super::{PlayerId, TICK, World};
+    use super::{PlayerId, Refusal, TICK, World};
     use crate::{Tile, Walker, fixtures};
 
     fn corridor() -> (World, PlayerId) {
@@ -233,5 +249,40 @@ mod tests {
             assert!(world.join(Tile::new(0, 0)).is_some());
         }
         assert_eq!(world.join(Tile::new(0, 0)), None);
+    }
+
+    fn destination(world: &World, id: PlayerId) -> Option<Tile> {
+        world.player(id).and_then(Walker::destination)
+    }
+
+    #[test]
+    fn an_accepted_order_walks_to_the_exact_tile() {
+        let (mut world, id) = corridor();
+        assert_eq!(world.try_walk_to(id, Tile::new(3, 0)), Ok(()));
+        assert_eq!(destination(&world, id), Some(Tile::new(3, 0)));
+    }
+
+    #[test]
+    fn an_order_to_the_void_is_refused() {
+        let mut world = World::new(fixtures::map(&["..#"]));
+        let id = world.join(Tile::new(0, 0)).unwrap();
+        for target in [Tile::new(2, 0), Tile::new(9, 0), Tile::new(-1, 0)] {
+            assert_eq!(world.try_walk_to(id, target), Err(Refusal::Void));
+        }
+    }
+
+    #[test]
+    fn a_refused_order_keeps_the_old_route() {
+        let (mut world, id) = corridor();
+        world.walk_to(id, Tile::new(5, 0));
+        assert!(world.try_walk_to(id, Tile::new(0, 4)).is_err());
+        assert_eq!(destination(&world, id), Some(Tile::new(5, 0)));
+    }
+
+    #[test]
+    fn an_order_for_an_absent_player_is_refused() {
+        let (mut world, id) = corridor();
+        world.leave(id);
+        assert_eq!(world.try_walk_to(id, Tile::new(1, 0)), Err(Refusal::Absent));
     }
 }
