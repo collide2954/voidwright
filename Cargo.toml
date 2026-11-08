@@ -15,6 +15,9 @@ voidwright-core = { path = "crates/core" }
 glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
 miniquad = "0.4"
 
+[profile.test]
+opt-level = 1
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
