@@ -3,7 +3,7 @@ mod options;
 mod playback;
 mod scene;
 mod session;
-mod stage;
+pub(crate) mod stage;
 mod treadmill;
 mod view;
 

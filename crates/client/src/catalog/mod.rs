@@ -1,7 +1,9 @@
+mod app;
 mod camera;
 mod entries;
 mod index;
 pub mod scene;
+mod studio;
 pub mod swatch;
 
 use glam::Vec3;
@@ -9,6 +11,7 @@ use glam::Vec3;
 use crate::inspect::Gait;
 use crate::shape::{Material, Surface};
 
+pub use app::Catalog;
 pub use camera::{Camera, FIELD, Focus};
 pub use entries::entries;
 pub use index::index;
