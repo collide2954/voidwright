@@ -172,10 +172,14 @@ impl Bone {
                     * Mat4::from_rotation_x(pose.lean * HEAD_STEADY + pose.nod)
             }
             Self::LeftThigh => {
-                Mat4::from_rotation_z(plant(pose, -1.0)) * Mat4::from_rotation_x(pose.thighs[0])
+                untwist(pose)
+                    * Mat4::from_rotation_z(plant(pose, -1.0))
+                    * Mat4::from_rotation_x(pose.thighs[0])
             }
             Self::RightThigh => {
-                Mat4::from_rotation_z(plant(pose, 1.0)) * Mat4::from_rotation_x(pose.thighs[1])
+                untwist(pose)
+                    * Mat4::from_rotation_z(plant(pose, 1.0))
+                    * Mat4::from_rotation_x(pose.thighs[1])
             }
             Self::LeftShin => Mat4::from_rotation_x(-pose.knees[0]),
             Self::RightShin => Mat4::from_rotation_x(-pose.knees[1]),
@@ -195,6 +199,12 @@ impl Bone {
             Self::RightFoot => Mat4::from_rotation_x(pose.feet[1]),
         }
     }
+}
+
+fn untwist(pose: &Pose) -> Mat4 {
+    Mat4::from_rotation_z(-pose.roll)
+        * Mat4::from_rotation_y(-pose.twist)
+        * Mat4::from_rotation_z(pose.roll)
 }
 
 fn plant(pose: &Pose, side: f32) -> f32 {
