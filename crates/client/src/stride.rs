@@ -10,9 +10,9 @@ const TURN_RATE: f32 = 9.0;
 const WALK_SPEED: f32 = 1.0 / 0.6;
 const RUN_SPEED: f32 = 2.0 / 0.6;
 const EASE_RATE: f32 = 8.0;
-const SURGE_PER_PUSH: f32 = 0.012;
-const BANK_PER_TURN: f32 = 0.06;
-const BANK_LIMIT: f32 = 0.15;
+const SURGE_PER_PUSH: f32 = 0.028;
+const GRAVITY: f32 = 9.81;
+const BANK_LIMIT: f32 = 0.3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stride {
@@ -50,7 +50,9 @@ impl Stride {
         self.surge
             .update(SURGE_PER_PUSH * push.clamp(-8.0, 8.0), 1.6, 0.55, seconds);
         let turning = shortest(self.facing - before) / seconds;
-        let bank = (BANK_PER_TURN * turning * self.motion).clamp(-BANK_LIMIT, BANK_LIMIT);
+        let bank = (self.speed * turning / GRAVITY)
+            .atan()
+            .clamp(-BANK_LIMIT, BANK_LIMIT);
         self.bank.update(bank, 1.8, 0.7, seconds);
     }
 

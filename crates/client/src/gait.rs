@@ -33,7 +33,7 @@ const SWAY: f32 = 0.02;
 const RELAXED_ELBOW: f32 = 0.15;
 const BREATH_RATE: f32 = 1.6;
 const BREATH_DEPTH: f32 = 0.03;
-const SHIFT_RATE: f32 = 0.55;
+const SHIFT_RATE: f32 = 0.3;
 const SHIFT_SWAY: f32 = 0.03;
 const SHIFT_ROLL: f32 = 0.05;
 const COUNTER_ROLL: f32 = 1.6;
@@ -117,7 +117,7 @@ pub fn pose_leaning(phase: f32, motion: f32, pace: f32, time: f32, lean: Lean) -
         breath: BREATH_DEPTH * (time * BREATH_RATE).sin() * rest,
         roll,
         counter: -COUNTER_ROLL * roll + lean.bank,
-        look: GLANCE * dwell(0.6 * (time * 0.23).sin() + 0.4 * (time * 0.41 + 2.0).sin()) * rest,
+        look: GLANCE * snap(0.6 * (time * 0.23).sin() + 0.4 * (time * 0.41 + 2.0).sin()) * rest,
         nod: 0.05 * (time * 0.17 + 1.0).sin() * rest,
         thighs: [left.0, right.0],
         knees: [left.1, right.1],
@@ -231,6 +231,10 @@ fn reach(ahead: f32, drop: f32) -> (f32, f32) {
 
 fn dwell(value: f32) -> f32 {
     value.signum() * smoothstep(0.05, 0.75, value.abs())
+}
+
+fn snap(value: f32) -> f32 {
+    value.signum() * smoothstep(0.3, 0.42, value.abs())
 }
 
 #[cfg(test)]
