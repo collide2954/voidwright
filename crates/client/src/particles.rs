@@ -1,6 +1,9 @@
-use glam::{Vec2, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use voidwright_core::Rng;
 
+use crate::{BONES, Bone};
+
+pub const LANTERN: Vec3 = Vec3::new(0.15, 1.456, 0.284);
 const SEED: u64 = 0x5350_4543_4b53;
 const STEP: Vec2 = Vec2::new(0.754_877_7, 0.569_840_3);
 const QUAD: [u32; 6] = [0, 1, 3, 0, 3, 2];
@@ -59,14 +62,21 @@ pub fn seeds(count: usize, rng: &mut Rng) -> Vec<Vec4> {
         .collect()
 }
 
+#[must_use]
+pub fn lantern(placement: Mat4, skin: &[Mat4; BONES]) -> Vec3 {
+    (placement * skin[Bone::Torso.index()]).transform_point3(LANTERN)
+}
+
 fn unit(rng: &mut Rng) -> f32 {
     f32::from(u16::try_from(rng.next_u64() >> 48).unwrap_or(0)) / 65_536.0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SWARMS, seeds, specks};
-    use glam::Vec4;
+    use super::{LANTERN, SWARMS, lantern, seeds, specks};
+    use crate::{Pose, skin, voidwright};
+    use glam::{Mat4, Vec3, Vec4};
+    use std::f32::consts::FRAC_PI_2;
     use voidwright_core::Rng;
 
     fn total() -> usize {
@@ -196,5 +206,44 @@ mod tests {
         let mut rng = Rng::new(1);
         let [first, second] = [seeds(4, &mut rng), seeds(4, &mut rng)];
         assert!(first[0].truncate().distance(second[0].truncate()) > 1e-3);
+    }
+
+    #[test]
+    fn the_lantern_sits_in_the_amber_glow_of_the_figure() {
+        let figure = voidwright();
+        let glow: Vec<Vec3> = figure
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.params[1] > 0.99 && vertex.color[0] > 0.9)
+            .filter(|vertex| vertex.color[2] < 0.2)
+            .map(|vertex| Vec3::from(vertex.position))
+            .collect();
+        let count = f32::from(u16::try_from(glow.len()).unwrap());
+        let middle = glow.iter().sum::<Vec3>() / count;
+        assert!(middle.distance(LANTERN) < 0.01, "{middle}");
+    }
+
+    #[test]
+    fn a_figure_at_rest_holds_the_lantern_still() {
+        let at = lantern(Mat4::IDENTITY, &skin(&Pose::default()));
+        assert!(at.distance(LANTERN) < 1e-5);
+    }
+
+    #[test]
+    fn the_lantern_follows_the_placement_of_the_figure() {
+        let placement =
+            Mat4::from_translation(Vec3::new(30.0, 2.0, -28.0)) * Mat4::from_rotation_y(FRAC_PI_2);
+        let at = lantern(placement, &skin(&Pose::default()));
+        assert!(at.distance(placement.transform_point3(LANTERN)) < 1e-5);
+    }
+
+    #[test]
+    fn a_forward_lean_carries_the_lantern_forward() {
+        let leaning = Pose {
+            lean: 0.3,
+            ..Pose::default()
+        };
+        let at = lantern(Mat4::IDENTITY, &skin(&leaning));
+        assert!(at.z < LANTERN.z - 0.1, "{at}");
     }
 }
