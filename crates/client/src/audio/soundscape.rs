@@ -2,15 +2,15 @@ use std::collections::HashSet;
 use std::f32::consts::{PI, TAU};
 
 use glam::{IVec2, Vec2, Vec3};
-use voidwright_core::{Map, Terrain, Tile};
 
 use super::command::{Command, Underfoot};
 use super::ring::Writer;
+use crate::ground::{Ground, rim};
+use crate::paint::{SOIL_COVER, rock};
 use crate::particles::lantern;
 use crate::{Bone, Game, Painter, skeleton, to_ground};
 
 const HEAD: f32 = 1.6;
-const SOIL: f32 = 0.25;
 const DETAIL: f32 = 8.0;
 const REGION: i32 = 8;
 const DISCOVERY_GAP: f32 = 90.0;
@@ -68,7 +68,7 @@ impl Soundscape {
                 let at = (game.placement() * bones[bone.index()]).transform_point3(Vec3::ZERO);
                 self.send(Command::Step {
                     at,
-                    underfoot: underfoot(game.world().map(), &self.painter, to_ground(at)),
+                    underfoot: underfoot(game.ground(), &self.painter, to_ground(at)),
                     strength: stride.motion() * (0.55 + 0.45 * stride.pace()),
                 });
             }
@@ -94,14 +94,11 @@ impl Soundscape {
 }
 
 #[must_use]
-pub fn underfoot(map: &Map, painter: &Painter, ground: Vec2) -> Underfoot {
-    let cell = ground.floor().as_ivec2();
-    if map.terrain(Tile::new(cell.x, cell.y)) == Terrain::Rock {
-        Underfoot::Rock
-    } else if painter.soil((ground * DETAIL).round().as_ivec2()) > SOIL {
-        Underfoot::Soil
-    } else {
-        Underfoot::Moss
+pub fn underfoot(ground: &Ground, painter: &Painter, point: Vec2) -> Underfoot {
+    let cell = (point * DETAIL).round().as_ivec2();
+    Underfoot {
+        soil: (painter.soil(cell) / SOIL_COVER).min(1.0),
+        rock: rock(ground.normal(cell), rim(ground.land(cell))),
     }
 }
 
@@ -114,8 +111,9 @@ fn crossed(before: f32, after: f32, mark: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{Soundscape, crossed, underfoot};
-    use crate::audio::command::{Command, Underfoot};
+    use crate::audio::command::Command;
     use crate::audio::ring::{Reader, ring};
+    use crate::ground::Ground;
     use crate::{Game, Painter, to_ground};
     use glam::{IVec2, Vec2, Vec3};
     use std::f32::consts::PI;
@@ -164,29 +162,48 @@ mod tests {
     }
 
     #[test]
-    fn the_ground_under_a_foot_picks_the_step_sound() {
+    fn the_step_follows_the_soil_and_rock_painted_under_the_foot() {
         let mut map = Map::new(40, 40);
         for tile in map.tiles() {
-            map.set_terrain(tile, Terrain::Moss);
+            if (4..36).contains(&tile.x) && (4..36).contains(&tile.y) {
+                map.set_terrain(tile, Terrain::Moss);
+            }
         }
-        map.set_terrain(Tile::new(2, 2), Terrain::Rock);
+        let ground = Ground::new(&map);
         let painter = Painter::default();
-        assert_eq!(
-            underfoot(&map, &painter, Vec2::new(2.5, 2.5)),
-            Underfoot::Rock
-        );
-        let points = (8..312).flat_map(|y| (8..312).map(move |x| IVec2::new(x, y)));
-        let soil = points
+        let cells = (80..240).flat_map(|y| (80..240).map(move |x| IVec2::new(x, y)));
+        let flat = |at: IVec2| ground.normal(at).y > 0.97;
+        let soil = cells
             .clone()
-            .find(|&at| painter.soil(at) > 0.4)
+            .find(|&at| painter.soil(at) > 0.55 && flat(at))
             .expect("the ground has soil patches");
-        let bare = points
+        let part = cells
             .clone()
-            .find(|&at| painter.soil(at) < 1e-6)
+            .find(|&at| (0.25..0.35).contains(&painter.soil(at)) && flat(at))
+            .expect("the soil fades at the edge of a patch");
+        let bare = cells
+            .clone()
+            .find(|&at| painter.soil(at) < 1e-6 && flat(at))
             .expect("the ground has bare moss");
-        let place = |at: IVec2| at.as_vec2() / 8.0;
-        assert_eq!(underfoot(&map, &painter, place(soil)), Underfoot::Soil);
-        assert_eq!(underfoot(&map, &painter, place(bare)), Underfoot::Moss);
+        let on = |at: IVec2| underfoot(&ground, &painter, Ground::place(at));
+        assert!(
+            on(soil).soil > 0.9 && on(soil).rock < 1e-3,
+            "{:?}",
+            on(soil)
+        );
+        let share = painter.soil(part) / 0.6;
+        assert!(
+            (on(part).soil - share).abs() < 1e-5,
+            "{:?} {share}",
+            on(part)
+        );
+        assert!(
+            on(bare).soil < 1e-6 && on(bare).rock < 1e-3,
+            "{:?}",
+            on(bare)
+        );
+        let rim = underfoot(&ground, &painter, Vec2::new(3.8, 20.0));
+        assert!(rim.rock > 0.99, "{rim:?}");
     }
 
     #[test]

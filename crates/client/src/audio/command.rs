@@ -8,26 +8,29 @@ const LANTERN: u32 = 3;
 const DISCOVERY: u32 = 4;
 const CAMERA: u32 = 5;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Underfoot {
-    Moss,
-    Soil,
-    Rock,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Underfoot {
+    pub soil: f32,
+    pub rock: f32,
 }
 
 impl Underfoot {
-    const ALL: [Self; 3] = [Self::Moss, Self::Soil, Self::Rock];
+    pub const MOSS: Self = Self {
+        soil: 0.0,
+        rock: 0.0,
+    };
+    pub const SOIL: Self = Self {
+        soil: 1.0,
+        rock: 0.0,
+    };
+    pub const ROCK: Self = Self {
+        soil: 0.0,
+        rock: 1.0,
+    };
 
-    fn code(self) -> u32 {
-        match self {
-            Self::Moss => 0,
-            Self::Soil => 1,
-            Self::Rock => 2,
-        }
-    }
-
-    fn from_code(code: u32) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.code() == code)
+    fn valid(self) -> Option<Self> {
+        let share = 0.0..=1.0;
+        (share.contains(&self.soil) && share.contains(&self.rock)).then_some(self)
     }
 }
 
@@ -54,21 +57,21 @@ pub enum Command {
 impl Command {
     #[must_use]
     pub fn pack(self) -> [u32; WORDS] {
-        let (tag, kind, at, value) = match self {
-            Self::Listener { at, yaw } => (LISTENER, 0, at, yaw),
+        let (tag, at, numbers) = match self {
+            Self::Listener { at, yaw } => (LISTENER, at, [yaw, 0.0, 0.0]),
             Self::Step {
                 at,
                 underfoot,
                 strength,
-            } => (STEP, underfoot.code(), at, strength),
-            Self::Lantern { at } => (LANTERN, 0, at, 0.0),
-            Self::Camera { at } => (CAMERA, 0, at, 0.0),
-            Self::Discovery => (DISCOVERY, 0, Vec3::ZERO, 0.0),
+            } => (STEP, at, [strength, underfoot.soil, underfoot.rock]),
+            Self::Lantern { at } => (LANTERN, at, [0.0; 3]),
+            Self::Camera { at } => (CAMERA, at, [0.0; 3]),
+            Self::Discovery => (DISCOVERY, Vec3::ZERO, [0.0; 3]),
         };
         let mut words = [0; WORDS];
         words[0] = tag;
-        words[1] = kind;
-        for (word, number) in words[2..].iter_mut().zip([at.x, at.y, at.z, value]) {
+        let values = [at.x, at.y, at.z].into_iter().chain(numbers);
+        for (word, number) in words[1..].iter_mut().zip(values) {
             *word = number.to_bits();
         }
         words
@@ -76,13 +79,17 @@ impl Command {
 
     #[must_use]
     pub fn unpack(words: [u32; WORDS]) -> Option<Self> {
-        let number = |index: usize| f32::from_bits(words[2 + index]);
+        let number = |index: usize| f32::from_bits(words[1 + index]);
         let at = Vec3::new(number(0), number(1), number(2));
         match words[0] {
             LISTENER => Some(Self::Listener { at, yaw: number(3) }),
             STEP => Some(Self::Step {
                 at,
-                underfoot: Underfoot::from_code(words[1])?,
+                underfoot: Underfoot {
+                    soil: number(4),
+                    rock: number(5),
+                }
+                .valid()?,
                 strength: number(3),
             }),
             LANTERN => Some(Self::Lantern { at }),
@@ -106,18 +113,26 @@ mod tests {
             Command::Listener { at, yaw: 2.5 },
             Command::Step {
                 at,
-                underfoot: Underfoot::Moss,
+                underfoot: Underfoot::MOSS,
                 strength: 0.4,
             },
             Command::Step {
                 at,
-                underfoot: Underfoot::Soil,
+                underfoot: Underfoot::SOIL,
                 strength: 0.7,
             },
             Command::Step {
                 at,
-                underfoot: Underfoot::Rock,
+                underfoot: Underfoot::ROCK,
                 strength: 1.0,
+            },
+            Command::Step {
+                at,
+                underfoot: Underfoot {
+                    soil: 0.35,
+                    rock: 0.6,
+                },
+                strength: 0.5,
             },
             Command::Lantern { at },
             Command::Camera { at },
@@ -132,13 +147,16 @@ mod tests {
     fn unknown_words_are_no_command() {
         assert_eq!(Command::unpack([0; WORDS]), None);
         assert_eq!(Command::unpack([99; WORDS]), None);
-        let mut step = Command::Step {
+        let step = Command::Step {
             at: Vec3::ZERO,
-            underfoot: Underfoot::Rock,
+            underfoot: Underfoot::ROCK,
             strength: 1.0,
         }
         .pack();
-        step[1] = 99;
-        assert_eq!(Command::unpack(step), None);
+        for (word, bad) in [(5, 2.0_f32), (6, -0.5), (6, f32::NAN)] {
+            let mut broken = step;
+            broken[word] = bad.to_bits();
+            assert_eq!(Command::unpack(broken), None);
+        }
     }
 }

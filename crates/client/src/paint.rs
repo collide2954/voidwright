@@ -4,7 +4,7 @@ use voidwright_core::Noise;
 use crate::ground::unit;
 use crate::{palette, smoothstep};
 
-const SOIL_COVER: f32 = 0.6;
+pub const SOIL_COVER: f32 = 0.6;
 const BLOOM_COVER: f32 = 0.45;
 const SPECKLE: f32 = 0.1;
 
@@ -35,7 +35,7 @@ impl Painter {
         let soil = self.soil(at);
         let bloom = BLOOM_COVER * smoothstep(0.55, 0.8, blend(&self.bloom, at)) * (1.0 - soil);
         let ground = moss.lerp(palette::SOIL, soil).lerp(palette::BLOOM, bloom);
-        let rock = smoothstep(0.25, 0.5, 1.0 - normal.y).max(rim);
+        let rock = rock(normal, rim);
         let speckle = 1.0 + SPECKLE * (unit(&self.speckle, at) - 0.5);
         ground.lerp(palette::ROCK * self.grain(at), rock) * speckle
     }
@@ -58,6 +58,11 @@ impl Painter {
     fn grain(&self, at: IVec2) -> f32 {
         0.85 + 0.3 * unit(&self.grain, at)
     }
+}
+
+#[must_use]
+pub fn rock(normal: Vec3, rim: f32) -> f32 {
+    smoothstep(0.25, 0.5, 1.0 - normal.y).max(rim)
 }
 
 fn blend([coarse, fine]: &[Noise; 2], at: IVec2) -> f32 {

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use glam::{IVec2, Vec2};
+use glam::{IVec2, Vec2, Vec3};
 use voidwright_core::{Direction, ELEVATION_PER_TILE, Grid, Map, NOISE_RANGE, Noise, Tile};
 
 use crate::contour::LEVEL;
@@ -90,6 +90,11 @@ impl Ground {
     }
 
     #[must_use]
+    pub fn normal(&self, at: IVec2) -> Vec3 {
+        slope(&|cell| self.top(cell), at)
+    }
+
+    #[must_use]
     pub fn place(at: IVec2) -> Vec2 {
         at.as_vec2() / SCALE
     }
@@ -171,6 +176,14 @@ pub(crate) fn unit(noise: &Noise, at: IVec2) -> f32 {
     let sample = u16::try_from(noise.sample(Tile::new(at.x, at.y))).unwrap_or(0);
     let range = u16::try_from(NOISE_RANGE).unwrap_or(u16::MAX);
     f32::from(sample) / f32::from(range)
+}
+
+#[must_use]
+pub fn slope(height: &impl Fn(IVec2) -> f32, at: IVec2) -> Vec3 {
+    let span = 2.0 * Ground::place(IVec2::X).x;
+    let east = (height(at + IVec2::X) - height(at - IVec2::X)) / span;
+    let north = (height(at + IVec2::Y) - height(at - IVec2::Y)) / span;
+    Vec3::new(-east, 1.0, north).normalize()
 }
 
 #[must_use]

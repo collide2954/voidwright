@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use glam::{IVec2, Vec3};
 
 use crate::contour::{Cut, Point, cut};
-use crate::ground::{Ground, rim};
+use crate::ground::{Ground, rim, slope};
 use crate::palette::linear;
 use crate::{Light, Mesh, Painter, normal, to_world};
 
@@ -111,12 +111,10 @@ fn sample(ground: &Ground, layer: Layer, point: Point) -> Sample {
 }
 
 fn slope_normal(height: &impl Fn(IVec2) -> f32, layer: Layer, at: IVec2) -> Vec3 {
-    let span = 2.0 * Ground::place(IVec2::X).x;
-    let east = (height(at + IVec2::X) - height(at - IVec2::X)) / span;
-    let north = (height(at + IVec2::Y) - height(at - IVec2::Y)) / span;
+    let up = slope(height, at);
     match layer {
-        Layer::Top => Vec3::new(-east, 1.0, north).normalize(),
-        Layer::Under => Vec3::new(east, -1.0, -north).normalize(),
+        Layer::Top => up,
+        Layer::Under => -up,
     }
 }
 

@@ -38,8 +38,34 @@ struct Layer {
 #[derive(Clone, Copy, Debug)]
 struct Treatment {
     body: Layer,
-    brush: Option<Layer>,
+    brush: Layer,
     level: f32,
+}
+
+impl Layer {
+    fn toward(self, other: Self, amount: f32) -> Self {
+        Self {
+            kind: self.kind,
+            cutoff: self.cutoff * (other.cutoff / self.cutoff).powf(amount),
+            pitch: self.pitch + (other.pitch - self.pitch) * amount,
+            level: self.level + (other.level - self.level) * amount,
+        }
+    }
+}
+
+impl Treatment {
+    fn under(underfoot: Underfoot) -> Self {
+        MOSS.toward(SOIL, underfoot.soil.clamp(0.0, 1.0))
+            .toward(ROCK, underfoot.rock.clamp(0.0, 1.0))
+    }
+
+    fn toward(self, other: Self, amount: f32) -> Self {
+        Self {
+            body: self.body.toward(other.body, amount),
+            brush: self.brush.toward(other.brush, amount),
+            level: self.level + (other.level - self.level) * amount,
+        }
+    }
 }
 
 const MOSS: Treatment = Treatment {
@@ -49,12 +75,12 @@ const MOSS: Treatment = Treatment {
         pitch: 0.88,
         level: 1.0,
     },
-    brush: Some(Layer {
+    brush: Layer {
         kind: Kind::Sand,
         cutoff: 900.0,
         pitch: 0.9,
         level: 0.2,
-    }),
+    },
     level: -30.9,
 };
 
@@ -65,12 +91,12 @@ const SOIL: Treatment = Treatment {
         pitch: 0.92,
         level: 1.0,
     },
-    brush: Some(Layer {
+    brush: Layer {
         kind: Kind::Sand,
         cutoff: 1_600.0,
         pitch: 0.94,
         level: 0.25,
-    }),
+    },
     level: -27.3,
 };
 
@@ -81,7 +107,12 @@ const ROCK: Treatment = Treatment {
         pitch: 0.97,
         level: 1.0,
     },
-    brush: None,
+    brush: Layer {
+        kind: Kind::Sand,
+        cutoff: 1_600.0,
+        pitch: 0.94,
+        level: 0.0,
+    },
     level: -28.2,
 };
 
@@ -198,23 +229,18 @@ impl Footstep {
         rate: f32,
         last: Option<usize>,
     ) -> Self {
-        let treatment = match underfoot {
-            Underfoot::Moss => MOSS,
-            Underfoot::Soil => SOIL,
-            Underfoot::Rock => ROCK,
-        };
+        let treatment = Treatment::under(underfoot);
         let mut noise = Noise::new(seed);
         let body = bank.choose(treatment.body.kind, last, &mut noise);
-        let brush = treatment
-            .brush
-            .map(|layer| (layer, bank.choose(layer.kind, None, &mut noise)));
+        let brush = (treatment.brush.level > 0.0)
+            .then(|| bank.choose(treatment.brush.kind, None, &mut noise));
         let tune = 1.0 + SPREAD * noise.sample();
         let strength = strength.clamp(0.0, 1.0);
         let bright = 0.85 + 0.3 * strength;
         let loudness = (0.25 + 0.75 * strength * strength) * (0.925 + 0.075 * noise.sample());
         let mut step = Self {
             body: Playhead::new(bank, treatment.body, body, tune, bright, rate),
-            brush: brush.map(|(layer, take)| Playhead::new(bank, layer, take, tune, bright, rate)),
+            brush: brush.map(|take| Playhead::new(bank, treatment.brush, take, tune, bright, rate)),
             gain: 1.0,
         };
         let energy = step.energy(bank) / rate;
@@ -305,7 +331,7 @@ mod tests {
     #[test]
     fn a_step_plays_its_takes_once_and_ends() {
         let bank = Bank::new();
-        for underfoot in [Underfoot::Moss, Underfoot::Soil, Underfoot::Rock] {
+        for underfoot in [Underfoot::MOSS, Underfoot::SOIL, Underfoot::ROCK] {
             let mut step = Footstep::new(&bank, underfoot, 0.7, 3, RATE, None);
             let played = std::iter::from_fn(|| step.sample(&bank)).count();
             let seconds = f32::from(u16::try_from(played).unwrap()) / RATE;
@@ -325,9 +351,9 @@ mod tests {
                     step.brush().map(|take| bank.kind(take)),
                 )
             };
-            assert_eq!(kinds(Underfoot::Moss), (Kind::Stone, Some(Kind::Sand)));
-            assert_eq!(kinds(Underfoot::Soil), (Kind::Stone, Some(Kind::Sand)));
-            assert_eq!(kinds(Underfoot::Rock), (Kind::Stone, None));
+            assert_eq!(kinds(Underfoot::MOSS), (Kind::Stone, Some(Kind::Sand)));
+            assert_eq!(kinds(Underfoot::SOIL), (Kind::Stone, Some(Kind::Sand)));
+            assert_eq!(kinds(Underfoot::ROCK), (Kind::Stone, None));
         }
     }
 
@@ -342,8 +368,8 @@ mod tests {
                 .collect();
             energy(&high) / energy(samples)
         };
-        let moss = average(&bank, Underfoot::Moss, crunch);
-        let soil = average(&bank, Underfoot::Soil, crunch);
+        let moss = average(&bank, Underfoot::MOSS, crunch);
+        let soil = average(&bank, Underfoot::SOIL, crunch);
         assert!(moss < 0.02, "{moss}");
         assert!(soil < 0.05, "{soil}");
     }
@@ -351,8 +377,8 @@ mod tests {
     #[test]
     fn soil_steps_are_duller_than_rock_steps() {
         let bank = Bank::new();
-        let soil = average(&bank, Underfoot::Soil, brightness);
-        let rock = average(&bank, Underfoot::Rock, brightness);
+        let soil = average(&bank, Underfoot::SOIL, brightness);
+        let rock = average(&bank, Underfoot::ROCK, brightness);
         assert!(soil < rock * 0.7, "{soil} {rock}");
     }
 
@@ -361,7 +387,7 @@ mod tests {
         let bank = Bank::new();
         let mut last = None;
         for seed in 1..=60 {
-            let step = Footstep::new(&bank, Underfoot::Soil, 0.7, seed, RATE, last);
+            let step = Footstep::new(&bank, Underfoot::SOIL, 0.7, seed, RATE, last);
             assert_ne!(Some(step.take()), last);
             last = Some(step.take());
         }
@@ -370,11 +396,11 @@ mod tests {
     #[test]
     fn moss_steps_are_softer_and_duller_than_soil_steps() {
         let bank = Bank::new();
-        let soil = average(&bank, Underfoot::Soil, energy);
-        let moss = average(&bank, Underfoot::Moss, energy);
+        let soil = average(&bank, Underfoot::SOIL, energy);
+        let moss = average(&bank, Underfoot::MOSS, energy);
         assert!(moss < soil * 0.6, "{moss} {soil}");
-        let bright_soil = average(&bank, Underfoot::Soil, brightness);
-        let bright_moss = average(&bank, Underfoot::Moss, brightness);
+        let bright_soil = average(&bank, Underfoot::SOIL, brightness);
+        let bright_moss = average(&bank, Underfoot::MOSS, brightness);
         assert!(
             bright_moss < bright_soil * 0.5,
             "{bright_moss} {bright_soil}"
@@ -384,7 +410,7 @@ mod tests {
     #[test]
     fn steps_on_the_same_ground_keep_an_even_level() {
         let bank = Bank::new();
-        for underfoot in [Underfoot::Moss, Underfoot::Soil, Underfoot::Rock] {
+        for underfoot in [Underfoot::MOSS, Underfoot::SOIL, Underfoot::ROCK] {
             let levels: Vec<f32> = (1..=36)
                 .map(|seed| 10.0 * energy(&render(&bank, underfoot, 0.75, seed)).log10())
                 .collect();
@@ -395,9 +421,42 @@ mod tests {
     }
 
     #[test]
+    fn a_little_soil_or_rock_changes_the_step_only_a_little() {
+        let bank = Bank::new();
+        let measure = |underfoot: Underfoot| {
+            let steps: Vec<Vec<f32>> = (1..=12)
+                .map(|seed| render(&bank, underfoot, 0.75, seed))
+                .collect();
+            let level = steps
+                .iter()
+                .map(|step| 10.0 * energy(step).log10())
+                .sum::<f32>()
+                / 12.0;
+            let bright = steps.iter().map(|step| brightness(step)).sum::<f32>() / 12.0;
+            (level, bright)
+        };
+        let moss = measure(Underfoot::MOSS);
+        for whole in [Underfoot::SOIL, Underfoot::ROCK] {
+            let little = measure(Underfoot {
+                soil: whole.soil * 0.1,
+                rock: whole.rock * 0.1,
+            });
+            let full = measure(whole);
+            assert!(
+                (little.0 - moss.0).abs() < 0.2 * (full.0 - moss.0).abs(),
+                "{whole:?}: {moss:?} {little:?} {full:?}"
+            );
+            assert!(
+                (little.1 - moss.1).abs() < 0.2 * (full.1 - moss.1).abs(),
+                "{whole:?}: {moss:?} {little:?} {full:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_harder_step_is_louder() {
         let bank = Bank::new();
-        for underfoot in [Underfoot::Moss, Underfoot::Soil, Underfoot::Rock] {
+        for underfoot in [Underfoot::MOSS, Underfoot::SOIL, Underfoot::ROCK] {
             let soft = energy(&render(&bank, underfoot, 0.3, 4));
             let hard = energy(&render(&bank, underfoot, 1.0, 4));
             assert!(hard > soft * 2.0, "{underfoot:?} {soft} {hard}");
@@ -409,8 +468,8 @@ mod tests {
         let bank = Bank::new();
         let mut seen = Vec::new();
         for seed in 1..=40 {
-            let mut step = Footstep::new(&bank, Underfoot::Rock, 0.7, seed, RATE, None);
-            if step.take() != Footstep::new(&bank, Underfoot::Rock, 0.7, 1, RATE, None).take() {
+            let mut step = Footstep::new(&bank, Underfoot::ROCK, 0.7, seed, RATE, None);
+            if step.take() != Footstep::new(&bank, Underfoot::ROCK, 0.7, 1, RATE, None).take() {
                 continue;
             }
             let samples: Vec<f32> = std::iter::from_fn(|| step.sample(&bank)).collect();

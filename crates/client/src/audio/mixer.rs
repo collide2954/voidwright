@@ -394,7 +394,7 @@ mod tests {
     fn step(at: Vec3, strength: f32) -> Command {
         Command::Step {
             at,
-            underfoot: Underfoot::Rock,
+            underfoot: Underfoot::ROCK,
             strength,
         }
     }
@@ -435,7 +435,7 @@ mod tests {
         let quiet = render(&[listener()], 24_000);
         let walking = Command::Step {
             at: Vec3::new(0.1, 0.0, 0.0),
-            underfoot: Underfoot::Moss,
+            underfoot: Underfoot::MOSS,
             strength: 0.55,
         };
         let stepped = render(&[listener(), walking], 24_000);
