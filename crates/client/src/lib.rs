@@ -23,6 +23,7 @@ pub mod png;
 mod render;
 pub mod sculpt;
 pub mod shader;
+pub mod shadow;
 pub mod shape;
 mod simplify;
 mod sky;
