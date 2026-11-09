@@ -19,6 +19,7 @@ const COWL_REACH: [f32; 2] = [0.05, 0.09];
 const HIP_DROP: f32 = 0.03;
 const BRACER: [Vec3; 2] = [Vec3::new(0.048, 0.0, 0.048), Vec3::new(0.036, -0.09, 0.036)];
 const SHELL: f32 = 0.022;
+const SEAM_STEP: f32 = 0.015;
 const SASH_RADIUS: f32 = 0.009;
 const SASH_STEPS: u16 = 36;
 const KNUCKLES: [f32; 4] = [-0.0305, -0.0102, 0.0102, 0.0295];
@@ -466,56 +467,117 @@ fn body() -> Sculpt {
     clay
 }
 
+fn onto(surface: &Sculpt, bone: Bone, local: Vec3) -> Vec3 {
+    let frame = rest()[bone.index()];
+    let mut at = frame.transform_point3(local);
+    for _ in 0..6 {
+        let step = 0.0005;
+        let probe =
+            |axis: Vec3| surface.distance(at + axis * step) - surface.distance(at - axis * step);
+        let normal = Vec3::new(probe(Vec3::X), probe(Vec3::Y), probe(Vec3::Z)).normalize_or_zero();
+        at -= normal * surface.distance(at);
+    }
+    frame.inverse().transform_point3(at)
+}
+
+fn seam(surface: &Sculpt, bone: Bone, guides: &[Vec3], width: f32) -> Vec<Stroke> {
+    let mut dense = Vec::new();
+    for pair in guides.windows(2) {
+        let share = SEAM_STEP / pair[0].distance(pair[1]).max(SEAM_STEP);
+        let mut along = 0.0;
+        while along < 1.0 {
+            dense.push(pair[0].lerp(pair[1], along));
+            along += share;
+        }
+    }
+    dense.extend(guides.last());
+    let points: Vec<Vec3> = dense
+        .iter()
+        .map(|&guide| onto(surface, bone, guide))
+        .collect();
+    points
+        .windows(2)
+        .map(|pair| {
+            segment(bone, pair[0], pair[1], width, COAT)
+                .carved()
+                .blended(width * 1.2)
+        })
+        .collect()
+}
+
 fn trunk(clay: &mut Sculpt) {
     let cloth = Vec3::new(14.0, 9.0, 14.0);
     clay.add(stroke(Bone::Pelvis, egg(0.15, 0.1, 0.115), CLOTH).at(Vec3::new(0.0, -0.01, 0.005)));
     let coat = |form: Form, at: Vec3, blend: f32| {
         stroke(Bone::Torso, form, COAT)
             .at(at)
-            .wrinkled(0.005, cloth)
+            .wrinkled(0.0015, cloth)
             .blended(blend)
     };
     for (form, at, blend) in [
-        (egg(0.15, 0.12, 0.105), Vec3::new(0.0, 0.09, 0.0), 0.05),
-        (egg(0.158, 0.17, 0.122), Vec3::new(0.0, 0.29, 0.0), 0.06),
-        (egg(0.17, 0.08, 0.115), Vec3::new(0.0, 0.42, 0.005), 0.05),
-        (egg(0.15, 0.075, 0.05), Vec3::new(0.0, 0.35, -0.08), 0.05),
+        (egg(0.15, 0.12, 0.105), Vec3::new(0.0, 0.09, 0.0), 0.08),
+        (egg(0.165, 0.18, 0.125), Vec3::new(0.0, 0.29, -0.004), 0.12),
+        (egg(0.17, 0.08, 0.115), Vec3::new(0.0, 0.42, 0.005), 0.1),
     ] {
         clay.add(coat(form, at, blend));
     }
     for side in Side::BOTH {
         let x = side.sign();
-        for (form, at, blend) in [
-            (egg(0.06, 0.13, 0.08), Vec3::new(x * 0.12, 0.33, 0.03), 0.05),
-            (
-                egg(0.07, 0.09, 0.05),
-                Vec3::new(x * 0.085, 0.36, 0.075),
-                0.04,
-            ),
-        ] {
-            clay.add(coat(form, at, blend));
-        }
+        clay.add(coat(
+            egg(0.06, 0.13, 0.08),
+            Vec3::new(x * 0.12, 0.33, 0.03),
+            0.12,
+        ));
         let (neck, shoulder) = (
             Vec3::new(x * 0.05, 0.515, 0.03),
             Vec3::new(x * 0.175, 0.455, 0.01),
         );
         clay.add(
             segment(Bone::Torso, neck, shoulder, 0.045, COAT)
-                .wrinkled(0.005, cloth)
-                .blended(0.04),
+                .wrinkled(0.0015, cloth)
+                .blended(0.06),
         );
     }
     let closure = [
-        Vec3::new(-0.035, 0.43, -0.112),
-        Vec3::new(0.015, 0.25, -0.118),
-        Vec3::new(0.065, 0.04, -0.094),
+        Vec3::new(-0.035, 0.43, -0.116),
+        Vec3::new(0.015, 0.25, -0.122),
+        Vec3::new(0.065, 0.04, -0.098),
     ];
     for pair in closure.windows(2) {
         clay.add(
-            segment(Bone::Torso, pair[0], pair[1], 0.016, COAT)
+            segment(Bone::Torso, pair[0], pair[1], 0.02, COAT)
                 .wrinkled(0.003, cloth)
                 .blended(0.012),
         );
+    }
+    let mut seams = Vec::new();
+    for side in Side::BOTH {
+        let x = side.sign();
+        for guides in [
+            [
+                Vec3::new(x * 0.1, 0.47, -0.08),
+                Vec3::new(x * 0.098, 0.38, -0.14),
+                Vec3::new(x * 0.094, 0.24, -0.15),
+                Vec3::new(x * 0.09, 0.1, -0.14),
+            ],
+            [
+                Vec3::new(x * 0.16, 0.39, 0.0),
+                Vec3::new(x * 0.17, 0.29, 0.0),
+                Vec3::new(x * 0.165, 0.18, 0.0),
+                Vec3::new(x * 0.15, 0.07, 0.0),
+            ],
+            [
+                Vec3::new(x * 0.07, 0.53, 0.015),
+                Vec3::new(x * 0.11, 0.515, 0.013),
+                Vec3::new(x * 0.15, 0.49, 0.011),
+                Vec3::new(x * 0.19, 0.465, 0.01),
+            ],
+        ] {
+            seams.extend(seam(clay, Bone::Torso, &guides, 0.002));
+        }
+    }
+    for stroke in seams {
+        clay.add(stroke);
     }
 }
 
@@ -599,37 +661,26 @@ fn arm(clay: &mut Sculpt, side: Side) {
     let (upper, fore) = (side.upper_arm(), side.forearm());
     let out = side.sign();
     let sleeve = Vec3::new(10.0, 22.0, 10.0);
+    let fabric = 0.0015;
     for (bone, form, at, blend) in [
-        (upper, limb(UPPER_ARM, 0.047, 0.04), Vec3::ZERO, 0.0),
+        (upper, limb(UPPER_ARM, 0.049, 0.042), Vec3::ZERO, 0.0),
         (
             upper,
             egg(0.062, 0.08, 0.062),
             Vec3::new(out * 0.018, -0.035, 0.0),
-            0.03,
-        ),
-        (
-            upper,
-            egg(0.036, 0.075, 0.032),
-            Vec3::new(0.0, -0.15, -0.025),
-            0.03,
-        ),
-        (
-            upper,
-            egg(0.04, 0.09, 0.034),
-            Vec3::new(0.0, -0.12, 0.022),
-            0.03,
+            0.05,
         ),
         (
             fore,
             egg(0.045, 0.035, 0.045),
             Vec3::new(0.0, 0.0, 0.008),
-            0.02,
+            0.03,
         ),
         (
             fore,
             egg(0.048, 0.085, 0.044),
             Vec3::new(out * 0.004, -0.07, -0.004),
-            0.03,
+            0.045,
         ),
         (
             fore,
@@ -653,7 +704,7 @@ fn arm(clay: &mut Sculpt, side: Side) {
         clay.add(
             stroke(bone, form, COAT)
                 .at(at)
-                .wrinkled(0.004, sleeve)
+                .wrinkled(fabric, sleeve)
                 .blended(blend),
         );
     }
@@ -661,9 +712,45 @@ fn arm(clay: &mut Sculpt, side: Side) {
         stroke(upper, limb(0.12, 0.048, 0.026), COAT)
             .at(Vec3::new(out * 0.028, -0.04, 0.0))
             .turned(toward(Vec3::new(-out * 0.15, -1.0, 0.0)))
-            .wrinkled(0.004, sleeve)
-            .blended(0.03),
+            .wrinkled(fabric, sleeve)
+            .blended(0.045),
     );
+    let mut seams = seam(
+        clay,
+        upper,
+        &[
+            Vec3::new(0.0, -0.06, 0.06),
+            Vec3::new(0.0, -0.14, 0.055),
+            Vec3::new(0.0, -0.22, 0.05),
+            Vec3::new(0.0, 0.02 - UPPER_ARM, 0.045),
+        ],
+        0.0025,
+    );
+    seams.extend(seam(
+        clay,
+        fore,
+        &[
+            Vec3::new(0.0, -0.03, 0.05),
+            Vec3::new(0.0, -0.11, 0.045),
+            Vec3::new(0.0, 0.05 - FOREARM, 0.035),
+        ],
+        0.0025,
+    ));
+    for lift in [0.012, 0.03] {
+        seams.extend(seam(
+            clay,
+            upper,
+            &[
+                Vec3::new(-0.025, lift - UPPER_ARM, -0.05),
+                Vec3::new(0.0, lift - 0.004 - UPPER_ARM, -0.055),
+                Vec3::new(0.025, lift - UPPER_ARM, -0.05),
+            ],
+            0.002,
+        ));
+    }
+    for stroke in seams {
+        clay.add(stroke);
+    }
 }
 
 fn hand(side: Side) -> Sculpt {
@@ -2219,6 +2306,29 @@ mod tests {
     }
 
     #[test]
+    fn a_seam_runs_down_each_side_of_the_chest() {
+        let mut trunk = super::clay();
+        super::trunk(&mut trunk);
+        let front = |x: f32| {
+            (0..400_u16)
+                .map(|step| -0.3 + f32::from(step) * 0.0005)
+                .find(|&z| trunk.distance(Vec3::new(x, 1.25, z)) < 0.0)
+                .unwrap_or(0.0)
+        };
+        for side in [-1.0_f32, 1.0] {
+            let depths: Vec<(f32, f32)> = (40..150_u16)
+                .map(|step| side * f32::from(step) * 0.001)
+                .map(|x| (x, front(x)))
+                .collect();
+            let groove = depths
+                .windows(17)
+                .map(|window| window[8].1 - f32::midpoint(window[0].1, window[16].1))
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(groove > 0.0012, "{side} {groove}");
+        }
+    }
+
+    #[test]
     fn the_scarf_wraps_the_neck_snugly() {
         let mut scarf = super::clay();
         super::scarf(&mut scarf);
@@ -2231,8 +2341,8 @@ mod tests {
     }
 
     #[test]
-    fn the_arms_swell_at_the_muscles_and_taper_to_the_wrists() {
-        use crate::figure::{FOREARM, UPPER_ARM, rest};
+    fn the_sleeves_are_round_and_taper_from_the_shoulders_to_the_cuffs() {
+        use crate::figure::{FOREARM, rest};
         let mut arm = super::clay();
         super::arm(&mut arm, super::Side::Right);
         let bones = rest();
@@ -2244,15 +2354,20 @@ mod tests {
         };
         let upper = |down: f32, axis: Vec3| across(Bone::RightUpperArm, down, axis);
         let fore = |down: f32| across(Bone::RightForearm, down, Vec3::X);
-        assert!(upper(0.14, Vec3::Z) > upper(0.14, Vec3::X) * 1.12);
-        assert!(upper(UPPER_ARM - 0.03, Vec3::Z) < upper(0.14, Vec3::Z) * 0.92);
+        let round = upper(0.14, Vec3::Z) / upper(0.14, Vec3::X);
+        assert!((0.9..1.1).contains(&round), "{round}");
+        assert!(
+            upper(0.06, Vec3::X) > upper(0.2, Vec3::X),
+            "{}",
+            upper(0.06, Vec3::X)
+        );
         assert!(fore(0.07) > fore(FOREARM - 0.07) * 1.3);
         let body = super::body();
         let shoulders = (0..10_u8)
             .map(|step| 1.33 + f32::from(step) * 0.01)
             .map(|height| extent(&body, Vec3::new(-0.4, height, 0.0), Vec3::X * 0.002))
             .fold(0.0, f32::max);
-        assert!((0.51..0.56).contains(&shoulders), "{shoulders}");
+        assert!((0.51..0.58).contains(&shoulders), "{shoulders}");
     }
 
     #[test]

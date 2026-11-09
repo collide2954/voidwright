@@ -48,8 +48,8 @@ const HOOD_FEEL: Feel = Feel {
     air: 0.0,
 };
 pub const SCARF_TAIL: [Vec3; SCARF_POINTS] = [
-    Vec3::new(-0.045, 0.505, 0.085),
-    Vec3::new(-0.06, 0.49, 0.225),
+    Vec3::new(-0.045, 0.52, 0.1),
+    Vec3::new(-0.06, 0.5, 0.235),
     Vec3::new(-0.068, 0.34, 0.268),
     Vec3::new(-0.075, 0.18, 0.266),
     Vec3::new(-0.08, 0.02, 0.263),
