@@ -76,6 +76,7 @@ The server writes a line when a player joins or leaves, and every 100 ticks a li
 | `crates/server` | Game server. |
 | `crates/client` | Game client. |
 | `crates/client/assets/audio` | Recorded sound clips. `CREDITS.md` gives the author, source, and license of each clip. |
+| `crates/client/assets/detail` | Scanned surface maps for cloth, wool, leather, and metal. `CREDITS.md` gives the author, source, and license of each scan. |
 | `docs/audio.md` | Design of the sound and the music. |
 | `docs/body.md` | Reference values for the body of the wanderer. |
 | `docs/design.md` | Design decisions. |

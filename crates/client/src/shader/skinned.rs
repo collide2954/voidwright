@@ -61,6 +61,7 @@ uniform vec3 lantern_light;
 uniform sampler2D detail_height;
 uniform sampler2D detail_u;
 uniform sampler2D detail_v;
+uniform sampler2D detail_rough;
 varying mediump vec3 toward_eye;
 varying mediump vec3 normal;
 varying mediump vec3 albedo;
@@ -70,23 +71,44 @@ varying highp vec3 rest;
 varying mediump vec3 rest_normal;
 varying mediump vec4 surface;
 varying mediump vec3 toward_lantern;
-const vec4 TILES = vec4(16.0, 8.0, 13.0, 5.0);
+const vec4 TILES = vec4(3.7, 3.75, 2.5, 1.0);
 const float BEND = 0.12;
-const float BUMP = 1.6;
-const float CAVITY = 0.35;
-const vec4 STRENGTH = vec4(0.56, 0.74, 0.21, 0.6);
+const vec4 BUMP = vec4(2.4, 2.2, 1.6, 0.8);
+const vec4 TONE = vec4(2.2, 1.6, 1.4, 1.0);
+const float GRIT = 0.6;
+const float SHEEN = 0.35;
+const float PI = 3.14159;
 vec3 filmic(vec3 x) {
     return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
-vec3 slope(highp vec2 at, vec4 kinds) {
-    float height = dot(texture2D(detail_height, at) - 0.5, kinds);
-    float across = dot(texture2D(detail_u, at) - 0.5, kinds);
-    float along = dot(texture2D(detail_v, at) - 0.5, kinds);
-    return vec3(across, along, height);
+vec4 detail(highp vec2 at, vec4 kinds) {
+    return vec4(
+        dot(texture2D(detail_u, at) - 0.5, kinds),
+        dot(texture2D(detail_v, at) - 0.5, kinds),
+        dot(texture2D(detail_height, at) - 0.5, kinds),
+        dot(texture2D(detail_rough, at) - 0.5, kinds));
 }
 float tiling(vec4 kinds) {
     vec4 chosen = step(max(max(kinds.x, kinds.y), max(kinds.z, kinds.w)), kinds);
     return dot(chosen, TILES) / dot(chosen, vec4(1.0));
+}
+vec3 brdf(vec3 n, vec3 v, vec3 l, vec3 base, vec3 f0, float rough, float metal) {
+    vec3 h = normalize(v + l);
+    float nl = max(dot(n, l), 0.001);
+    float nv = max(dot(n, v), 0.001);
+    float nh = max(dot(n, h), 0.0);
+    float a = rough * rough;
+    float d = nh * nh * (a * a - 1.0) + 1.0;
+    float spread = a * a / (PI * d * d);
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    float hidden = nl * nv / ((nl * (1.0 - k) + k) * (nv * (1.0 - k) + k));
+    vec3 f = f0 + (1.0 - f0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+    return (1.0 - f) * (1.0 - metal) * base + f * spread * hidden * PI / (4.0 * nl * nv);
+}
+vec3 glance(vec3 f0, float rough, float nv) {
+    vec4 r = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    float a = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    return f0 * (-1.04 * a + r.z) + (1.04 * a + r.w);
 }
 void main() {
     vec3 resting = normalize(rest_normal);
@@ -96,29 +118,35 @@ void main() {
     weights /= dot(weights, vec3(1.0));
     highp vec3 scaled = rest * tiling(surface);
     scaled += BEND * sin(scaled.yzx * 0.83 + 2.0 * sin(scaled.zxy * 0.37));
-    vec4 kinds = surface * STRENGTH;
-    vec3 side = slope(scaled.zy, kinds);
-    vec3 top = slope(scaled.xz, kinds);
-    vec3 front = slope(scaled.xy, kinds);
+    vec4 side = detail(scaled.zy, surface);
+    vec4 top = detail(scaled.xz, surface);
+    vec4 front = detail(scaled.xy, surface);
     vec3 bump = weights.x * vec3(0.0, side.y, side.x)
         + weights.y * vec3(top.x, 0.0, top.y)
         + weights.z * vec3(front.x, front.y, 0.0);
-    float height = weights.x * side.z + weights.y * top.z + weights.z * front.z;
+    float tone = weights.x * side.z + weights.y * top.z + weights.z * front.z;
+    float grit = weights.x * side.w + weights.y * top.w + weights.z * front.w;
     vec3 axis = cross(resting, facing);
     float turn = dot(resting, facing);
     vec3 moved = bump * turn + cross(axis, bump) + axis * dot(axis, bump) / max(1.0 + turn, 0.001);
-    facing = normalize(facing - BUMP * moved);
-    vec3 tinted = albedo * (1.0 + CAVITY * height);
-    vec3 halfway = normalize(view + toward_sun);
-    float shine = params.x * (1.0 + 0.6 * height);
+    facing = normalize(facing - dot(surface, BUMP) * moved);
+    vec3 base = albedo * max(1.0 + dot(surface, TONE) * tone, 0.25);
+    float metal = surface.w * step(0.6, params.x);
+    float rough = clamp(1.0 - params.x + GRIT * grit, 0.12, 1.0);
+    vec3 f0 = mix(vec3(0.04), base, metal);
+    float nv = max(dot(facing, view), 0.001);
     float diffuse = max(dot(facing, toward_sun), 0.0);
-    float highlight = pow(max(dot(facing, halfway), 0.0), 6.0 + 90.0 * shine) * shine;
-    float rim = pow(1.0 - abs(dot(facing, view)), 4.0);
     float near = dot(toward_lantern, toward_lantern);
     float fade = max(1.0 - near, 0.0);
     float lamp = fade * fade * max(dot(facing, toward_lantern), 0.0) * inversesqrt(near + 0.0001);
+    vec3 toward_light = toward_lantern * inversesqrt(near + 0.0001);
+    vec3 lit = brdf(facing, view, toward_sun, base, f0, rough, metal) * sun * diffuse;
+    lit += brdf(facing, view, toward_light, base, f0, rough, metal) * lantern_light * lamp;
     vec3 ambient = mix(below, sky, facing.y * 0.5 + 0.5) + fill * max(dot(facing, toward_fill), 0.0);
-    vec3 lit = tinted * (sun * diffuse + ambient + lantern_light * lamp) + sun * highlight + sky * rim * (0.15 + 0.6 * shine);
+    vec3 shine = glance(f0, rough, nv);
+    vec3 bounce = reflect(-view, facing);
+    lit += ambient * base * (1.0 - metal) * (1.0 - shine) + mix(below, sky, bounce.y * 0.5 + 0.5) * shine;
+    lit += sky * base * SHEEN * (surface.x + surface.y) * pow(1.0 - nv, 3.0);
     vec3 shaded = mix(mix(lit, albedo * 2.5, min(params.y, 1.0)), fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), params.y / 3.0);
 }
@@ -137,7 +165,7 @@ pub fn meta() -> ShaderMeta {
         UniformDesc::new("lantern_light", UniformType::Float3),
     ]);
     ShaderMeta {
-        images: ["detail_height", "detail_u", "detail_v"]
+        images: ["detail_height", "detail_u", "detail_v", "detail_rough"]
             .map(String::from)
             .to_vec(),
         uniforms: UniformBlockLayout { uniforms },
@@ -185,7 +213,6 @@ impl Uniforms {
 #[cfg(test)]
 mod tests {
     use super::{FRAGMENT, Uniforms, VERTEX, meta};
-    use crate::detail::{DETAIL_SIZE, Detail, paint};
     use crate::shader::GLOW_RANGE;
     use crate::shader::baked;
     use crate::{BONES, Lamp, VAEL};
@@ -280,8 +307,83 @@ mod tests {
     }
 
     #[test]
-    fn the_lantern_adds_to_the_diffuse_light_of_the_surface() {
-        assert!(FRAGMENT.contains("tinted * (sun * diffuse + ambient + lantern_light * lamp)"));
+    fn the_lantern_lights_the_surface_through_its_reflectance() {
+        assert!(FRAGMENT.contains(
+            "lit += brdf(facing, view, toward_light, base, f0, rough, metal) * lantern_light * lamp;"
+        ));
+    }
+
+    #[test]
+    fn the_figure_samples_the_scanned_roughness() {
+        assert!(meta().images.contains(&String::from("detail_rough")));
+        assert!(FRAGMENT.contains("uniform sampler2D detail_rough;"));
+        assert!(FRAGMENT.contains("float rough = clamp(1.0 - params.x + GRIT * grit, 0.12, 1.0);"));
+    }
+
+    #[test]
+    fn metals_reflect_their_own_color() {
+        assert!(FRAGMENT.contains("vec3 f0 = mix(vec3(0.04), base, metal);"));
+        assert!(FRAGMENT.contains("float metal = surface.w * step(0.6, params.x);"));
+    }
+
+    fn reflectance(normal: Vec3, view: Vec3, light: Vec3, rough: f32, base: f32) -> f32 {
+        let half = (view + light).normalize();
+        let (nl, nv) = (normal.dot(light).max(0.001), normal.dot(view).max(0.001));
+        let nh = normal.dot(half).max(0.0);
+        let a = rough * rough;
+        let d = nh * nh * (a * a - 1.0) + 1.0;
+        let spread = a * a / (std::f32::consts::PI * d * d);
+        let k = (rough + 1.0).powi(2) / 8.0;
+        let hidden = nl * nv / ((nl * (1.0 - k) + k) * (nv * (1.0 - k) + k));
+        let fresnel = 0.04 + 0.96 * (1.0 - view.dot(half).max(0.0)).powi(5);
+        (1.0 - fresnel) * base + fresnel * spread * hidden * std::f32::consts::PI / (4.0 * nl * nv)
+    }
+
+    #[test]
+    fn the_shader_reflects_like_the_rust_mirror() {
+        for line in [
+            "float spread = a * a / (PI * d * d);",
+            "float k = (rough + 1.0) * (rough + 1.0) / 8.0;",
+            "vec3 f = f0 + (1.0 - f0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);",
+            "return (1.0 - f) * (1.0 - metal) * base + f * spread * hidden * PI / (4.0 * nl * nv);",
+        ] {
+            assert!(FRAGMENT.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_rough_surface_returns_no_more_light_than_it_gets() {
+        let normal = Vec3::Y;
+        let mut total = 0.0;
+        let mut count = 0.0;
+        for step in 0..400_u16 {
+            let angle = f32::from(step) * 0.0039;
+            let light = Vec3::new(angle.sin(), angle.cos(), 0.0);
+            for view_step in 0..20_u8 {
+                let tilt = f32::from(view_step) * 0.07;
+                let view = Vec3::new(-tilt.sin(), tilt.cos(), 0.1).normalize();
+                total += reflectance(normal, view, light, 0.9, 0.8) * light.y;
+                count += 1.0;
+            }
+        }
+        let mean = total / count;
+        assert!((0.2..0.8).contains(&mean), "{mean}");
+    }
+
+    #[test]
+    fn a_smooth_surface_shows_a_tighter_brighter_highlight() {
+        let (normal, view) = (Vec3::Y, Vec3::new(0.5, 1.0, 0.0).normalize());
+        let mirror = Vec3::new(-0.5, 1.0, 0.0).normalize();
+        let aside = Vec3::new(-0.9, 0.6, 0.0).normalize();
+        let peak = |rough: f32| reflectance(normal, view, mirror, rough, 0.0);
+        let off = |rough: f32| reflectance(normal, view, aside, rough, 0.0);
+        assert!(peak(0.2) > peak(0.6) * 5.0, "{} {}", peak(0.2), peak(0.6));
+        assert!(
+            peak(0.2) / off(0.2) > peak(0.6) / off(0.6),
+            "{} {}",
+            off(0.2),
+            off(0.6)
+        );
     }
 
     #[test]
@@ -315,7 +417,7 @@ mod tests {
         }
     }
 
-    const TILES: Vec4 = Vec4::new(16.0, 8.0, 13.0, 5.0);
+    const TILES: Vec4 = Vec4::new(3.7, 3.75, 2.5, 1.0);
 
     fn tiling(kinds: Vec4) -> f32 {
         let chosen = Vec4::select(
@@ -340,10 +442,17 @@ mod tests {
     }
 
     #[test]
-    fn each_surface_kind_tiles_at_its_own_scale() {
+    fn each_surface_tiles_at_the_size_of_its_scan() {
         let [woven, knitted, grained, brushed] = [Vec4::X, Vec4::Y, Vec4::Z, Vec4::W].map(tiling);
         assert_eq!([woven, knitted, grained, brushed], TILES.to_array());
-        assert!(woven > grained && grained > knitted && knitted > brushed);
+        for (tiles, metres) in [
+            (woven, 0.27),
+            (knitted, 0.267),
+            (grained, 0.4),
+            (brushed, 1.0),
+        ] {
+            assert!((tiles.recip() - metres).abs() < 0.005, "{tiles} {metres}");
+        }
     }
 
     const BEND: f32 = 0.12;
@@ -420,44 +529,14 @@ mod tests {
         Vec4::from_slice(&values)
     }
 
-    const MIDDLE: [f32; 4] = [0.55, 0.75, 0.3, 0.85];
-    const SPREADS_THEN: [f32; 4] = [0.1919, 0.3384, 0.2411, 0.1294];
-    const SLOPES_THEN: [f32; 4] = [0.1137, 0.1097, 0.1872, 0.0522];
-
-    fn contrast(detail: &Detail, kind: usize) -> (f32, f32) {
-        let texel = |bytes: &[u8], index: usize| f32::from(bytes[index * 4 + kind]) / 255.0;
-        let count = usize::from(DETAIL_SIZE).pow(2);
-        let total = f32::from(DETAIL_SIZE).powi(2);
-        let mean = (0..count)
-            .map(|index| texel(&detail.height, index))
-            .sum::<f32>()
-            / total;
-        let spread = ((0..count)
-            .map(|index| (texel(&detail.height, index) - mean).powi(2))
-            .sum::<f32>()
-            / total)
-            .sqrt();
-        let slope = (0..count)
-            .map(|index| {
-                let across = texel(&detail.slope_u, index) - 0.5;
-                let along = texel(&detail.slope_v, index) - 0.5;
-                across.hypot(along)
-            })
-            .sum::<f32>()
-            / total;
-        (spread, slope)
-    }
-
     #[test]
-    fn each_surface_keeps_the_middle_strength() {
-        let detail = paint();
-        let strength = constant("STRENGTH").to_array();
-        for kind in 0..4 {
-            let (spread, slope) = contrast(&detail, kind);
-            let change = f32::midpoint(spread / SPREADS_THEN[kind], slope / SLOPES_THEN[kind]);
-            let now = strength[kind] * 1.15 * change;
-            assert!((now / MIDDLE[kind] - 1.0).abs() < 0.05, "{kind} {now}");
+    fn each_surface_bumps_with_its_own_strength_and_metal_stays_smoothest() {
+        let bump = constant("BUMP").to_array();
+        for strength in bump {
+            assert!((0.5..2.5).contains(&strength), "{strength}");
         }
+        let [woven, knitted, grained, brushed] = bump;
+        assert!(brushed < woven.min(knitted).min(grained));
     }
 
     #[test]
@@ -501,7 +580,10 @@ mod tests {
     #[test]
     fn the_detail_textures_reach_the_fragment_shader() {
         let images = meta().images;
-        assert_eq!(images, ["detail_height", "detail_u", "detail_v"]);
+        assert_eq!(
+            images,
+            ["detail_height", "detail_u", "detail_v", "detail_rough"]
+        );
         for image in images {
             assert!(FRAGMENT.contains(&format!("uniform sampler2D {image};")));
         }

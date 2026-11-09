@@ -53,9 +53,14 @@ impl Scene {
         );
         let mut model = upload(context, &figure.vertices, &figure.indices);
         let detail = paint();
-        model.bindings.images = [&detail.height, &detail.slope_u, &detail.slope_v]
-            .map(|bytes| detail_texture(context, bytes))
-            .to_vec();
+        model.bindings.images = [
+            &detail.height,
+            &detail.slope_u,
+            &detail.slope_v,
+            &detail.rough,
+        ]
+        .map(|bytes| detail_texture(context, bytes))
+        .to_vec();
         let (corners, indices) = stage::ground();
         let ground = upload(context, &corners, &indices);
         Self {

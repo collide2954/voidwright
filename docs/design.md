@@ -82,7 +82,7 @@ The total XP for level 80 is half of the total XP for level 99.
 | Camera | The camera follows the player. The arrow keys and the middle mouse button turn and tilt the camera. The mouse wheel changes the zoom. A left click moves the player. |
 | Interface | A panel with tabs on the right side: inventory with 28 slots, skills, and equipment. A minimap at the top right. Chat at the bottom left. |
 | Models | Code sculpts all models. A sculpt is a set of simple solids that blend smoothly, with carved details. Each vertex has a color, a shine value, a glow value, and a surface kind. |
-| Surfaces | At start, code paints small tiled detail textures: woven cloth, knitted wool, grained leather, and brushed, scratched metal. The GPU puts them on each model from three sides. They add fine bumps and color changes. Models do not use image files. |
+| Surfaces | Four scanned CC0 materials give the fine detail: wool herringbone, knitted fleece, aged leather, and worn metal plate. Each has a tone map, a bump map, and a roughness map, packed into four channels. The GPU puts them on each model from three sides, at the real size of each scan. Physically based light gives each material its own highlight: cloth shows a soft sheen, and shiny metal reflects in its own color. |
 | Ground | Each tile has 8 × 8 small faces with smooth shading. Soft patches of moss, soil, and bloom color the ground. Steep faces show bare rock. |
 | Island edges | A jagged rock lip surrounds each island. The walls below the lip show the layers of the slab. |
 | Fragment shape | Each fragment is a thick, uneven slab from the ring. Soil lies on layers of rock and Wright hull plates. The edges are broken, and the bottom is rough. The thickness changes much from fragment to fragment. |

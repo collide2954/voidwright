@@ -211,9 +211,14 @@ impl Renderer {
         let figure = voidwright();
         let mut avatar = upload(context, &figure.vertices, &figure.indices);
         let detail = paint();
-        avatar.bindings.images = [&detail.height, &detail.slope_u, &detail.slope_v]
-            .map(|bytes| detail_texture(context, bytes))
-            .to_vec();
+        avatar.bindings.images = [
+            &detail.height,
+            &detail.slope_u,
+            &detail.slope_v,
+            &detail.rough,
+        ]
+        .map(|bytes| detail_texture(context, bytes))
+        .to_vec();
         let particles = pipeline(
             context,
             [particles::VERTEX, particles::FRAGMENT],
