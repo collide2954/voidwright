@@ -1,4 +1,4 @@
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use glam::{Mat3, Quat, Vec2, Vec3, Vec3Swizzles, Vec4};
 
@@ -480,7 +480,7 @@ fn onto(surface: &Sculpt, bone: Bone, local: Vec3) -> Vec3 {
     frame.inverse().transform_point3(at)
 }
 
-fn seam(surface: &Sculpt, bone: Bone, guides: &[Vec3], width: f32) -> Vec<Stroke> {
+fn trace(surface: &Sculpt, bone: Bone, guides: &[Vec3]) -> Vec<Vec3> {
     let mut dense = Vec::new();
     for pair in guides.windows(2) {
         let share = SEAM_STEP / pair[0].distance(pair[1]).max(SEAM_STEP);
@@ -491,11 +491,38 @@ fn seam(surface: &Sculpt, bone: Bone, guides: &[Vec3], width: f32) -> Vec<Stroke
         }
     }
     dense.extend(guides.last());
-    let points: Vec<Vec3> = dense
+    dense
         .iter()
         .map(|&guide| onto(surface, bone, guide))
-        .collect();
+        .collect()
+}
+
+fn fold(surface: &Sculpt, bone: Bone, guides: &[Vec3], radius: f32) -> Vec<Stroke> {
+    let points = trace(surface, bone, guides);
+    let last = f32::from(u16::try_from(points.len().saturating_sub(1).max(1)).unwrap_or(1));
+    let thickness = |index: usize| {
+        let along = f32::from(u16::try_from(index).unwrap_or(0)) / last;
+        radius * (0.3 + 0.7 * (PI * along).sin())
+    };
     points
+        .windows(2)
+        .enumerate()
+        .map(|(index, pair)| {
+            let form = limb(
+                pair[0].distance(pair[1]),
+                thickness(index),
+                thickness(index + 1),
+            );
+            stroke(bone, form, COAT)
+                .at(pair[0])
+                .turned(toward(pair[1] - pair[0]))
+                .blended(radius * 1.4)
+        })
+        .collect()
+}
+
+fn seam(surface: &Sculpt, bone: Bone, guides: &[Vec3], width: f32) -> Vec<Stroke> {
+    trace(surface, bone, guides)
         .windows(2)
         .map(|pair| {
             segment(bone, pair[0], pair[1], width, COAT)
@@ -549,6 +576,33 @@ fn trunk(clay: &mut Sculpt) {
                 .wrinkled(0.003, cloth)
                 .blended(0.012),
         );
+    }
+    let mut folds = Vec::new();
+    for x in [-0.125_f32, -0.09, 0.1, 0.13] {
+        folds.extend(fold(
+            clay,
+            Bone::Torso,
+            &[
+                Vec3::new(x, 0.065, -0.14),
+                Vec3::new(x * 1.12, 0.12, -0.145),
+                Vec3::new(x * 1.25, 0.175, -0.14),
+            ],
+            0.006,
+        ));
+    }
+    for side in Side::BOTH {
+        let x = side.sign();
+        for z in [-0.05_f32, 0.03] {
+            folds.extend(fold(
+                clay,
+                Bone::Torso,
+                &[Vec3::new(x * 0.16, 0.05, z), Vec3::new(x * 0.168, 0.13, z)],
+                0.006,
+            ));
+        }
+    }
+    for stroke in folds {
+        clay.add(stroke);
     }
     let mut seams = Vec::new();
     for side in Side::BOTH {
@@ -715,6 +769,66 @@ fn arm(clay: &mut Sculpt, side: Side) {
             .wrinkled(fabric, sleeve)
             .blended(0.045),
     );
+    tailor_sleeve(clay, side);
+}
+
+fn tailor_sleeve(clay: &mut Sculpt, side: Side) {
+    let (upper, fore) = (side.upper_arm(), side.forearm());
+    let out = side.sign();
+    let mut folds = Vec::new();
+    for (bone, guides) in [
+        (
+            upper,
+            vec![
+                Vec3::new(-0.035, 0.035 - UPPER_ARM, -0.03),
+                Vec3::new(0.0, 0.025 - UPPER_ARM, -0.055),
+                Vec3::new(0.035, 0.035 - UPPER_ARM, -0.03),
+            ],
+        ),
+        (
+            fore,
+            vec![
+                Vec3::new(-0.035, -0.03, -0.025),
+                Vec3::new(0.0, -0.02, -0.05),
+                Vec3::new(0.035, -0.03, -0.025),
+            ],
+        ),
+        (
+            upper,
+            vec![
+                Vec3::new(-0.04, 0.07 - UPPER_ARM, -0.02),
+                Vec3::new(-0.01, 0.02 - UPPER_ARM, -0.05),
+            ],
+        ),
+        (
+            upper,
+            vec![
+                Vec3::new(-out * 0.04, -0.04, 0.0),
+                Vec3::new(-out * 0.02, -0.12, 0.045),
+                Vec3::new(out * 0.01, -0.2, 0.05),
+            ],
+        ),
+    ] {
+        folds.extend(fold(clay, bone, &guides, 0.005));
+    }
+    for drop in [0.07_f32, 0.1] {
+        let y = drop - FOREARM;
+        folds.extend(fold(
+            clay,
+            fore,
+            &[
+                Vec3::new(-0.035, y, 0.0),
+                Vec3::new(-0.025, y - 0.005, -0.03),
+                Vec3::new(0.0, y - 0.008, -0.04),
+                Vec3::new(0.025, y - 0.005, -0.03),
+                Vec3::new(0.035, y, 0.0),
+            ],
+            0.004,
+        ));
+    }
+    for stroke in folds {
+        clay.add(stroke);
+    }
     let mut seams = seam(
         clay,
         upper,
@@ -2303,6 +2417,55 @@ mod tests {
         assert!((0.2..0.23).contains(&depth(waist)), "{}", depth(waist));
         assert!(width(chest) > width(waist) * 1.15, "{}", width(chest));
         assert!(depth(chest) > depth(waist) * 1.15, "{}", depth(chest));
+    }
+
+    fn ridges(depths: &[f32], prominence: f32) -> usize {
+        depths
+            .windows(13)
+            .filter(|window| {
+                let middle = window[6];
+                let edge = f32::midpoint(window[0], window[12]);
+                middle - edge > prominence && window.iter().all(|&value| value <= middle)
+            })
+            .count()
+    }
+
+    #[test]
+    fn the_coat_gathers_in_folds_above_the_belt() {
+        let mut trunk = super::clay();
+        super::trunk(&mut trunk);
+        let out: Vec<f32> = (0..280_u16)
+            .map(|step| -0.14 + f32::from(step) * 0.001)
+            .map(|x| {
+                (0..800_u16)
+                    .map(|index| -0.3 + f32::from(index) * 0.00025)
+                    .find(|&z| trunk.distance(Vec3::new(x, 1.08, z)) < 0.0)
+                    .map_or(0.0, |z| -z)
+            })
+            .collect();
+        let count = ridges(&out, 0.0012);
+        assert!(count >= 3, "{count}");
+    }
+
+    #[test]
+    fn the_sleeves_gather_in_folds_at_the_elbows() {
+        use crate::figure::{UPPER_ARM, rest};
+        let mut arm = super::clay();
+        super::arm(&mut arm, super::Side::Right);
+        let frame = rest()[Bone::RightUpperArm.index()];
+        let out: Vec<f32> = (0..90_u16)
+            .map(|step| 0.09 - UPPER_ARM - f32::from(step) * 0.001)
+            .map(|down| {
+                let center = frame.transform_point3(Vec3::Y * down);
+                let front = frame.transform_vector3(Vec3::NEG_Z);
+                (0..400_u16)
+                    .map(|index| 0.1 - f32::from(index) * 0.00025)
+                    .find(|&reach| arm.distance(center + front * reach) < 0.0)
+                    .unwrap_or(0.0)
+            })
+            .collect();
+        let count = ridges(&out, 0.0012);
+        assert!(count >= 1, "{count}");
     }
 
     #[test]
