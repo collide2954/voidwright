@@ -230,9 +230,14 @@ impl Studio {
             still,
             stage: Upload::new(context, &corners, &indices),
             screen: Upload::new(context, &post::TRIANGLE, &[0, 1, 2]),
-            detail: [&detail.height, &detail.slope_u, &detail.slope_v]
-                .map(|bytes| detail_texture(context, bytes))
-                .to_vec(),
+            detail: [
+                &detail.height,
+                &detail.slope_u,
+                &detail.slope_v,
+                &detail.rough,
+            ]
+            .map(|bytes| detail_texture(context, bytes))
+            .to_vec(),
             blank,
         }
     }
