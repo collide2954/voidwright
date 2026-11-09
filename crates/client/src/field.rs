@@ -105,8 +105,8 @@ fn span(profile: &[Vec3]) -> f32 {
 }
 
 fn unfold(point: Vec3, length: f32, folds: Vec2) -> Vec2 {
-    let down = smoothstep(0.45, 1.0, -point.y / length);
-    let fold = 1.0 + folds.y * down * wave(folds.x, point.z.atan2(point.x)).max(0.0);
+    let down = smoothstep(0.15, 0.85, -point.y / length);
+    let fold = 1.0 + folds.y * down * wave(folds.x, point.z.atan2(point.x));
     Vec2::new(point.xz().length() / fold, point.y)
 }
 

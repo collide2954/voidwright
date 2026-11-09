@@ -9,7 +9,7 @@ pub const ROWS: usize = 5;
 pub const PANELS: usize = 2;
 pub const PARTICLES: usize = PANELS * COLUMNS * ROWS;
 pub const CLOTH_BONES: usize = PANELS * COLUMNS * (ROWS - 1);
-const SLACK: [f32; ROWS] = [0.0, 0.05, 0.1, 0.16, 0.22];
+const SLACK: [f32; ROWS] = [0.0, 0.05, 0.16, 0.3, 0.45];
 const EDGE: f32 = 0.05;
 const STEP: f32 = 1.0 / 240.0;
 const MOST_STEPS: u8 = 16;
@@ -17,6 +17,7 @@ const SETTLING: u16 = 480;
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const GIVE: f32 = 0.25;
 const CONTACT: f32 = 0.35;
+const NUDGE: f32 = 0.02;
 const KICK: f32 = 1.0;
 const FRICTION: f32 = 0.3;
 const MARGIN: f32 = 0.03;
@@ -28,8 +29,8 @@ const BEND: f32 = 3.0;
 const CURVE: f32 = 10.0;
 pub const COAT_FEEL: Feel = Feel {
     drive: 0.7,
-    drag: 6.0,
-    inertia: 0.5,
+    drag: 10.0,
+    inertia: 0.6,
     spin: 0.5,
 };
 
@@ -496,7 +497,7 @@ impl<const N: usize> Fabric<N> {
                     continue;
                 }
                 let point = self.points[index];
-                let push = (clear(point, leg) - point) * CONTACT;
+                let push = ((clear(point, leg) - point) * CONTACT).clamp_length_max(NUDGE);
                 if push.length_squared() > 0.0 {
                     self.points[index] += push;
                     self.rub(index, push);
@@ -525,7 +526,7 @@ impl<const N: usize> Fabric<N> {
         if flat(middle) >= flat(touching) {
             return;
         }
-        let push = (clear(touching, leg) - touching) * CONTACT;
+        let push = ((clear(touching, leg) - touching) * CONTACT).clamp_length_max(NUDGE);
         if push.length_squared() < 1e-12 {
             return;
         }
@@ -555,7 +556,7 @@ impl<const N: usize> Fabric<N> {
         let (from, to) = (self.points[upper], self.points[lower]);
         let along = nearest(from, to, leg.from, leg.to);
         let touching = from.lerp(to, along);
-        let push = (clear(touching, leg) - touching) * CONTACT;
+        let push = ((clear(touching, leg) - touching) * CONTACT).clamp_length_max(NUDGE);
         if push.length_squared() < 1e-12 {
             return;
         }

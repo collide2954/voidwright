@@ -752,7 +752,7 @@ fn tapered(bone: Bone, [from, to]: [Vec3; 2], [start, end]: [f32; 2]) -> Stroke 
 
 fn coat(clay: &mut Sculpt) {
     for side in Side::BOTH {
-        let panel = tube(&COAT_CUT, SHELL, Vec2::new(9.0, 0.16));
+        let panel = tube(&COAT_CUT, SHELL, Vec2::new(6.0, 0.07));
         clay.add(
             waistband(panel, Vec3::ZERO, COAT)
                 .lined(LINING)
@@ -1779,7 +1779,7 @@ mod tests {
     }
 
     #[test]
-    fn the_skirt_falls_in_deep_folds_toward_the_hem() {
+    fn the_skirt_falls_in_long_folds_that_go_in_and_out() {
         use crate::figure::{COAT_CUT, rest, waist};
         let garments = super::garments();
         let frame = waist(rest()[Bone::Pelvis.index()]);
@@ -1808,9 +1808,14 @@ mod tests {
             (low, high)
         };
         let (low, high) = folds(0.58);
-        assert!(low > 0.98 && high - low > 0.12, "hem {low} {high}");
-        let (low, high) = folds(0.15);
-        assert!(low > 0.98 && high - low < 0.03, "hips {low} {high}");
+        assert!(
+            low < 0.97 && high > 1.03 && high - low < 0.2,
+            "hem {low} {high}"
+        );
+        let (low, high) = folds(0.3);
+        assert!(high - low > 0.04, "thigh {low} {high}");
+        let (low, high) = folds(0.06);
+        assert!(high - low < 0.045, "waist {low} {high}");
     }
 
     #[test]

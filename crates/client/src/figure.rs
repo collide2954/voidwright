@@ -73,9 +73,9 @@ const BEDROLL_RADIUS: f32 = 0.042;
 pub const COAT_CUT: Drape = [
     Vec3::new(0.138, 0.0, 0.105),
     Vec3::new(0.203, -0.094, 0.15),
-    Vec3::new(0.235, -0.281, 0.231),
-    Vec3::new(0.2608, -0.4496, 0.292),
-    Vec3::new(0.3, -0.6245, 0.3),
+    Vec3::new(0.215, -0.281, 0.18),
+    Vec3::new(0.222, -0.4496, 0.208),
+    Vec3::new(0.23, -0.6245, 0.24),
 ];
 pub const COAT_TOP: Vec3 = Vec3::new(0.0, 0.08, 0.004);
 pub const COAT_TILT: f32 = 0.06;
@@ -369,8 +369,8 @@ pub fn pulse(time: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Bone, Coat, HOOD_BONE, HOOD_TAIL, JOINTS, LANTERN_BONE, LANTERN_DROP, LANTERN_HOOK,
-        SCARF_BONE, SCARF_TAIL, placement, pulse, rest, skeleton, skin,
+        Bone, COAT_CUT, Coat, HOOD_BONE, HOOD_TAIL, JOINTS, LANTERN_BONE, LANTERN_DROP,
+        LANTERN_HOOK, SCARF_BONE, SCARF_TAIL, placement, pulse, rest, skeleton, skin,
     };
     use crate::gait::cycle;
     use crate::{Pose, Stride, pose_at};
@@ -381,6 +381,19 @@ mod tests {
     fn a_skin_at_rest_moves_nothing() {
         for matrix in skin(&Pose::default()) {
             assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-5));
+        }
+    }
+
+    #[test]
+    fn the_skirt_hangs_straight_down_from_the_hips() {
+        let hips = COAT_CUT[1];
+        for row in &COAT_CUT[2..] {
+            assert!(row.x >= hips.x && row.z >= hips.z, "{row}");
+            assert!(row.x < hips.x * 1.15, "{row} {hips}");
+            assert!(row.z < hips.z * 1.65, "{row} {hips}");
+        }
+        for pair in COAT_CUT.windows(2) {
+            assert!(pair[1].x >= pair[0].x && pair[1].z >= pair[0].z);
         }
     }
 
@@ -613,7 +626,7 @@ mod tests {
     #[test]
     fn a_walking_coat_moves_but_stays_close_to_its_shape() {
         let swing = swing();
-        assert!((0.02..0.06).contains(&swing), "{swing}");
+        assert!((0.02..0.08).contains(&swing), "{swing}");
     }
 
     fn lantern_middle() -> Vec3 {
