@@ -32,7 +32,8 @@ pub enum Bone {
 pub const JOINTS: usize = 17;
 pub const LANTERN_BONE: usize = JOINTS + CLOTH_BONES;
 pub const SCARF_BONE: usize = LANTERN_BONE + 1;
-pub const HOOD_BONE: usize = SCARF_BONE + 2;
+pub const SCARF_POINTS: usize = 6;
+pub const HOOD_BONE: usize = SCARF_BONE + SCARF_POINTS - 1;
 pub const BONES: usize = HOOD_BONE + 1;
 pub const HOOD_TAIL: [Vec3; 2] = [
     Vec3::new(0.01, 0.19, 0.06),
@@ -44,18 +45,23 @@ const HOOD_FEEL: Feel = Feel {
     drag: 10.0,
     inertia: 0.6,
     spin: 0.6,
+    air: 0.0,
 };
-pub const SCARF_TAIL: [Vec3; 3] = [
-    Vec3::new(-0.083, 0.458, -0.1355),
-    Vec3::new(-0.07, 0.33, -0.1465),
-    Vec3::new(-0.057, 0.202, -0.1575),
+pub const SCARF_TAIL: [Vec3; SCARF_POINTS] = [
+    Vec3::new(-0.045, 0.505, 0.085),
+    Vec3::new(-0.06, 0.49, 0.225),
+    Vec3::new(-0.068, 0.34, 0.268),
+    Vec3::new(-0.075, 0.18, 0.266),
+    Vec3::new(-0.08, 0.02, 0.263),
+    Vec3::new(-0.085, -0.14, 0.26),
 ];
-const SCARF_SLACK: f32 = 0.15;
+const SCARF_SLACK: f32 = 0.6;
 const SCARF_FEEL: Feel = Feel {
     drive: 1.0,
     drag: 4.0,
     inertia: 0.7,
     spin: 0.7,
+    air: 3.0,
 };
 const CHEST: [Vec3; 2] = [Vec3::new(0.0, 0.3, 0.0), Vec3::new(0.0, 0.4, 0.0)];
 const CHEST_RADIUS: f32 = 0.127;
@@ -67,9 +73,12 @@ const LANTERN_FEEL: Feel = Feel {
     drag: 2.5,
     inertia: 1.0,
     spin: 1.0,
+    air: 0.0,
 };
 const BEDROLL: [Vec3; 2] = [Vec3::new(0.13, 0.42, 0.17), Vec3::new(-0.13, 0.42, 0.17)];
 const BEDROLL_RADIUS: f32 = 0.042;
+const PACK: [Vec3; 2] = [Vec3::new(-0.06, 0.14, 0.17), Vec3::new(-0.06, 0.36, 0.17)];
+const PACK_RADIUS: f32 = 0.045;
 pub const COAT_CUT: Drape = [
     Vec3::new(0.138, 0.0, 0.105),
     Vec3::new(0.203, -0.094, 0.15),
@@ -282,7 +291,7 @@ pub fn skin(pose: &Pose) -> [Mat4; BONES] {
 pub struct Coat {
     cloth: Cloth,
     lantern: Fabric<2>,
-    scarf: Fabric<3>,
+    scarf: Fabric<SCARF_POINTS>,
     hood: Fabric<2>,
 }
 
@@ -330,7 +339,12 @@ impl Coat {
             to: torso.transform_point3(CHEST[1]),
             radius: CHEST_RADIUS,
         };
-        self.scarf.update(torso, &[chest], seconds);
+        let pack = Capsule {
+            from: torso.transform_point3(PACK[0]),
+            to: torso.transform_point3(PACK[1]),
+            radius: PACK_RADIUS,
+        };
+        self.scarf.update(torso, &[chest, bedroll, pack], seconds);
         self.hood
             .update(placement * bones[Bone::Head.index()], &[], seconds);
     }
@@ -662,7 +676,7 @@ mod tests {
     }
 
     fn scarf_end() -> Vec3 {
-        rest()[Bone::Torso.index()].transform_point3(SCARF_TAIL[2])
+        rest()[Bone::Torso.index()].transform_point3(SCARF_TAIL[SCARF_TAIL.len() - 1])
     }
 
     #[test]
@@ -673,7 +687,7 @@ mod tests {
             coat.update(&pose, Mat4::IDENTITY, 1.0 / 60.0);
         }
         let end = scarf_end();
-        let held = coat.skins(&pose)[SCARF_BONE + 1].transform_point3(end);
+        let held = coat.skins(&pose)[HOOD_BONE - 1].transform_point3(end);
         assert!(held.distance(end) < 0.005, "{held} {end}");
     }
 
@@ -689,8 +703,31 @@ mod tests {
             coat.update(&pose, ahead, 1.0 / 60.0);
         }
         let end = scarf_end();
-        let swung = coat.skins(&pose)[SCARF_BONE + 1].transform_point3(end);
+        let swung = coat.skins(&pose)[HOOD_BONE - 1].transform_point3(end);
         assert!(swung.z > end.z + 0.005, "{swung} {end}");
+    }
+
+    #[test]
+    fn the_scarf_tail_trails_behind_while_walking() {
+        let pose = |phase: f32| pose_at(phase, 1.0, 0.0, 0.0);
+        let (mut phase, mut travelled) = (0.0_f32, 0.0_f32);
+        let mut coat = Coat::new(&pose(phase), Mat4::IDENTITY);
+        let (end, tip_rest) = (scarf_end(), SCARF_TAIL[SCARF_TAIL.len() - 1]);
+        let (mut behind, mut count) = (0.0_f32, 0.0_f32);
+        for frame in 0..360_u16 {
+            travelled += 1.0 / 60.0 / 0.6;
+            phase += 1.0 / 60.0 / 0.6 * TAU / cycle(0.0);
+            let placement = Mat4::from_translation(Vec3::NEG_Z * travelled);
+            coat.update(&pose(phase), placement, 1.0 / 60.0);
+            if frame >= 180 {
+                let tip = coat.skins(&pose(phase))[HOOD_BONE - 1].transform_point3(end);
+                let torso = skeleton(&pose(phase))[Bone::Torso.index()];
+                behind += torso.inverse().transform_point3(tip).z - tip_rest.z;
+                count += 1.0;
+            }
+        }
+        let behind = behind / count;
+        assert!(behind > 0.08, "{behind}");
     }
 
     fn hood_tip() -> Vec3 {
@@ -740,7 +777,7 @@ mod tests {
     #[test]
     fn a_bare_skin_carries_the_scarf_with_the_torso() {
         let skins = skin(&pose_at(1.0, 1.0, 0.0, 0.0));
-        for bone in SCARF_BONE..SCARF_BONE + 2 {
+        for bone in SCARF_BONE..HOOD_BONE {
             assert!(skins[bone].abs_diff_eq(skins[Bone::Torso.index()], 1e-6));
         }
     }

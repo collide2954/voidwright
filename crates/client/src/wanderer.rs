@@ -832,23 +832,25 @@ fn head(clay: &mut Sculpt) {
 fn scarf(clay: &mut Sculpt) {
     let wool = Vec3::splat(18.0);
     clay.add(
-        stroke(Bone::Torso, ring(0.076, 0.03), SCARF)
-            .at(Vec3::new(0.0, 0.52, 0.008))
-            .turned(Quat::from_rotation_x(0.15))
-            .wrinkled(0.006, wool),
+        stroke(Bone::Torso, ring(0.076, 0.015), SCARF)
+            .at(Vec3::new(0.0, 0.515, 0.008))
+            .squashed(Vec3::new(1.0, 2.6, 1.0))
+            .turned(Quat::from_rotation_x(0.12))
+            .wrinkled(0.004, wool),
     );
     clay.add(
-        stroke(Bone::Torso, ring(0.07, 0.026), SCARF)
-            .at(Vec3::new(0.0, 0.565, 0.004))
-            .turned(Quat::from_rotation_x(-0.08) * Quat::from_rotation_z(0.1))
-            .wrinkled(0.005, wool)
-            .blended(0.02),
+        stroke(Bone::Torso, ring(0.07, 0.013), SCARF)
+            .at(Vec3::new(0.0, 0.566, 0.004))
+            .squashed(Vec3::new(1.0, 2.2, 1.0))
+            .turned(Quat::from_rotation_x(-0.06) * Quat::from_rotation_z(0.08))
+            .wrinkled(0.004, wool)
+            .blended(0.015),
     );
     clay.add(
-        stroke(Bone::Torso, egg(0.045, 0.03, 0.022), SCARF)
-            .at(Vec3::new(-0.055, 0.49, -0.1))
-            .wrinkled(0.005, wool)
-            .blended(0.02),
+        stroke(Bone::Torso, egg(0.036, 0.034, 0.028), SCARF)
+            .at(SCARF_TAIL[0])
+            .wrinkled(0.004, wool)
+            .blended(0.015),
     );
 }
 
@@ -926,11 +928,20 @@ fn face() -> Sculpt {
 
 fn tail() -> Sculpt {
     let mut clay = clay();
-    clay.add(
-        stroke(Bone::Torso, block(0.036, 0.13, 0.011, 0.009), SCARF)
-            .at(SCARF_TAIL[1])
-            .turned(toward(SCARF_TAIL[2] - SCARF_TAIL[0])),
-    );
+    for pair in SCARF_TAIL.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        clay.add(
+            stroke(
+                Bone::Torso,
+                block(0.04, from.distance(to) / 2.0 + 0.01, 0.005, 0.004),
+                SCARF,
+            )
+            .at(from.lerp(to, 0.5))
+            .turned(toward(to - from))
+            .wrinkled(0.003, Vec3::splat(18.0))
+            .blended(0.01),
+        );
+    }
     clay
 }
 
@@ -1712,8 +1723,8 @@ mod tests {
     }
 
     #[test]
-    fn the_scarf_tail_follows_its_strand_below_the_knot() {
-        use crate::figure::{SCARF_BONE, rest};
+    fn the_scarf_tail_follows_its_strand_down_the_back() {
+        use crate::figure::{HOOD_BONE, SCARF_BONE, rest};
         let back = rest()[Bone::Torso.index()].inverse();
         let tail: Vec<&SkinnedVertex> = FIGURE
             .vertices
@@ -1722,12 +1733,12 @@ mod tests {
                 let local = back.transform_point3(Vec3::from(vertex.position));
                 let [woven, knitted, grained, brushed] = vertex.surface;
                 let wool = knitted > woven.max(grained).max(brushed);
-                wool && local.y < 0.3 && local.z < -0.1
+                wool && local.y < 0.35 && local.z > 0.2
             })
             .collect();
         assert_ne!(tail.len(), 0);
         for vertex in tail {
-            assert!((SCARF_BONE..SCARF_BONE + 2).contains(&strongest(vertex)));
+            assert!((SCARF_BONE..HOOD_BONE).contains(&strongest(vertex)));
         }
     }
 
@@ -1889,24 +1900,40 @@ mod tests {
     }
 
     #[test]
-    fn the_scarf_tail_lies_on_the_chest_and_never_sinks_into_it() {
-        use crate::figure::{Coat, SCARF_BONE};
+    fn the_scarf_wrap_and_tail_are_one_piece() {
+        use crate::figure::{SCARF_TAIL, rest};
+        let mut wrap = super::clay();
+        super::scarf(&mut wrap);
+        let torso = rest()[Bone::Torso.index()];
+        let root = torso.transform_point3(SCARF_TAIL[0]);
+        assert!(wrap.distance(root) < 0.0, "{}", wrap.distance(root));
+        let tail = super::tail();
+        for pair in SCARF_TAIL.windows(2) {
+            let middle = torso.transform_point3(pair[0].lerp(pair[1], 0.5));
+            assert!(tail.distance(middle) < 0.0, "{middle}");
+        }
+    }
+
+    #[test]
+    fn the_scarf_tail_lies_over_the_pack_and_never_sinks_into_it() {
+        use crate::figure::{Coat, HOOD_BONE, SCARF_BONE};
         use crate::gait::{cycle, pose_at};
         use std::f32::consts::TAU;
         const FRAME: f32 = 1.0 / 60.0;
         let mut torso = super::clay();
         super::trunk(&mut torso);
+        super::pack(&mut torso);
         let tail = super::tail().mesh(0.004);
         let resting = tail
             .vertices
             .iter()
             .map(|vertex| torso.distance(Vec3::from(vertex.position)))
             .fold(f32::INFINITY, f32::min);
-        assert!((-0.003..0.008).contains(&resting), "{resting}");
+        assert!((-0.003..0.02).contains(&resting), "{resting}");
         let wool: Vec<&SkinnedVertex> = FIGURE
             .vertices
             .iter()
-            .filter(|vertex| (SCARF_BONE..SCARF_BONE + 2).contains(&strongest(vertex)))
+            .filter(|vertex| (SCARF_BONE..HOOD_BONE).contains(&strongest(vertex)))
             .collect();
         for (pace, speed) in [(0.0, 1.0 / 0.6), (1.0, 2.0 / 0.6)] {
             let pose = |phase: f32| pose_at(phase, 1.0, pace, 0.0);

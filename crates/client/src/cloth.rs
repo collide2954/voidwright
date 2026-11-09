@@ -32,6 +32,7 @@ pub const COAT_FEEL: Feel = Feel {
     drag: 10.0,
     inertia: 0.6,
     spin: 0.5,
+    air: 0.0,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,6 +41,7 @@ pub struct Feel {
     pub drag: f32,
     pub inertia: f32,
     pub spin: f32,
+    pub air: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +116,7 @@ struct Layout<const N: usize> {
     pinned: [bool; N],
     held: [bool; N],
     tether: [usize; N],
+    reach: [f32; N],
     slack: [f32; N],
     down: [(usize, usize); N],
     across: [Option<(usize, usize)>; N],
@@ -137,6 +140,7 @@ pub struct Fabric<const N: usize> {
     legs: Vec<Capsule>,
     clock: f32,
     started: bool,
+    leans: bool,
 }
 
 pub type Cloth = Fabric<PARTICLES>;
@@ -178,6 +182,7 @@ impl Cloth {
             pinned: [false; PARTICLES],
             held: [false; PARTICLES],
             tether: [0; PARTICLES],
+            reach: [0.0; PARTICLES],
             slack: [0.0; PARTICLES],
             down: [(0, 0); PARTICLES],
             across: [None; PARTICLES],
@@ -191,6 +196,7 @@ impl Cloth {
             layout.pinned[index] = row == 0;
             layout.held[index] = row == 1;
             layout.tether[index] = at(column, 0);
+            layout.reach[index] = rest[index].distance(drape[0] * Vec3::new(cos, 1.0, sin));
             layout.slack[index] = SLACK[row];
             layout.down[index] = (
                 at(column, row.saturating_sub(1)),
@@ -267,10 +273,17 @@ impl<const N: usize> Fabric<N> {
     #[must_use]
     pub fn strand(rest: [Vec3; N], slack: f32, feel: Feel) -> Self {
         let last = N.saturating_sub(1);
+        let mut path = 0.0;
         let layout = Layout {
             pinned: std::array::from_fn(|index| index == 0),
             held: [false; N],
             tether: [0; N],
+            reach: std::array::from_fn(|index| {
+                if index > 0 {
+                    path += rest[index - 1].distance(rest[index]);
+                }
+                path
+            }),
             slack: std::array::from_fn(|index| slack * count(index) / count(last.max(1))),
             down: std::array::from_fn(|index| (index.saturating_sub(1), (index + 1).min(last))),
             across: [None; N],
@@ -285,7 +298,10 @@ impl<const N: usize> Fabric<N> {
             })
             .collect();
         let edges = (1..N).map(|index| (index - 1, index)).collect();
-        Self::new(feel, Vec::new(), layout, rest, links, edges)
+        Self {
+            leans: true,
+            ..Self::new(feel, Vec::new(), layout, rest, links, edges)
+        }
     }
 
     #[must_use]
@@ -332,6 +348,7 @@ impl<const N: usize> Fabric<N> {
             legs: Vec::new(),
             clock: 0.0,
             started: false,
+            leans: false,
         }
     }
 
@@ -390,8 +407,13 @@ impl<const N: usize> Fabric<N> {
         self.points = self.rest;
         self.previous = self.rest;
         self.history = [frame; 2];
+        let props: Vec<Capsule> = if self.leans {
+            self.legs.iter().map(|leg| leg.local(frame)).collect()
+        } else {
+            Vec::new()
+        };
         for _ in 0..SETTLING {
-            self.step(frame, &[]);
+            self.step(frame, &props);
         }
         self.settled = self.points;
         self.previous = self.points;
@@ -408,6 +430,7 @@ impl<const N: usize> Fabric<N> {
         let twist = (turning - turn(two.rotation, one.rotation)) * feel.spin;
         let spin = turning * feel.spin;
         let fall = back * GRAVITY * STEP * STEP;
+        let wind = back * (one.translation - frame.translation) * feel.air * STEP;
         let keep = (-feel.drag * STEP).exp();
         let pull = springy(feel.drive);
         let particles = self
@@ -427,7 +450,7 @@ impl<const N: usize> Fabric<N> {
                 + twist.cross(*point)
                 + spin.cross(turning.cross(*point))
                 + 2.0 * spin.cross(moving);
-            let mut next = *point + moving * keep + fall - fictitious;
+            let mut next = *point + moving * keep + fall + wind - fictitious;
             next += (*rest - next) * pull;
             *before = *point;
             *point = next;
@@ -475,7 +498,7 @@ impl<const N: usize> Fabric<N> {
                 continue;
             }
             let (anchor, rest) = (self.rest[self.layout.tether[index]], self.rest[index]);
-            let tether = rest.distance(anchor);
+            let tether = self.layout.reach[index];
             let reach = self.points[index] - anchor;
             if reach.length() > tether {
                 self.points[index] = anchor + reach.normalize() * tether;
@@ -710,6 +733,7 @@ mod tests {
         drag: 4.0,
         inertia: 0.5,
         spin: 0.5,
+        air: 0.0,
     };
 
     fn tail() -> Fabric<4> {
