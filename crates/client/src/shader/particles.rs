@@ -84,6 +84,9 @@ vec3 filmic(vec3 x) {
 }
 void main() {
     float falloff = max(1.0 - dot(spot, spot), 0.0);
+    if (falloff < 0.25) {
+        discard;
+    }
     vec3 shaded = mix(glow, fog_color, fog);
     gl_FragColor = vec4(pow(filmic(shaded), vec3(0.4545)), 1.0 / 3.0) * falloff * falloff * strength;
 }
@@ -127,7 +130,7 @@ pub fn attributes() -> [VertexAttribute; 3] {
 pub fn params() -> PipelineParams {
     PipelineParams {
         depth_test: Comparison::LessOrEqual,
-        depth_write: false,
+        depth_write: true,
         color_blend: Some(BlendState::new(
             Equation::Add,
             BlendFactor::One,
@@ -278,10 +281,11 @@ mod tests {
     }
 
     #[test]
-    fn specks_add_their_glow_behind_solid_surfaces() {
+    fn solid_surfaces_hide_the_specks_behind_them() {
         let params = params();
         assert_eq!(params.depth_test, Comparison::LessOrEqual);
-        assert!(!params.depth_write);
+        assert!(params.depth_write);
+        assert!(FRAGMENT.contains("if (falloff < 0.25) {\n        discard;\n    }"));
         assert_eq!(
             params.color_blend,
             Some(BlendState::new(
